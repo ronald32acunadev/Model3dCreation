@@ -29,7 +29,7 @@ No output means they are in sync.
 - Do not hardcode model names in the rules: the dynamic model policy is deliberate (see commit `efabf70`).
 - Commits follow Conventional Commits (`feat:`, `docs:`, ...).
 
-## Untracked directories
+## Template assets and tooling state
 
-- `Agents/readme-generator.md` — a subagent definition (Claude Code frontmatter: `name`, `description`, `model`, `color`). It is not under `.claude/agents/`, so Claude Code does not load it from here; it is a template asset and is not yet committed or mentioned in the README.
-- `.atl/` and `.codegraph/` — locally generated tooling state (skill registry, code index). There is no `.gitignore` yet, so do not stage them with a blanket `git add`.
+- `Agents/readme-generator.md` — a subagent definition (Claude Code frontmatter: `name`, `description`, `model`, `color`). It is not under `.claude/agents/`, so Claude Code does not load it from here; it is a template asset documented in `README.md`.
+- `.atl/` and `.codegraph/` — locally generated tooling state (skill registry, code index). Do not stage them with a blanket `git add`.
