@@ -7,9 +7,9 @@ Template repository containing starter configurations and agent rules for new pr
 1. **Language & Documentation Rule (Mandatory)**:
    - All code, identifiers, function and variable names, comments, documentation (`docs/`, READMEs), and commit messages are written in **English**.
    - Translations (`README.es.md`, i18n catalogs) are the only exceptions.
-2. **Local Code Authorship & Delegation**:
-   - Primary: `pumbastudio` (LM Studio port 1234, tool `openai_chat`).
-   - Secondary: `pumbalama` (Ollama port 11434, tool `chat_completion`).
+2. **Local Code Authorship & Delegation (Dynamic Model Selection)**:
+   - Primary: `pumbastudio` (LM Studio port 1234, tool `openai_chat` — dynamically targets whichever model is loaded in memory).
+   - Secondary: `pumbalama` (Ollama port 11434, tool `chat_completion` — dynamically targets the active loaded model).
    - Fallback: Host model (Gemini, Claude, etc.) seamlessly synthesizes code if local providers are unavailable or offline.
 3. **Outdated Knowledge Safeguard**:
    - The agent verifies current dependencies and documentation, feeding explicit signatures and versions to local models.

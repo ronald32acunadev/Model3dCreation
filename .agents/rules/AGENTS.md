@@ -13,17 +13,19 @@ Instructions for every AI coding agent working in this repository (Antigravity, 
 
 Local models are the owner's dedicated code synthesizers, exposed to agents as MCP servers. The agent is the orchestrator: it understands the request, prepares the context, prompts the local model for code, reviews the answer, applies it to files, and verifies it.
 
-### Delegation Hierarchy
+### Delegation Hierarchy & Dynamic Model Selection
+
+**Dynamic Model Policy**: Do NOT restrict or hardcode specific model names. The agent must dynamically use whichever model is currently loaded in memory in LM Studio or Ollama.
 
 1. **Primary Provider: `pumbastudio`**
    - Served by LM Studio (port `1234`), MCP tool `openai_chat`.
-   - Default model parameter: `"gpt-4o"` (or active local model alias).
+   - **Model**: Target the model currently loaded in LM Studio. Use the active model identifier or standard local alias (e.g., `"gpt-4o"` or active loaded model ID). LM Studio automatically serves completions using whichever model is active in memory.
 2. **Secondary Provider: `pumbalama`**
    - Served by Ollama (port `11434`), MCP tool `chat_completion`.
    - Used when `pumbastudio` is unreachable or fails.
-   - Recommended models: `"qwen2.5-coder:32b"`, `"qwen3-coder:30b"`, or `"qwen2.5-coder:14b"`.
+   - **Model**: Target whichever model is currently active/loaded in Ollama (e.g., checking active running models via `/api/ps` or using the active Ollama model). Do not restrict to any pre-defined model name.
 3. **Fallback: Host Model (Gemini, Claude, etc.)**
-   - Used when neither `pumbastudio` nor `pumbalama` is reachable or both fail (e.g., connection errors, GPU OOM).
+   - Used when neither `pumbastudio` nor `pumbalama` is reachable or both fail (e.g., connection errors, GPU OOM, or no model loaded).
    - The host model takes over seamlessly without halting or blocking the task, noting briefly that local models were unavailable.
 
 ### What Local Models Write
