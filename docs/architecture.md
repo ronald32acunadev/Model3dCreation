@@ -72,7 +72,14 @@ The engine is meant to run on other people's machines, so placement is no longer
 4. `shape_only`: one card fits shape but not paint; textured requests are refused.
 5. `unsupported`: no usable card. The API still answers, with the reason in health.
 
-Thresholds come from the table above, sized for `final` quality, plus a 512 MiB margin (the owner's choice: 1 GiB would move paint off the desktop card at idle): a stage fits a card with at least its peak plus the margin free (9.2 GiB for shape, 10.4 GiB for paint), and both fit with `max(shape held + paint peak, paint held + shape peak)` plus the margin (17.5 GiB). Free VRAM is read once, so desktop apps matter: on the reference machine GPU1 has 11173 MiB free at idle (paint fits) but about 10.4 GiB with a browser and IDE open. Either way GPU0 has more free VRAM, so paint runs there and shape on GPU1. Measured on that placement (2026-10-21): load 51.9 s, shape 80.2 s, paint 73.9 s, against paint about 60 s on the x16 card: the x2 link costs paint about 12 s per job, the price of the extra headroom. With more than two cards the extras are unused; on a mixed machine the card with the most free VRAM is used.
+Thresholds come from the table above, sized for `final` quality, plus a 512 MiB margin (the owner's choice: 1 GiB would move paint off the desktop card at idle): a stage fits a card with at least its peak plus the margin free (9.2 GiB for shape, 10.4 GiB for paint), and both fit with `max(shape held + paint peak, paint held + shape peak)` plus the margin (17.5 GiB). Free VRAM is read once, so desktop apps matter: on the reference machine GPU1 has 11173 MiB free at idle (paint fits) but about 10.4 GiB with a browser and IDE open. Either way GPU0 has more free VRAM, so paint runs there and shape on GPU1. Measured on that placement (2026-10-21): load 51.9 s, shape 80.2 s, paint 73.9 s, against paint about 60 s on the x16 card: the x2 link costs paint about 10-14 s per job, the price of the extra headroom.
+
+GPU acceptance (`pytest -m gpu`, 2026-10-21, penguin with texture):
+
+| Mode | Placement | Load | Shape | Paint |
+| :--- | :--- | ---: | ---: | ---: |
+| `dual_gpu` | shape GPU1, paint GPU0 | 51.1 s | 79.5 s | 69.8 s |
+| `single_gpu_swap` | GPU0 only (GPU1 hidden) | 34.5 s (shape only) | 102.0 s (includes the swap, about 22 s) | 70.5 s | With more than two cards the extras are unused; on a mixed machine the card with the most free VRAM is used.
 
 Placement uses CUDA indexes from the probe, with `CUDA_DEVICE_ORDER=PCI_BUS_ID` in the probe and the workers so they match bus order. `MODEL3D_MODE`, `MODEL3D_SHAPE_BUS`, and `MODEL3D_PAINT_BUS` override the choice. `scripts/verify_gpus.py` prints the mode the engine would pick.
 
