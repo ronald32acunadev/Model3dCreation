@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from model3d_engine.gpu.modes import ModeName
 from model3d_engine.gpu.topology import normalize_bus_id
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -17,8 +18,10 @@ class Settings:
     hunyuan_dir: Path
     host: str = "127.0.0.1"
     port: int = 8765
-    shape_bus: str = "0000:25:00.0"
-    paint_bus: str = "0000:29:00.0"
+    # Unset buses and mode mean automatic placement from the detected GPUs.
+    shape_bus: str | None = None
+    paint_bus: str | None = None
+    mode: str | None = None
     max_image_bytes: int = 20 * 1024 * 1024
     # Browser origins allowed to POST or DELETE; requests without an Origin header are always allowed.
     allowed_origins: tuple[str, ...] = ()
@@ -53,13 +56,21 @@ def load_settings(env: Mapping[str, str] | None = None, repo_root: Path | None =
     repo_root = REPO_ROOT if repo_root is None else repo_root
     home = env.get("MODEL3D_HOME")
     hunyuan_dir = env.get("MODEL3D_HUNYUAN_DIR")
+    shape_bus, paint_bus = env.get("MODEL3D_SHAPE_BUS"), env.get("MODEL3D_PAINT_BUS")
+    if (shape_bus is None) != (paint_bus is None):
+        raise ValueError("Set both MODEL3D_SHAPE_BUS and MODEL3D_PAINT_BUS, or neither")
+    mode = env.get("MODEL3D_MODE")
+    forcible = [name.value for name in ModeName if name != ModeName.unsupported]
+    if mode is not None and mode not in forcible:
+        raise ValueError(f"MODEL3D_MODE must be one of {', '.join(forcible)}; got {mode!r}")
     return Settings(
         home=Path(home).expanduser() if home else Path.home() / ".local/share/model3d",
         hunyuan_dir=Path(hunyuan_dir).expanduser() if hunyuan_dir else repo_root / "vendor/Hunyuan3D-2.1",
         host=env.get("MODEL3D_HOST", "127.0.0.1"),
         port=int(env.get("MODEL3D_PORT", "8765")),
-        shape_bus=normalize_bus_id(env.get("MODEL3D_SHAPE_BUS", "0000:25:00.0")),
-        paint_bus=normalize_bus_id(env.get("MODEL3D_PAINT_BUS", "0000:29:00.0")),
+        shape_bus=normalize_bus_id(shape_bus) if shape_bus is not None else None,
+        paint_bus=normalize_bus_id(paint_bus) if paint_bus is not None else None,
+        mode=mode,
         allowed_origins=tuple(
             normalize_origin(origin) for origin in env.get("MODEL3D_ALLOWED_ORIGINS", "").split(",") if origin.strip()
         ),

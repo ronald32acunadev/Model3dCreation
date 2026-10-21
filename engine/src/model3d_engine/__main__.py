@@ -26,6 +26,8 @@ from model3d_engine.stages.process import ProcessStageRunner
 SHAPE_FACTORY = "model3d_engine.stages.hunyuan:make_shape_stage"
 PAINT_FACTORY = "model3d_engine.stages.hunyuan:make_paint_stage"
 logger = logging.getLogger(__name__)
+# Temporary: automatic placement replaces these defaults when run modes are wired in.
+OWNER_SHAPE_BUS, OWNER_PAINT_BUS = "0000:25:00.0", "0000:29:00.0"
 MEMORY_COMMAND = ["nvidia-smi", "--query-gpu=pci.bus_id,memory.used,memory.total", "--format=csv,noheader,nounits"]
 
 
@@ -54,7 +56,8 @@ def build_engine(
     memory_reader: Callable[[], dict[str, tuple[int, int]]] = read_memory,
 ) -> FastAPI:
     """Wire the stage workers, scheduler, store, and event bus into the API."""
-    placement = resolve_placement(read_links() if links is None else links, settings.shape_bus, settings.paint_bus)
+    shape_bus, paint_bus = settings.shape_bus or OWNER_SHAPE_BUS, settings.paint_bus or OWNER_PAINT_BUS
+    placement = resolve_placement(read_links() if links is None else links, shape_bus, paint_bus)
     env = stage_env(settings)
     hunyuan_dir = str(settings.hunyuan_dir)
     shape = ProcessStageRunner(
@@ -81,7 +84,7 @@ def build_engine(
             logger.warning("Could not read GPU memory: %s", error)
             memory = {}
         gpus = []
-        for bus_id, stage, runner in ((settings.shape_bus, "shape", shape), (settings.paint_bus, "paint", paint)):
+        for bus_id, stage, runner in ((shape_bus, "shape", shape), (paint_bus, "paint", paint)):
             used, total = memory.get(bus_id, (None, None))
             gpus.append(
                 {"bus_id": bus_id, "stage": stage, "ready": runner.ready, "memory_used_mib": used, "memory_total_mib": total}

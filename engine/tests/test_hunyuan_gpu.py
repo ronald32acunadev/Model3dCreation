@@ -26,7 +26,7 @@ pytestmark = [pytest.mark.gpu, pytest.mark.anyio]
 async def test_penguin_end_to_end(tmp_path):
     settings = load_settings()
     links = parse_nvidia_smi(subprocess.run(NVIDIA_SMI_COMMAND, check=True, capture_output=True, text=True).stdout)
-    placement = resolve_placement(links, settings.shape_bus, settings.paint_bus)
+    placement = resolve_placement(links, settings.shape_bus or "0000:25:00.0", settings.paint_bus or "0000:29:00.0")
     env = stage_env(settings)
     hunyuan_dir = str(settings.hunyuan_dir)
     shape = ProcessStageRunner(
