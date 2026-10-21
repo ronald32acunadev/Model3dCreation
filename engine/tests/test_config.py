@@ -1,0 +1,29 @@
+from model3d_engine.config import load_settings
+
+
+def test_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    s = load_settings({}, repo_root=tmp_path)
+    assert s.home == tmp_path / "home" / ".local/share/model3d"
+    assert s.host == "127.0.0.1"
+    assert s.port == 8765
+    assert s.shape_bus == "0000:25:00.0"
+    assert s.paint_bus == "0000:29:00.0"
+    assert s.hunyuan_dir == tmp_path / "vendor/Hunyuan3D-2.1"
+    assert s.jobs_dir == s.home / "jobs"
+    assert s.hf_home == s.home / "hf"
+    assert s.max_image_bytes == 20 * 1024 * 1024
+
+
+def test_env_overrides(tmp_path):
+    env = {
+        "MODEL3D_HOME": str(tmp_path / "data"),
+        "MODEL3D_PORT": "9000",
+        "MODEL3D_SHAPE_BUS": "00000000:2A:00.0",
+        "MODEL3D_HUNYUAN_DIR": str(tmp_path / "hy"),
+    }
+    s = load_settings(env, repo_root=tmp_path)
+    assert s.home == tmp_path / "data"
+    assert s.port == 9000
+    assert s.shape_bus == "0000:2a:00.0"
+    assert s.hunyuan_dir == tmp_path / "hy"

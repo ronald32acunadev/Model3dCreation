@@ -15,61 +15,19 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from model3d_engine.gpu.topology import (
+    NVIDIA_SMI_COMMAND,
+    GpuLink,
+    bus_id_from_props,
+    normalize_bus_id,
+    parse_nvidia_smi,
+)
+
 # CUDA indexes must follow PCI bus order so they match nvidia-smi. This has to be set
 # before the first `import torch`, which is why torch is only imported inside functions.
 os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 
-NVIDIA_SMI_COMMAND = [
-    "nvidia-smi",
-    "--query-gpu=pci.bus_id,name,pcie.link.gen.max,pcie.link.width.current,memory.total",
-    "--format=csv,noheader,nounits",
-]
-BUS_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{4,8}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$")
-# Usable GB/s per PCIe lane, by generation.
-PCIE_LANE_GBPS = {1: 0.25, 2: 0.5, 3: 0.985, 4: 1.969, 5: 3.938}
 GIB = 1024**3
-
-
-def normalize_bus_id(raw: str) -> str:
-    """Return a PCI bus id as lowercase 'DDDD:BB:DD.F' (domain cut to 4 hex digits)."""
-    raw = raw.strip()
-    if not BUS_ID_PATTERN.match(raw):
-        raise ValueError(f"Invalid PCI bus id: {raw!r}")
-    domain, rest = raw.split(":", 1)
-    return f"{int(domain, 16) & 0xFFFF:04x}:{rest.lower()}"
-
-
-def bus_id_from_props(domain: int, bus: int, device: int) -> str:
-    return f"{domain:04x}:{bus:02x}:{device:02x}.0"
-
-
-@dataclass(frozen=True)
-class GpuLink:
-    bus_id: str
-    name: str
-    pcie_gen: int
-    pcie_width: int
-    memory_mib: int
-
-    @property
-    def bandwidth_gbps(self) -> float:
-        return PCIE_LANE_GBPS.get(self.pcie_gen, 0.0) * self.pcie_width
-
-
-def parse_nvidia_smi(text: str) -> list[GpuLink]:
-    links = []
-    for line in (line.strip() for line in text.splitlines()):
-        if not line:
-            continue
-        parts = [part.strip() for part in line.split(",")]
-        if len(parts) != 5:
-            raise ValueError(f"Expected 5 fields, got {len(parts)}: {line!r}")
-        try:
-            gen, width, memory = int(parts[2]), int(parts[3]), int(parts[4])
-        except ValueError as error:
-            raise ValueError(f"Non-integer numeric field: {line!r}") from error
-        links.append(GpuLink(normalize_bus_id(parts[0]), parts[1], gen, width, memory))
-    return links
 
 
 def plan_placement(links: list[GpuLink]) -> dict[str, GpuLink]:
@@ -138,11 +96,15 @@ def _check_nvidia_smi() -> tuple[Check, list[GpuLink] | None, dict[str, GpuLink]
             NVIDIA_SMI_COMMAND, check=True, capture_output=True, text=True, timeout=30
         )
         links = parse_nvidia_smi(result.stdout)
-        placement = plan_placement(links)
-        detail = ", ".join(f"{link.bus_id} PCIe gen{link.pcie_gen} x{link.pcie_width}" for link in links)
-        return Check("nvidia-smi", "pass", detail), links, placement
     except Exception as error:
         return Check("nvidia-smi", "fail", str(error)), None, None
+    try:
+        placement = plan_placement(links)
+    except ValueError as error:
+        # Keep the parsed links so the device order check can still compare them.
+        return Check("nvidia-smi", "fail", str(error)), links, None
+    detail = ", ".join(f"{link.bus_id} PCIe gen{link.pcie_gen} x{link.pcie_width}" for link in links)
+    return Check("nvidia-smi", "pass", detail), links, placement
 
 
 def run_checks(repo_root: Path) -> tuple[list[Check], dict[str, GpuLink] | None]:
@@ -176,7 +138,11 @@ def run_checks(repo_root: Path) -> tuple[list[Check], dict[str, GpuLink] | None]
 
     torch_bus_ids = []
     for index in range(count):
-        props = torch.cuda.get_device_properties(index)
+        try:
+            props = torch.cuda.get_device_properties(index)
+        except Exception as error:
+            checks.append(Check(f"cuda:{index}", "fail", str(error)))
+            continue
         bus_id = bus_id_from_props(props.pci_domain_id, props.pci_bus_id, props.pci_device_id)
         torch_bus_ids.append(bus_id)
 
@@ -249,7 +215,7 @@ def format_report(checks: list[Check], placement: dict[str, GpuLink] | None) -> 
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     checks, placement = run_checks(repo_root)
     print(format_report(checks, placement))
