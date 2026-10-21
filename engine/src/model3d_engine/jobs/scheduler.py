@@ -29,6 +29,7 @@ class Scheduler:
         self._paint_queue: asyncio.Queue[str] = asyncio.Queue()
         self._waiting: list[str] = []
         self._tasks: list[asyncio.Task] = []
+        self.start_error: JobError | None = None
 
     @property
     def ready(self) -> bool:
@@ -36,9 +37,20 @@ class Scheduler:
         return self._shape.ready and self._paint.ready
 
     async def start(self) -> None:
-        """Start both runners and the two stage loops."""
-        await self._shape.start()
-        await self._paint.start()
+        """Start both runners and the two stage loops; a failure is kept in start_error.
+
+        The initial load is not retried: the failures seen so far (a placement OOM, missing
+        weights) repeat on every attempt, so the engine reports them and waits for a fix.
+        """
+        try:
+            await self._shape.start()
+            await self._paint.start()
+        except StageError as error:
+            self.start_error = JobError(code=error.code, message=error.message)
+            raise
+        except Exception as error:
+            self.start_error = JobError(code="internal_error", message=f"{type(error).__name__}: {error}")
+            raise
         self._tasks = [asyncio.create_task(self._shape_loop()), asyncio.create_task(self._paint_loop())]
 
     async def stop(self) -> None:

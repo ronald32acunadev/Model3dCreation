@@ -112,7 +112,7 @@ Runtime data lives outside the repository tree by default, in `~/.local/share/mo
 
 ## 5. API contracts (v1)
 
-Base URL `http://127.0.0.1:8765/v1`. Bound to loopback only, so there is no authentication in v1. All timestamps are ISO 8601 UTC.
+Base URL `http://127.0.0.1:8765/v1`. Bound to loopback only, so there is no authentication in v1. Because a browser on the same machine can still reach loopback, the engine refuses a non-loopback `Host` header (DNS rebinding) and any `POST` or `DELETE` whose `Origin` is not in `MODEL3D_ALLOWED_ORIGINS` (empty by default), with `403 forbidden_origin`; clients without an `Origin` header are unaffected. All timestamps are ISO 8601 UTC.
 
 ### Job states
 
@@ -157,7 +157,7 @@ Response `202 Accepted`:
 }
 ```
 
-Errors use one shape, with a stable `code`: `400 invalid_image`, `400 invalid_options`, `413 image_too_large`, `503 engine_not_ready`.
+Errors use one shape, with a stable `code`: `400 invalid_image`, `400 invalid_options`, `403 forbidden_origin`, `413 image_too_large`, `503 engine_not_ready`. A stage task that runs longer than `MODEL3D_STAGE_TIMEOUT_S` (default 900 s, against measured 77 s shape and 60 s paint) fails the job with `stage_timeout`; the stuck worker is killed and restarted.
 
 ```json
 { "error": { "code": "invalid_options", "message": "target_faces must be at least 1000" } }
@@ -170,7 +170,7 @@ Errors use one shape, with a stable `code`: `400 invalid_image`, `400 invalid_op
 | `GET /v1/jobs/{job_id}` | The job (same shape as the `202` body, plus `progress`, `stage`, `error`, `finished_at`) |
 | `GET /v1/jobs/{job_id}/result` | `model/gltf-binary` once `succeeded`; `409 job_not_finished` otherwise |
 | `DELETE /v1/jobs/{job_id}` | `202` and the job moves to `cancelled` at the next stage boundary |
-| `GET /v1/health` | Engine readiness, and per GPU: bus ID, stage, model loaded, VRAM used and total |
+| `GET /v1/health` | Engine readiness, per GPU (bus ID, stage, model loaded, VRAM used and total), and `error` (`code`, `message`) when the workers failed to load |
 
 ### WebSocket `GET /v1/jobs/{job_id}/events`
 
@@ -217,4 +217,5 @@ These are the author's calls, not the owner's, and are open to change:
 2. Hunyuan3D 2.1 only in v1; TRELLIS and TripoSR are out.
 3. Python 3.11 + PyTorch 2.9.1+cu130 + CUDA 13.1 toolkit.
 4. A shared `contracts` package instead of duplicating schemas in each client.
-5. Port 8765, loopback only, no authentication.
+5. Port 8765, loopback only, no authentication; a loopback `Host` check and an `Origin` allowlist keep browser pages out.
+6. A failed initial model load is reported in health, not retried: the only start failure seen so far (a placement OOM in phase 2) repeats on every attempt, and four retries would hide it behind minutes of reloads. Workers that crash after loading still restart on their own.

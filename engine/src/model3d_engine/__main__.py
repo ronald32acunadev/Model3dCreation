@@ -1,6 +1,5 @@
 """Engine entry point: python -m model3d_engine."""
 
-import ipaddress
 import logging
 import subprocess
 import sys
@@ -10,7 +9,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from model3d_engine.api.app import create_app
-from model3d_engine.config import Settings, load_settings
+from model3d_engine.config import Settings, is_loopback_host, load_settings
 from model3d_engine.gpu.topology import (
     NVIDIA_SMI_COMMAND,
     GpuLink,
@@ -58,12 +57,19 @@ def build_engine(
     placement = resolve_placement(read_links() if links is None else links, settings.shape_bus, settings.paint_bus)
     env = stage_env(settings)
     hunyuan_dir = str(settings.hunyuan_dir)
-    shape = ProcessStageRunner(shape_factory, {"hunyuan_dir": hunyuan_dir, "device": placement.shape}, env, name="shape")
+    shape = ProcessStageRunner(
+        shape_factory,
+        {"hunyuan_dir": hunyuan_dir, "device": placement.shape},
+        env,
+        name="shape",
+        task_timeout_s=settings.stage_timeout_s,
+    )
     paint = ProcessStageRunner(
         paint_factory,
         {"hunyuan_dir": hunyuan_dir, "device": placement.paint, "helper_device": placement.helpers},
         env,
         name="paint",
+        task_timeout_s=settings.stage_timeout_s,
     )
     store, bus = JobStore(settings.jobs_dir), EventBus()
     scheduler = Scheduler(store, bus, shape, paint)
@@ -85,20 +91,11 @@ def build_engine(
     return create_app(settings, scheduler, store, bus, health)
 
 
-def _is_loopback(host: str) -> bool:
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
 def main() -> None:
     """Serve the engine on the configured loopback host and port."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = load_settings()
-    if not _is_loopback(settings.host):
+    if not is_loopback_host(settings.host):
         print("MODEL3D_HOST must be a loopback address", file=sys.stderr)
         raise SystemExit(2)
     uvicorn.run(build_engine(settings), host=settings.host, port=settings.port)

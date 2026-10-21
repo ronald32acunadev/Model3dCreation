@@ -39,7 +39,7 @@ def test_build_engine_with_fake_factories_serves_health_and_jobs(tmp_path):
     settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy")
     memory = {"0000:25:00.0": (100, 12227), "0000:29:00.0": (200, 12227)}
     app = build_engine(settings, links=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=lambda: memory)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
         deadline = time.monotonic() + 30
         while not client.get("/v1/health").json()["ready"]:
             assert time.monotonic() < deadline
@@ -50,6 +50,7 @@ def test_build_engine_with_fake_factories_serves_health_and_jobs(tmp_path):
                 {"bus_id": "0000:25:00.0", "stage": "shape", "ready": True, "memory_used_mib": 100, "memory_total_mib": 12227},
                 {"bus_id": "0000:29:00.0", "stage": "paint", "ready": True, "memory_used_mib": 200, "memory_total_mib": 12227},
             ],
+            "error": None,
         }
         job_id = post_job(client, options={"texture": False}).json()["job_id"]
         deadline = time.monotonic() + 30
@@ -68,10 +69,24 @@ def test_health_survives_nvidia_smi_failure(tmp_path):
         raise FileNotFoundError("nvidia-smi")
 
     app = build_engine(settings, links=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=broken_reader)
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1:8765") as client:
         deadline = time.monotonic() + 30
         while not (health := client.get("/v1/health")).json()["ready"]:
             assert health.status_code == 200
             assert time.monotonic() < deadline
             time.sleep(0.05)
         assert [gpu["memory_used_mib"] for gpu in health.json()["gpus"]] == [None, None]
+
+
+def test_build_engine_passes_stage_timeout(tmp_path, monkeypatch):
+    timeouts = []
+    real = entry.ProcessStageRunner
+
+    def capture(*args, **kwargs):
+        timeouts.append(kwargs.get("task_timeout_s"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(entry, "ProcessStageRunner", capture)
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", stage_timeout_s=42.0)
+    build_engine(settings, links=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=dict)
+    assert timeouts == [42.0, 42.0]

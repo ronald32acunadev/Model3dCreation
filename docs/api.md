@@ -6,7 +6,11 @@ The engine listens on `http://127.0.0.1:8765/v1` (loopback only, no authenticati
 uv run --project engine python -m model3d_engine
 ```
 
-The port answers as soon as the engine starts. Both GPU workers load their models in the background (about 50 s); until they are ready, `GET /v1/health` reports `"ready": false` and job submissions answer `503 engine_not_ready`. A worker that crashes restarts on its own (retrying after 0, 5, 30, and 120 s); jobs that reach it meanwhile wait for the restart. Shared request and event models live in the `model3d_contracts` package (`contracts/`).
+The port answers as soon as the engine starts. Both GPU workers load their models in the background (about 50 s); until they are ready, `GET /v1/health` reports `"ready": false` and job submissions answer `503 engine_not_ready`. If a worker fails to load, the engine does not retry: health reports the failure in `error` and submissions answer `503 engine_not_ready` with the cause, until the engine is fixed and restarted. A worker that crashes restarts on its own (retrying after 0, 5, 30, and 120 s); jobs that reach it meanwhile wait for the restart. A task that runs longer than `MODEL3D_STAGE_TIMEOUT_S` (default 900 s; measured runs take 60-80 s) fails with `stage_timeout`, and its stuck worker is killed and restarted the same way. Shared request and event models live in the `model3d_contracts` package (`contracts/`).
+
+### Browser access
+
+Every request must carry a loopback `Host` header (`127.0.0.1`, `localhost`, `[::1]`, with any port), which blocks DNS rebinding. A `POST` or `DELETE` that carries an `Origin` header is refused unless that origin is listed in `MODEL3D_ALLOWED_ORIGINS` (comma-separated, for example `http://localhost:5173`; empty by default), so a web page cannot queue or cancel jobs. Clients that send no `Origin`, such as curl and the desktop app, are not affected. Refused HTTP requests answer `403 forbidden_origin`; a refused WebSocket is closed with code `4403` before it opens.
 
 ## Jobs
 
@@ -58,7 +62,7 @@ Answers `202` with the job:
 | `GET /v1/jobs/{id}` | `200` job | `404 job_not_found` |
 | `GET /v1/jobs/{id}/result` | `200` `model/gltf-binary` | `404 job_not_found`, `409 job_not_finished` |
 | `DELETE /v1/jobs/{id}` | `202` job; a queued job is cancelled at once, a running one at its next stage boundary | `404 job_not_found`, `409 job_finished` |
-| `GET /v1/health` | `200` `{"ready": bool, "gpus": [{"bus_id", "stage", "ready", "memory_used_mib", "memory_total_mib"}]}` | |
+| `GET /v1/health` | `200` `{"ready": bool, "gpus": [{"bus_id", "stage", "ready", "memory_used_mib", "memory_total_mib"}], "error": null or {"code", "message"}}`; `error` is set when the workers failed to load (`worker_start_failed`, or `internal_error`) | |
 
 ## Events: `WS /v1/jobs/{id}/events`
 
@@ -85,9 +89,10 @@ Every error response has the same body:
 | `invalid_image` | `POST /v1/jobs`: missing file, or not a PNG or JPEG (400) |
 | `image_too_large` | `POST /v1/jobs`: over 20 MiB (413) |
 | `invalid_options` | `POST /v1/jobs`: options are not valid JSON or break a rule (400) |
-| `engine_not_ready` | `POST /v1/jobs` while the workers load or restart (503) |
+| `engine_not_ready` | `POST /v1/jobs` while the workers load or restart, or after they failed to load; the message then names the cause (503) |
+| `forbidden_origin` | Any route: the `Host` is not loopback, or a `POST` or `DELETE` carries an `Origin` not in `MODEL3D_ALLOWED_ORIGINS` (403) |
 | `job_not_found` | Any job route with an unknown id (404) |
 | `job_not_finished` | Result requested before `succeeded` (409) |
 | `job_finished` | `DELETE` on a job that already ended (409) |
 
-Job failures (in the job's `error` and the `failed` event): `gpu_out_of_memory`, `worker_crashed` (the stage process died while running this job; it restarts on its own), `worker_unavailable` (the stage could not be restarted; see the engine log), `invalid_image` (the stored input image is missing), `internal_error`.
+Job failures (in the job's `error` and the `failed` event): `gpu_out_of_memory`, `worker_crashed` (the stage process died while running this job; it restarts on its own), `worker_unavailable` (the stage could not be restarted; see the engine log), `stage_timeout` (the stage ran longer than `MODEL3D_STAGE_TIMEOUT_S`; its worker is killed and restarts on its own), `invalid_image` (the stored input image is missing), `internal_error`.

@@ -79,4 +79,4 @@ Every line must be `[PASS]` or `[WARN]`, ending with `RESULT: OK`. The report al
 uv run --project engine python -m model3d_engine
 ```
 
-It serves `http://127.0.0.1:8765/v1` (see [api.md](api.md)) and loads both workers in about 50 s. `MODEL3D_HOME`, `MODEL3D_PORT`, `MODEL3D_SHAPE_BUS`, `MODEL3D_PAINT_BUS`, and `MODEL3D_HUNYUAN_DIR` override the defaults; `MODEL3D_HOST` must stay a loopback address.
+It serves `http://127.0.0.1:8765/v1` (see [api.md](api.md)) and loads both workers in about 50 s. `MODEL3D_HOME`, `MODEL3D_PORT`, `MODEL3D_SHAPE_BUS`, `MODEL3D_PAINT_BUS`, `MODEL3D_HUNYUAN_DIR`, `MODEL3D_ALLOWED_ORIGINS` (browser origins allowed to submit or cancel jobs, comma-separated, empty by default), and `MODEL3D_STAGE_TIMEOUT_S` (default 900) override the defaults; `MODEL3D_HOST` must stay a loopback address.
