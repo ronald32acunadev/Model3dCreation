@@ -103,5 +103,5 @@ Measured on the owner's machine (`docs/architecture.md`, section 2):
 
 - Unit tests cover mode selection for fake inventories: 2x12 GB (mode 1, today's placement), 1x24 GB (mode 2), 1x12 GB (mode 3), a GPU that fits shape but not paint (mode 4), no GPU and an unsupported GPU (mode 5), the forced modes, and invalid overrides.
 - Mode 3 runs end to end on the owner's machine with one card hidden, and a textured GLB comes out.
-- Mode 1 on the owner's machine is no slower than before (shape about 77 s, paint about 60 s).
+- Mode 1 on the owner's machine keeps shape at about 77-80 s. Paint runs on the card with the most free VRAM (the owner's rule, decided after the trade-off was explained), which on that machine is the x2 card: about 70 s instead of 60 s, accepted for the extra headroom.
 - `docs/api.md`, `docs/architecture.md`, and `docs/setup.md` describe the modes, the new settings, `texture_unavailable`, and the health fields.

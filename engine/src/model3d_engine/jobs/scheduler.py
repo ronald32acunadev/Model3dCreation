@@ -218,26 +218,41 @@ class Scheduler:
             queue.put_nowait(job_id)
         return [job(job_id) for job_id in settled]
 
+    def _name(self, runner: StageRunner) -> str:
+        return "shape" if runner is self._shape else "paint"
+
     async def _load(self, runner: StageRunner) -> bool:
         """Swap mode: free the GPU from the loaded runner and load `runner`, retrying with the
-        runner's restart delays. Returns whether it loaded."""
+        runner's restart delays. Any error counts as a failed attempt. Returns whether it loaded."""
         self._swapping = True
         try:
             if self._loaded is not None:
-                await self._loaded.unload()
+                try:
+                    await self._loaded.unload()
+                except Exception:
+                    logger.exception("Could not unload the %s worker", self._name(self._loaded))
                 self._loaded = None
             for delay in (0.0, *getattr(runner, "restart_delays", ())):
                 await asyncio.sleep(delay)
                 try:
                     await runner.start()
-                except StageError as error:
-                    logger.error("Could not load the %s worker: %s", "shape" if runner is self._shape else "paint", error)
+                except Exception as error:
+                    logger.error("Could not load the %s worker: %s", self._name(runner), error)
                     continue
                 self._loaded = runner
                 return True
             return False
         finally:
             self._swapping = False
+
+    def _fail_queue(self, queue: asyncio.Queue[str], message: str) -> None:
+        while not queue.empty():
+            job_id = queue.get_nowait()
+            if job_id in self._waiting:
+                self._waiting.remove(job_id)
+            record = self._store.get(job_id)
+            if record is not None and not record.is_final:
+                self._fail(record, "worker_unavailable", message)
 
     async def _swap_loop(self) -> None:
         stages = {self._shape: (self._shape_queue, self._shape_job), self._paint: (self._paint_queue, self._paint_job)}
@@ -253,17 +268,22 @@ class Scheduler:
             if loaded_queue is not None and not loaded_queue.empty():
                 await loaded_job(loaded_queue.get_nowait())
                 continue
-            target = self._paint if self._loaded is self._shape else self._shape
-            if self._loaded is None and not self._shape_queue.empty():
-                target = self._shape
+            if self._loaded is None:
+                target = self._shape if not self._shape_queue.empty() else self._paint
+            else:
+                target = self._paint if self._loaded is self._shape else self._shape
             if await self._load(target):
                 continue
             # The stage could not load: fail its waiting jobs, then take the other stage back so
             # the engine stays ready for new work.
-            queue = stages[target][0]
-            while not queue.empty():
-                record = self._store.get(queue.get_nowait())
-                if record is not None and not record.is_final:
-                    name = "shape" if target is self._shape else "paint"
-                    self._fail(record, "worker_unavailable", f"{name} worker could not be loaded")
-            await self._load(self._paint if target is self._shape else self._shape)
+            self._fail_queue(stages[target][0], f"{self._name(target)} worker could not be loaded")
+            other = self._paint if target is self._shape else self._shape
+            if await self._load(other):
+                continue
+            # Neither worker loads: report it like a failed start, so health explains the state
+            # and submissions get 503 with the cause.
+            message = "Neither the shape nor the paint worker could be loaded; see the engine log"
+            self._fail_queue(self._shape_queue, message)
+            self._fail_queue(self._paint_queue, message)
+            self.start_error = JobError(code="worker_unavailable", message=message)
+            return

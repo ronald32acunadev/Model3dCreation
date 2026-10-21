@@ -266,3 +266,56 @@ async def test_swap_paint_load_failure_fails_waiting_jobs(tmp_path):
     assert textured.error.code == "worker_unavailable"
     assert untextured.state == JobState.succeeded
     assert log == [("load", SHAPE), ("unload", SHAPE), ("load", SHAPE)]
+
+
+async def test_swap_double_load_failure_reports_and_fails_jobs(tmp_path):
+    """Final review #1: when the stage and the recovery both fail to load, the engine says why
+    instead of staying not-ready with no error, and no queued job is left hanging."""
+    scheduler, store, bus, log = await make_swap(tmp_path, shape_delay=0.2)
+    shape, paint = scheduler.runners
+    textured, _ = await submit(scheduler, store, bus)
+    waiting, _ = await submit(scheduler, store, bus)
+    while textured.state != JobState.shaping:
+        await asyncio.sleep(0.01)
+    paint.start_error = StageError("worker_start_failed", "paint out of memory while loading")
+    shape.start_error = StageError("worker_start_failed", "shape out of memory while loading")
+    await wait_final(textured)
+    await wait_final(waiting)
+    await scheduler.stop()
+    assert textured.error.code == "worker_unavailable"
+    assert waiting.state == JobState.failed
+    assert scheduler.ready is False
+    assert scheduler.start_error.code == "worker_unavailable"
+    assert scheduler.start_error.message == "Neither the shape nor the paint worker could be loaded; see the engine log"
+
+
+async def test_swap_unexpected_load_error_does_not_stop_the_loop(tmp_path):
+    """Final review #5: an OSError from spawning a worker counts as a failed load."""
+    scheduler, store, bus, log = await make_swap(tmp_path)
+    shape, paint = scheduler.runners
+    paint.start_error = OSError("too many open files")
+    textured, _ = await submit(scheduler, store, bus)
+    await wait_final(textured)
+    untextured, _ = await submit(scheduler, store, bus, JobOptions(texture=False))
+    await wait_final(untextured)
+    await scheduler.stop()
+    assert textured.error.code == "worker_unavailable"
+    assert untextured.state == JobState.succeeded
+
+
+async def test_swap_cancel_of_a_job_already_waiting_for_paint(tmp_path):
+    """Plan Review Focus 4: a job in the paint queue cancelled while another shapes never loads paint."""
+    scheduler, store, bus, log = await make_swap(tmp_path, shape_delay=0.2)
+    first, _ = await submit(scheduler, store, bus)
+    second, _ = await submit(scheduler, store, bus, JobOptions(texture=False))
+    while second.state != JobState.shaping:
+        await asyncio.sleep(0.01)
+    assert first.state == JobState.shaping  # shaped, now queued for paint
+    assert scheduler.cancel(first.job_id) is True
+    await wait_final(first)
+    await wait_final(second)
+    await asyncio.sleep(0.1)
+    await scheduler.stop()
+    assert first.state == JobState.cancelled
+    assert second.state == JobState.succeeded
+    assert ("load", PAINT) not in log
