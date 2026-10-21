@@ -6,7 +6,7 @@ from model3d_engine.config import load_settings
 def test_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     s = load_settings({}, repo_root=tmp_path)
-    assert s.home == tmp_path / "home" / ".local/share/model3d"
+    assert s.home == tmp_path / "data"
     assert s.host == "127.0.0.1"
     assert s.port == 8765
     assert s.shape_bus is None

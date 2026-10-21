@@ -135,10 +135,11 @@ The paint pipeline imports `bpy` (`DifferentiableRenderer/mesh_utils.py`) to con
 │   └── tests/
 ├── blender_addon/model3d_bridge/               # Blender extension (phase 4)
 ├── scripts/verify_gpus.py                      # phase 1 environment check
+├── data/                                       # git-ignored runtime data: hf/, u2net/, jobs/, library/
 └── vendor/                                     # git-ignored: Hunyuan3D-2.1 clone
 ```
 
-Runtime data lives outside the repository tree by default, in `~/.local/share/model3d/` (Hugging Face cache in `hf/`, job folders), overridable with `MODEL3D_HOME`. Environment setup: [setup.md](setup.md).
+Runtime data lives in the git-ignored `data/` folder at the repository root (Hugging Face cache in `hf/`, rembg model in `u2net/`, engine job folders in `jobs/`, the desktop app's library in `library/`), so the project folder is self-contained; `MODEL3D_HOME` overrides it. Environment setup: [setup.md](setup.md).
 
 ## 5. API contracts (v1)
 

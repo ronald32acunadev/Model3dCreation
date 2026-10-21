@@ -10,7 +10,7 @@ It started as a template holding agent rule files and is becoming the local AI 3
 
 ## Commands
 
-The engine is a uv project in `engine/` (Python 3.11, PyTorch 2.9.1+cu130). Hunyuan3D 2.1 is a git-ignored clone in `vendor/`, and weights live in `~/.local/share/model3d/hf` (set `HF_HOME` to it).
+The engine is a uv project in `engine/` (Python 3.11, PyTorch 2.9.1+cu130). Hunyuan3D 2.1 is a git-ignored clone in `vendor/`, and weights live in the git-ignored `data/hf` (the engine's default `MODEL3D_HOME` is `data/`).
 
 ```bash
 cd engine && uv run pytest                         # unit tests, no GPU

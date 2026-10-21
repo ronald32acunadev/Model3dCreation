@@ -45,14 +45,14 @@ c++ -O3 -Wall -shared -std=c++11 -fPIC $($PY -m pybind11 --includes) mesh_inpain
 ## 4. Model weights (about 19 GB)
 
 ```bash
-export HF_HOME=~/.local/share/model3d/hf
+export HF_HOME=data/hf   # run from the repository root; the engine reads data/ by default
 engine/.venv/bin/python -c "
 from huggingface_hub import snapshot_download as get
 get('tencent/Hunyuan3D-2.1', allow_patterns=['hunyuan3d-dit-v2-1/*', 'hunyuan3d-paintpbr-v2-1/*'])
 get('facebook/dinov2-giant', allow_patterns=['*.json', 'model.safetensors'])"
 ```
 
-The background-removal model (`rembg`, u2net) downloads on first use.
+The background-removal model (`rembg`, u2net) downloads on first use, into `data/u2net/`. All runtime data (weights, u2net, job folders, the desktop app's library) lives in the git-ignored `data/` folder at the repository root; `MODEL3D_HOME` points it elsewhere.
 
 ## 5. Patch the paint attention device
 
@@ -60,7 +60,7 @@ Upstream hardcodes `.to("cuda:0")` in the paint attention processor, so paint fa
 
 ```bash
 git -C vendor/Hunyuan3D-2.1 apply ../../engine/patches/hunyuan3d-paint-device.patch
-F=$(ls -d ~/.local/share/model3d/hf/hub/models--tencent--Hunyuan3D-2.1/snapshots/*/hunyuan3d-paintpbr-v2-1/unet/attn_processor.py)
+F=$(ls -d data/hf/hub/models--tencent--Hunyuan3D-2.1/snapshots/*/hunyuan3d-paintpbr-v2-1/unet/attn_processor.py)
 cp --remove-destination "$(readlink -f "$F")" "$F"
 patch "$F" engine/patches/hunyuan3d-paint-device.patch
 ```
