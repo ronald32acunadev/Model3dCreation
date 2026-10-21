@@ -11,11 +11,6 @@ from model3d_engine.jobs.store import JobRecord, JobStore
 TS = datetime(2026, 10, 20, tzinfo=UTC)
 
 
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
 def make_record(tmp_path) -> JobRecord:
     return JobStore(tmp_path).create(JobOptions(), b"png", ".png")
 
