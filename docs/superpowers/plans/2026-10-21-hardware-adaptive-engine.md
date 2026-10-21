@@ -16,7 +16,7 @@
 - Mode names, exactly: `dual_gpu`, `single_gpu_resident`, `single_gpu_swap`, `shape_only`, `unsupported`.
 - New error codes, exactly: `texture_unavailable` (400, `POST /v1/jobs`), `mode_unavailable` (startup error in health `error`).
 - Settings: `MODEL3D_MODE` (optional, one of the mode names except `unsupported`); `MODEL3D_SHAPE_BUS` and `MODEL3D_PAINT_BUS` become optional with no default, and setting only one is a startup error.
-- Thresholds are sized for `final` quality, with a 1 GiB safety margin, as named constants in `engine/src/model3d_engine/gpu/modes.py`.
+- Thresholds are sized for `final` quality, with a 512 MiB safety margin (owner decision after Task 1), as named constants in `engine/src/model3d_engine/gpu/modes.py`.
 - Mode selection uses **free** VRAM measured once before any worker spawns.
 - The API process never imports torch.
 - On the owner's machine (2x RTX 5070, shape bus `0000:25:00.0` on PCIe 2.0 x2, paint bus `0000:29:00.0` on PCIe 3.0 x16), auto mode must give `dual_gpu` with today's placement and today's speed (shape about 77 s, paint about 60 s).
