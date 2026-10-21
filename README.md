@@ -30,8 +30,11 @@ This repository provides standardized configurations and operational guidelines 
    - **Secondary Provider**: `pumbalama` (Ollama on port `11434`, MCP tool `chat_completion`), dynamically targeting the active model in Ollama.
    - **Fallback**: The host model (Gemini, Claude, etc.) synthesizes code directly if local providers are unavailable.
 
-3. **Outdated Knowledge Safeguard**
-   - The orchestrating agent verifies current library versions and API signatures from live docs or dependencies, passing explicit signatures to the local model to prevent hallucinated deprecated code.
+3. **Library Context Brief (Outdated Knowledge Safeguard)**
+   - Local models have no internet access and outdated knowledge, so every code request must include a mandatory Library Context Brief.
+   - The orchestrating agent resolves the exact installed versions from the lockfile and the current API from Context7, official docs, or installed type definitions.
+   - The brief lists, per library: runtime and exact version, import paths and signatures, recent breaking changes ("use X, not Y"), forbidden deprecated APIs, a verified docs example, and an existing project call site.
+   - Answers that use APIs outside the brief or the existing code are rejected and sent back with the specific defect.
 
 ## Included Subagents
 

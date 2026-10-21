@@ -46,22 +46,53 @@ Local models are the owner's dedicated code synthesizers, exposed to agents as M
 ## Workflow
 
 1. **Explore and Plan**: Explore the code and decide what needs to change. Do not ask local models to explore; they have no filesystem or repository access.
-2. **Prepare Prompt**:
-   - Call `pumbastudio` (or fallback to `pumbalama`) with a self-contained prompt.
+2. **Build the Library Context Brief**: Before every code request, resolve the current state of every library the task touches (see the next section). Never send a code request without it.
+3. **Prepare Prompt**:
+   - Call `pumbastudio` (or fallback to `pumbalama`) with a self-contained prompt that follows the Prompt Template below.
    - **System message**: Include project rules that apply (language, architecture constraints, style).
-   - **User message**: Include the exact task, target file paths, relevant existing code verbatim, and expected output format (full file or exact replacement block).
-3. **Review**: Check the answer against the request, project rules, and language requirements. If incorrect or incomplete, send a follow-up with the specific defect.
-4. **Apply and Test**: Apply the code to files using file tools and run applicable tests.
+   - **User message**: Include the Library Context Brief, the exact task, target file paths, relevant existing code verbatim, and expected output format (full file or exact replacement block).
+4. **Review**: Check the answer against the request, the Library Context Brief, project rules, and language requirements. Reject any API, import, or option that is not in the brief or in the existing code. If incorrect or incomplete, send a follow-up naming the specific defect and the correct API.
+5. **Apply and Test**: Apply the code to files using file tools and run applicable tests.
 
-## Be Explicit: Local Models Have Outdated Knowledge
+## Library Context Brief (MANDATORY)
 
-Local models have fixed knowledge cutoffs and no internet or repository access. They do not know latest library versions or newly introduced APIs:
+Local models have fixed knowledge cutoffs and no internet or repository access. They do not know the latest library versions, newly introduced APIs, or recent breaking changes, and they will confidently write code against an older API. The quality of their code depends on how specific the agent is.
 
-- The agent, not the local model, resolves what is current (via Context7, official docs, or `node_modules`).
-- State the exact library names and versions targeted.
-- Provide exact function signatures, option names, import paths, and usage examples.
-- Specify deprecated or removed features that must not be used.
-- Detail the change step by step: functions, behavior, inputs/outputs, edge cases.
+The agent, not the local model, resolves what is current, using in this order: the project's lockfile and manifest (`package-lock.json`, `pnpm-lock.yaml`, `pyproject.toml`, `go.mod`, `Cargo.lock`, ...) for the installed version; Context7 or the official docs and changelog for that exact version; the installed package source or type definitions (`node_modules`, `site-packages`, ...) when docs are unclear.
+
+Every code request includes a brief with, for each library the task touches:
+
+1. **Runtime and version**: Language and runtime version (e.g., Node 22, Python 3.12) and the exact installed library version, taken from the lockfile, not guessed.
+2. **Current API surface**: Exact import paths, function and class signatures, option names, and return types the task needs, copied from the docs or type definitions for that version.
+3. **Recent changes**: Breaking changes, renamed or moved APIs, and new recommended patterns introduced in recent major or minor versions, stated as "use X, not Y".
+4. **Forbidden APIs**: Deprecated or removed functions, options, and patterns that must not appear in the answer.
+5. **Minimal working example**: One short, verified usage example from the official docs for that version.
+6. **Project usage**: How the project already uses the library (an existing call site verbatim), so the answer matches local conventions.
+
+Then detail the change itself step by step: functions to add or change, behavior, inputs and outputs, error handling, and edge cases. If a fact cannot be verified, say so in the prompt instead of letting the model guess.
+
+### Prompt Template
+
+```text
+## Library Context Brief
+- Runtime: <language + version>
+- <library>@<exact version>
+  - Imports: <exact import statements>
+  - API: <signatures and options used by this task>
+  - Changed in recent versions: use <new>, not <old>
+  - Do NOT use: <deprecated/removed APIs>
+  - Example (official docs): <short snippet>
+  - Existing project usage: <verbatim call site>
+
+## Task
+<exact change, step by step, with inputs/outputs and edge cases>
+
+## Target files
+<paths + relevant existing code verbatim>
+
+## Output format
+<full file | exact replacement block>. Use only the APIs listed above.
+```
 
 ## MCP Server Setup Reference
 
@@ -88,3 +119,10 @@ Each agent needs the servers registered in its MCP configuration:
   }
 }
 ```
+
+## Project Context
+
+- `Fases/` holds the phase specs (0-5) for a local AI 3D-generation engine: a FastAPI backend that splits work across two GPUs, a PySide6 desktop client, and a Blender add-on. Every code block, file path, and JSON payload was stripped from those documents, and they are written in Spanish. Treat them as intent only, never as an API source or file layout.
+- LM Studio (`pumbastudio`) keeps its model in GPU memory, and 3D generation needs about 10-12 GB of VRAM per card. Unload the LM Studio model before GPU jobs or GPU tests.
+- `.atl/` and `.codegraph/` are local tooling state with their own `.gitignore`. Never stage with a blanket `git add`.
+- Commits follow Conventional Commits, with no AI attribution lines.
