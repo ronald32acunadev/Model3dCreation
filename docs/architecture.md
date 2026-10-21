@@ -43,6 +43,17 @@ The phase 2 spec puts shape on the fast x16 card and paint on the x2 card. This 
 
 Both workers load in about 51 s when the engine starts (phase 2 end-to-end test).
 
+Per-stage VRAM, measured on GPU1 with `scripts/measure_stage_vram.py` (2026-10-21, demo image). Figures are nvidia-smi MiB above the card's idle use, so they include each worker's CUDA context; "held" is after loading, "peak" is the maximum while running one job. These numbers size the run modes.
+
+| Stage | Quality | Held after load | Peak | Load | Run |
+| :--- | :--- | ---: | ---: | ---: | ---: |
+| Shape | final | 7198 MiB | 8957 MiB | 31.8 s | 81.7 s |
+| Shape | draft | 7216 MiB | 8334 MiB | 26.9 s | 31.2 s |
+| Paint | final | 4936 MiB | 10168 MiB | 18.9 s | 63.3 s |
+| Paint | draft | 4938 MiB | 10168 MiB | 14.3 s | 54.7 s |
+
+At idle GPU0 had 11761 MiB free and GPU1 (which drives the desktop) 11173 MiB. Loading both workers on one 12 GB card fails: paint runs out of memory while loading next to the resident shape worker.
+
 Why this split:
 
 - The two cards hold 24 GB together, but that memory is not pooled: the RTX 5070 has no NVLink, so each tensor lives on one card and anything shared crosses PCIe. Upstream quotes about 10 GB for shape and 21 GB for paint, so paint cannot sit on one card.
