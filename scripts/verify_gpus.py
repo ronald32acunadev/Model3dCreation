@@ -215,9 +215,25 @@ def format_report(checks: list[Check], placement: dict[str, GpuLink] | None) -> 
     return "\n".join(lines)
 
 
+def format_mode(plan) -> str:
+    return f"engine mode -> {plan.name.value}: {plan.reason}"
+
+
+def engine_mode_line() -> str:
+    """The mode the engine would pick right now, from the free VRAM before it loads anything."""
+    from model3d_engine.gpu.modes import ModeUnavailable, choose_mode
+    from model3d_engine.gpu.probe import probe_gpus
+
+    try:
+        return format_mode(choose_mode(probe_gpus()))
+    except ModeUnavailable as error:
+        return f"engine mode -> unavailable: {error.message}"
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     checks, placement = run_checks(repo_root)
+    print(engine_mode_line())
     print(format_report(checks, placement))
     return 0 if all(check.status != "fail" for check in checks) else 1
 

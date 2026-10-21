@@ -1,4 +1,4 @@
-from model3d_engine.gpu.probe import arch_supported, merge_inventory, probe_gpus
+from model3d_engine.gpu.probe import arch_supported, merge_inventory, parse_free_memory, probe_gpus
 from model3d_engine.gpu.topology import parse_nvidia_smi
 
 LINKS = parse_nvidia_smi(
@@ -71,3 +71,15 @@ def test_probe_failure_reports_reason():
     assert reported.problem == "GPU probe failed: CUDA driver version is insufficient"
     hung = probe_gpus(timeout_s=1, target="tests.probe_stubs:hanging_probe")
     assert hung.problem == "GPU probe did not answer within 1 s"
+
+
+def test_free_memory_comes_from_nvidia_smi_when_available():
+    """torch's free memory already excludes the probe's own CUDA context, while the mode
+    thresholds are nvidia-smi figures that include a worker's context, so nvidia-smi read
+    before the probe starts is the consistent number."""
+    free = parse_free_memory("00000000:25:00.0, 11761\n00000000:29:00.0, 11166\n")
+    assert free == {"0000:25:00.0": 11761, "0000:29:00.0": 11166}
+    inventory = merge_inventory([raw(0, "0000:25:00.0", free_mib=11590), raw(1, "0000:29:00.0", free_mib=10336)], LINKS, free)
+    assert [gpu.memory_free_mib for gpu in inventory.gpus] == [11761, 11166]
+    fallback = merge_inventory([raw(0, "0000:29:00.0", free_mib=10336)], LINKS, None)
+    assert fallback.gpus[0].memory_free_mib == 10336

@@ -62,7 +62,19 @@ Why this split:
 - DINOv2 runs once per job and returns a small embedding, so it moved to the CPU (float32): about 3 s per job, and GPU0 stays free for shape. The VAE decode stayed on GPU1 but decodes one view at a time (`enable_slicing`); the phase 1 overflow came from decoding all 12 views as one batch.
 - Shape fits on GPU0 and its weights stay resident: per job only an image and a mesh cross the slow link. Job N can paint on GPU1 while job N+1 builds its shape on GPU0.
 
-Placement is resolved by PCI bus ID, never by CUDA index, since CUDA ordering can change. Defaults: shape on `0000:25:00.0`, paint on `0000:29:00.0`, paint helpers on the CPU, overridable by environment variables. Set `CUDA_DEVICE_ORDER=PCI_BUS_ID` in the engine so CUDA indexes match `nvidia-smi`; `scripts/verify_gpus.py` prints the placement.
+### Run modes (adapting to each machine)
+
+The engine is meant to run on other people's machines, so placement is no longer fixed. At startup `gpu/probe.py` asks PyTorch, in a spawned process, which GPUs it can use (this respects `CUDA_VISIBLE_DEVICES` and checks the compute capability against `torch.cuda.get_arch_list()`), and reads each card's PCIe link and free VRAM from nvidia-smi before the probe takes any. `gpu/modes.py` then picks one mode:
+
+1. `dual_gpu`: two cards that each fit one stage. Paint goes to the fastest link that fits it, shape to the next card.
+2. `single_gpu_resident`: one card fits both workers at once.
+3. `single_gpu_swap`: one card fits one stage at a time. The scheduler loads one worker, drains that stage's queue, then stops it and loads the other, so it swaps once per batch rather than twice per job. Stopping the process is the only reliable way to return all its VRAM.
+4. `shape_only`: one card fits shape but not paint; textured requests are refused.
+5. `unsupported`: no usable card. The API still answers, with the reason in health.
+
+Thresholds come from the table above, sized for `final` quality, plus a 512 MiB margin (the owner's choice: 1 GiB would move paint off the desktop card at idle): a stage fits a card with at least its peak plus the margin free (9.2 GiB for shape, 10.4 GiB for paint), and both fit with `max(shape held + paint peak, paint held + shape peak)` plus the margin (17.5 GiB). Free VRAM is read once, so desktop apps matter: on the reference machine GPU1 has 11173 MiB free at idle (paint fits) but about 10.4 GiB with a browser and IDE open, in which case the engine puts paint on GPU0 and shape on GPU1 instead. With more than two cards the extras are unused; on a mixed machine the card with the most free VRAM is used.
+
+Placement uses CUDA indexes from the probe, with `CUDA_DEVICE_ORDER=PCI_BUS_ID` in the probe and the workers so they match bus order. `MODEL3D_MODE`, `MODEL3D_SHAPE_BUS`, and `MODEL3D_PAINT_BUS` override the choice. `scripts/verify_gpus.py` prints the mode the engine would pick.
 
 Upstream's paint code has a `multiple_devices` path (albedo attention on `cuda:0`, metallic-roughness on `cuda:1`), but it is never enabled and only moves some attention layers. It is not used.
 
@@ -168,7 +180,7 @@ Response `202 Accepted`:
 }
 ```
 
-Errors use one shape, with a stable `code`: `400 invalid_image`, `400 invalid_options`, `403 forbidden_origin`, `413 image_too_large`, `503 engine_not_ready`. A stage task that runs longer than `MODEL3D_STAGE_TIMEOUT_S` (default 900 s, against measured 77 s shape and 60 s paint) fails the job with `stage_timeout`; the stuck worker is killed and restarted.
+Errors use one shape, with a stable `code`: `400 invalid_image`, `400 invalid_options`, `400 texture_unavailable` (shape-only mode), `403 forbidden_origin`, `413 image_too_large`, `503 engine_not_ready`. A stage task that runs longer than `MODEL3D_STAGE_TIMEOUT_S` (default 900 s, against measured 77 s shape and 60 s paint) fails the job with `stage_timeout`; the stuck worker is killed and restarted.
 
 ```json
 { "error": { "code": "invalid_options", "message": "target_faces must be at least 1000" } }
@@ -181,7 +193,7 @@ Errors use one shape, with a stable `code`: `400 invalid_image`, `400 invalid_op
 | `GET /v1/jobs/{job_id}` | The job (same shape as the `202` body, plus `progress`, `stage`, `error`, `finished_at`) |
 | `GET /v1/jobs/{job_id}/result` | `model/gltf-binary` once `succeeded`; `409 job_not_finished` otherwise |
 | `DELETE /v1/jobs/{job_id}` | `202` and the job moves to `cancelled` at the next stage boundary |
-| `GET /v1/health` | Engine readiness, per GPU (bus ID, stage, model loaded, VRAM used and total), and `error` (`code`, `message`) when the workers failed to load |
+| `GET /v1/health` | Engine readiness, the run mode (`name`, `texture`, `reason`), per GPU (bus ID, stage, model loaded, VRAM used, total, and free at startup), and `error` (`code`, `message`) when no mode is usable or the workers failed to load |
 
 ### WebSocket `GET /v1/jobs/{job_id}/events`
 

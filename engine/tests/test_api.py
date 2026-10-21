@@ -52,15 +52,31 @@ class ReadyClient(TestClient):
         return client
 
 
+MODE = {"name": "dual_gpu", "texture": True, "reason": "Two GPUs: shape on 0000:25:00.0, paint on 0000:29:00.0"}
+
+
 def make_client(
-    tmp_path, max_image_bytes: int = 1024 * 1024, paint=None, shape=None, wait_ready=True, allowed_origins=()
+    tmp_path,
+    max_image_bytes: int = 1024 * 1024,
+    paint=None,
+    shape=None,
+    wait_ready=True,
+    allowed_origins=(),
+    texture_available=True,
 ) -> TestClient:
     settings = Settings(
         home=tmp_path, hunyuan_dir=tmp_path / "hy", max_image_bytes=max_image_bytes, allowed_origins=allowed_origins
     )
     store, bus = JobStore(settings.jobs_dir), EventBus()
     scheduler = Scheduler(store, bus, shape or FakeRunner("shape.glb"), paint or FakeRunner("model.glb"))
-    app = create_app(settings, scheduler, store, bus, health=lambda: {"ready": scheduler.ready, "gpus": []})
+    app = create_app(
+        settings,
+        scheduler,
+        store,
+        bus,
+        health=lambda: {"ready": scheduler.ready, "mode": MODE, "gpus": []},
+        texture_available=texture_available,
+    )
     client = ReadyClient(app, base_url="http://127.0.0.1:8765")
     client.wait_ready = wait_ready
     return client
@@ -195,7 +211,15 @@ def test_delete_finished_job_is_409(tmp_path):
 
 def test_health_reports_injected_status(tmp_path):
     with make_client(tmp_path) as client:
-        assert client.get("/v1/health").json() == {"ready": True, "gpus": [], "error": None}
+        assert client.get("/v1/health").json() == {"ready": True, "mode": MODE, "gpus": [], "error": None}
+
+
+def test_shape_only_refuses_texture(tmp_path):
+    with make_client(tmp_path, texture_available=False) as client:
+        error = assert_error(post_job(client), 400, "texture_unavailable")
+        assert error["message"] == "This engine runs without the paint stage: send \"texture\": false"
+        assert_error(post_job(client, b"not an image"), 400, "invalid_image")  # input checks come first
+        assert post_job(client, options={"texture": False}).status_code == 202
 
 
 def test_startup_failure_is_reported_in_health(tmp_path):

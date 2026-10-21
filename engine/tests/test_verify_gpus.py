@@ -111,8 +111,11 @@ def test_format_report():
 def test_main_exit_codes(monkeypatch, capsys):
     passing = [verify_gpus.Check("torch", "pass", "2.9.1"), verify_gpus.Check("free VRAM cuda:0", "warn", "1.0 GiB free")]
     monkeypatch.setattr(verify_gpus, "run_checks", lambda repo_root: (passing, PLACEMENT))
+    monkeypatch.setattr(verify_gpus, "engine_mode_line", lambda: "engine mode -> dual_gpu: test")
     assert verify_gpus.main() == 0
-    assert capsys.readouterr().out.rstrip().endswith("RESULT: OK")
+    out = capsys.readouterr().out
+    assert out.startswith("engine mode -> dual_gpu: test\n")
+    assert out.rstrip().endswith("RESULT: OK")
 
     failing = passing + [verify_gpus.Check("nvcc", "fail", "missing")]
     monkeypatch.setattr(verify_gpus, "run_checks", lambda repo_root: (failing, None))
@@ -125,3 +128,10 @@ def test_real_environment_passes():
     checks, placement = verify_gpus.run_checks(REPO_ROOT)
     report = verify_gpus.format_report(checks, placement)
     assert not [check for check in checks if check.status == "fail"], report
+
+
+def test_format_mode():
+    from model3d_engine.gpu.modes import ModeName, ModePlan
+
+    plan = ModePlan(ModeName.single_gpu_swap, True, "One GPU with 11.0 GiB free: shape and paint take turns", None, None)
+    assert verify_gpus.format_mode(plan) == "engine mode -> single_gpu_swap: One GPU with 11.0 GiB free: shape and paint take turns"

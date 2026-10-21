@@ -6,7 +6,19 @@ The engine listens on `http://127.0.0.1:8765/v1` (loopback only, no authenticati
 uv run --project engine python -m model3d_engine
 ```
 
-The port answers as soon as the engine starts. Both GPU workers load their models in the background (about 50 s); until they are ready, `GET /v1/health` reports `"ready": false` and job submissions answer `503 engine_not_ready`. If a worker fails to load, the engine does not retry: health reports the failure in `error` and submissions answer `503 engine_not_ready` with the cause, until the engine is fixed and restarted. A worker that crashes restarts on its own (retrying after 0, 5, 30, and 120 s); jobs that reach it meanwhile wait for the restart. A task that runs longer than `MODEL3D_STAGE_TIMEOUT_S` (default 900 s; measured runs take 60-80 s) fails with `stage_timeout`, and its stuck worker is killed and restarted the same way. Shared request and event models live in the `model3d_contracts` package (`contracts/`).
+At startup the engine detects the NVIDIA GPUs and picks a run mode (see [Run modes](#run-modes)); `GET /v1/health` reports it. The port answers as soon as the engine starts. The GPU workers load their models in the background (about 50 s); until they are ready, `GET /v1/health` reports `"ready": false` and job submissions answer `503 engine_not_ready`. If a worker fails to load, the engine does not retry: health reports the failure in `error` and submissions answer `503 engine_not_ready` with the cause, until the engine is fixed and restarted. A worker that crashes restarts on its own (retrying after 0, 5, 30, and 120 s); jobs that reach it meanwhile wait for the restart. A task that runs longer than `MODEL3D_STAGE_TIMEOUT_S` (default 900 s; measured runs take 60-80 s) fails with `stage_timeout`, and its stuck worker is killed and restarted the same way. Shared request and event models live in the `model3d_contracts` package (`contracts/`).
+
+### Run modes
+
+| `mode.name` | When | Behavior |
+| :--- | :--- | :--- |
+| `dual_gpu` | Two GPUs each fit one stage | Shape on one card, paint on the other; job N paints while job N+1 shapes |
+| `single_gpu_resident` | One GPU fits both stages at once (about 17.5 GiB free) | Both workers stay loaded; jobs run one after another |
+| `single_gpu_swap` | One GPU fits one stage at a time (about 10.4 GiB free) | Only one worker is loaded; the loaded stage finishes its queue, then the card swaps (about 20-30 s per swap) |
+| `shape_only` | One GPU fits shape but not paint | Untextured models only; a textured request answers `400 texture_unavailable` |
+| `unsupported` | No usable NVIDIA GPU, or too little free VRAM | Nothing loads; health `error` is `mode_unavailable` with the reason, and submissions answer `503 engine_not_ready` |
+
+The engine measures free VRAM once, before loading anything, so close other GPU apps (LM Studio, Ollama, browsers) before starting it for the best mode. `MODEL3D_MODE` forces a mode (any name above except `unsupported`), and `MODEL3D_SHAPE_BUS` with `MODEL3D_PAINT_BUS` (set both or neither) force the cards; forced settings skip the free-VRAM check, and a mode the hardware cannot provide at all is reported as `mode_unavailable`.
 
 ### Browser access
 
@@ -62,7 +74,7 @@ Answers `202` with the job:
 | `GET /v1/jobs/{id}` | `200` job | `404 job_not_found` |
 | `GET /v1/jobs/{id}/result` | `200` `model/gltf-binary` | `404 job_not_found`, `409 job_not_finished` |
 | `DELETE /v1/jobs/{id}` | `202` job; a queued job is cancelled at once, a running one at its next stage boundary | `404 job_not_found`, `409 job_finished` |
-| `GET /v1/health` | `200` `{"ready": bool, "gpus": [{"bus_id", "stage", "ready", "memory_used_mib", "memory_total_mib"}], "error": null or {"code", "message"}}`; `error` is set when the workers failed to load (`worker_start_failed`, or `internal_error`) | |
+| `GET /v1/health` | `200` `{"ready": bool, "mode": {"name", "texture", "reason"}, "gpus": [{"bus_id", "stage", "ready", "memory_used_mib", "memory_total_mib", "memory_free_mib"}], "error": null or {"code", "message"}}`. `stage` is `"shape"`, `"paint"`, `"shape+paint"`, or `null` for an unused GPU; `memory_free_mib` is the free VRAM when the engine started. `error` is set when no mode is usable (`mode_unavailable`) or the workers failed to load (`worker_start_failed`, or `internal_error`). The model is `model3d_contracts.health.Health` | |
 
 ## Events: `WS /v1/jobs/{id}/events`
 
@@ -89,7 +101,8 @@ Every error response has the same body:
 | `invalid_image` | `POST /v1/jobs`: missing file, or not a PNG or JPEG (400) |
 | `image_too_large` | `POST /v1/jobs`: over 20 MiB (413) |
 | `invalid_options` | `POST /v1/jobs`: options are not valid JSON or break a rule (400) |
-| `engine_not_ready` | `POST /v1/jobs` while the workers load or restart, or after they failed to load; the message then names the cause (503) |
+| `texture_unavailable` | `POST /v1/jobs` with `"texture": true` (the default) in `shape_only` mode (400) |
+| `engine_not_ready` | `POST /v1/jobs` while the workers load or restart, or after they failed to load or no mode was usable; the message then names the cause (503) |
 | `forbidden_origin` | Any route: the `Host` is not loopback, or a `POST` or `DELETE` carries an `Origin` not in `MODEL3D_ALLOWED_ORIGINS` (403) |
 | `job_not_found` | Any job route with an unknown id (404) |
 | `job_not_finished` | Result requested before `succeeded` (409) |

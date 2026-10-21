@@ -59,24 +59,13 @@ def parse_nvidia_smi(text: str) -> list[GpuLink]:
 
 @dataclass(frozen=True)
 class Placement:
-    """Torch device strings for each stage; helpers run the paint stage's DINOv2 encoder."""
+    """Torch device strings for each stage; helpers run the paint stage's DINOv2 encoder.
+
+    With CUDA_DEVICE_ORDER=PCI_BUS_ID a GPU's CUDA index is its position in bus order among
+    the visible GPUs. The helpers run on the CPU: the shape worker keeps about 8.7 GiB of
+    its GPU, so helpers placed there ran out of memory (measured in phase 2).
+    """
 
     shape: str
     paint: str
     helpers: str
-
-
-def resolve_placement(links: list[GpuLink], shape_bus: str, paint_bus: str) -> Placement:
-    """Map PCI bus ids to CUDA devices.
-
-    With CUDA_DEVICE_ORDER=PCI_BUS_ID, a GPU's CUDA index is its position in ascending
-    bus order. The paint helpers run on the CPU: the shape worker keeps about 8.7 GiB of
-    its GPU, so helpers placed there ran out of memory (measured in phase 2).
-    """
-    if shape_bus == paint_bus:
-        raise ValueError("shape and paint must be different GPUs")
-    order = sorted(link.bus_id for link in links)
-    for bus in (shape_bus, paint_bus):
-        if bus not in order:
-            raise ValueError(f"GPU {bus} not found")
-    return Placement(shape=f"cuda:{order.index(shape_bus)}", paint=f"cuda:{order.index(paint_bus)}", helpers="cpu")

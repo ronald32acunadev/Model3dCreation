@@ -2,7 +2,6 @@
 and free VRAM (unload LM Studio/Ollama models first)."""
 
 import asyncio
-import subprocess
 import time
 from pathlib import Path
 
@@ -11,7 +10,8 @@ import trimesh
 
 from model3d_contracts.jobs import JobOptions, JobState
 from model3d_engine.config import load_settings
-from model3d_engine.gpu.topology import NVIDIA_SMI_COMMAND, parse_nvidia_smi, resolve_placement
+from model3d_engine.gpu.modes import ModeName, choose_mode, placement
+from model3d_engine.gpu.probe import probe_gpus
 from model3d_engine.jobs.events import EventBus
 from model3d_engine.jobs.scheduler import Scheduler
 from model3d_engine.jobs.store import JobStore
@@ -25,19 +25,20 @@ pytestmark = [pytest.mark.gpu, pytest.mark.anyio]
 
 async def test_penguin_end_to_end(tmp_path):
     settings = load_settings()
-    links = parse_nvidia_smi(subprocess.run(NVIDIA_SMI_COMMAND, check=True, capture_output=True, text=True).stdout)
-    placement = resolve_placement(links, settings.shape_bus or "0000:25:00.0", settings.paint_bus or "0000:29:00.0")
+    plan = choose_mode(probe_gpus())
+    assert plan.name == ModeName.dual_gpu, plan.reason
+    devices = placement(plan)
     env = stage_env(settings)
     hunyuan_dir = str(settings.hunyuan_dir)
     shape = ProcessStageRunner(
         "model3d_engine.stages.hunyuan:make_shape_stage",
-        {"hunyuan_dir": hunyuan_dir, "device": placement.shape},
+        {"hunyuan_dir": hunyuan_dir, "device": devices.shape},
         env,
         name="shape",
     )
     paint = ProcessStageRunner(
         "model3d_engine.stages.hunyuan:make_paint_stage",
-        {"hunyuan_dir": hunyuan_dir, "device": placement.paint, "helper_device": placement.helpers},
+        {"hunyuan_dir": hunyuan_dir, "device": devices.paint, "helper_device": devices.helpers},
         env,
         name="paint",
     )

@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 
 from model3d_engine.gpu.probe import GpuInfo, Inventory
+from model3d_engine.gpu.topology import Placement
 
 # nvidia-smi MiB above idle, measured with scripts/measure_stage_vram.py (docs/architecture.md,
 # section 2). They include each worker's CUDA context. "Need" is the peak while running a
@@ -43,6 +44,13 @@ class ModeUnavailable(Exception):
     def __init__(self, message: str):
         super().__init__(message)
         self.message = message
+
+
+def placement(plan: ModePlan) -> Placement:
+    """CUDA devices for the plan's stages; paint's helpers always run on the CPU."""
+    shape = f"cuda:{plan.shape.index}" if plan.shape is not None else "cpu"
+    paint = f"cuda:{plan.paint.index}" if plan.paint is not None else shape
+    return Placement(shape=shape, paint=paint, helpers="cpu")
 
 
 def _gib(mib: int) -> str:

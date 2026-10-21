@@ -9,7 +9,9 @@ from model3d_engine.gpu.modes import (
     ModeName,
     ModeUnavailable,
     choose_mode,
+    placement,
 )
+from model3d_engine.gpu.topology import Placement
 from model3d_engine.gpu.probe import GpuInfo, Inventory
 
 # Measured peaks and held memory include each worker's CUDA context (docs/architecture.md).
@@ -134,3 +136,10 @@ def test_bus_overrides():
     with pytest.raises(ModeUnavailable) as raised:
         choose_mode(OWNER, shape_bus="0000:25:00.0", paint_bus="0000:41:00.0")
     assert raised.value.message == "GPU 0000:41:00.0 is not visible to PyTorch"
+
+
+def test_placement_uses_cuda_indexes_in_bus_order():
+    assert placement(choose_mode(OWNER)) == Placement("cuda:0", "cuda:1", "cpu")
+    visible = inventory(gpu("0000:29:00.0", 11173, index=0))  # GPU0 hidden by CUDA_VISIBLE_DEVICES
+    assert placement(choose_mode(visible)) == Placement("cuda:0", "cuda:0", "cpu")
+    assert placement(choose_mode(OWNER, forced=ModeName.shape_only)) == Placement("cuda:0", "cuda:0", "cpu")
