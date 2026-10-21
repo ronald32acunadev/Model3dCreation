@@ -17,7 +17,11 @@ cd engine && uv run pytest                         # unit tests, no GPU
 cd engine && uv run pytest -m gpu                  # needs both GPUs and the compiled extensions
 cd engine && uv run pytest tests/test_verify_gpus.py::test_parse_nvcc_version   # single test
 uv run --project engine python scripts/verify_gpus.py   # full environment check, from the repo root
+uv run --project engine python -m model3d_engine        # serve the engine on 127.0.0.1:8765
+cd contracts && uv run pytest                           # shared job and event models
 ```
+
+The API process never imports torch; each GPU stage runs in its own spawned worker process (`engine/src/model3d_engine/stages/process.py`). The API is documented in `docs/api.md`.
 
 `uv sync` rebuilds `custom_rasterizer` from `vendor/`, so it needs `CUDA_HOME=/usr/local/cuda-13.1` (see `docs/setup.md`). Before GPU work, check that LM Studio or Ollama is not holding VRAM.
 

@@ -10,7 +10,7 @@ from model3d_engine.stages.protocol import StageError, StageResult, StageTask
 class EchoStage:
     """Reports the MODEL3D_TEST_FLAG variable as progress, then behaves per mode."""
 
-    def __init__(self, mode: str = "echo"):
+    def __init__(self, mode: str = "echo", **_ignored):
         self.mode = mode
 
     def run(self, task: StageTask, progress) -> StageResult:

@@ -72,3 +72,11 @@ uv run --project engine python scripts/verify_gpus.py
 ```
 
 Every line must be `[PASS]` or `[WARN]`, ending with `RESULT: OK`. The report also prints the stage placement (shape on the x2 card, paint on the x16 card). A `free VRAM` warning means another process (LM Studio, Ollama) holds GPU memory; free it before generating.
+
+## 7. Run the engine
+
+```bash
+uv run --project engine python -m model3d_engine
+```
+
+It serves `http://127.0.0.1:8765/v1` (see [api.md](api.md)) and loads both workers in about 50 s. `MODEL3D_HOME`, `MODEL3D_PORT`, `MODEL3D_SHAPE_BUS`, `MODEL3D_PAINT_BUS`, and `MODEL3D_HUNYUAN_DIR` override the defaults; `MODEL3D_HOST` must stay a loopback address.
