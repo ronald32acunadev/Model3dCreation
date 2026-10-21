@@ -130,14 +130,25 @@ class ProcessStageRunner:
     async def run(self, task: StageTask, on_progress: ProgressCallback) -> StageResult:
         """Run one task in the worker, forwarding its progress.
 
-        After a crash, the next task waits for the restart instead of failing at once.
+        A worker that crashed, during a task or while idle, is restarted and the task waits for it.
         """
         async with self._lock:
             if self._restart is not None and not self._restart.done():
                 await self._restart
+            if self.ready and not self._process.is_alive():
+                # The worker died between jobs (kernel OOM kill, driver fault): restart it now.
+                self.ready = False
+                self._restart = asyncio.create_task(self._respawn())
+                await self._restart
             if not self.ready:
                 raise StageError("worker_unavailable", f"{self.name} worker could not be restarted")
-            self._conn.send(("run", task))
+            try:
+                self._conn.send(("run", task))
+            except OSError:
+                self.ready = False
+                if not self._stopping:
+                    self._restart = asyncio.create_task(self._respawn())
+                raise StageError("worker_crashed", f"{self.name} worker was gone before the task started") from None
             loop = asyncio.get_running_loop()
             while True:
                 try:

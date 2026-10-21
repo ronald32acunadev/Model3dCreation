@@ -133,3 +133,18 @@ async def test_failed_reload_is_logged_and_retried(tmp_path, caplog):
         await runner.stop()
     assert "paint worker failed to restart" in caplog.text
     assert "model file busy" in caplog.text
+
+
+async def test_worker_killed_while_idle_is_restarted(tmp_path):
+    """Review finding R3-idle-crash-no-restart: a worker that dies between jobs is restarted
+    before the next job, instead of failing every later job on a broken pipe."""
+    runner = ProcessStageRunner("tests.worker_stubs:EchoStage", {}, {}, name="shape")
+    await runner.start()
+    try:
+        runner._process.kill()
+        await asyncio.get_running_loop().run_in_executor(None, runner._process.join, 5)
+        result = await runner.run(task(tmp_path), lambda v, m: None)
+        assert result.output.exists()
+        assert runner.ready is True
+    finally:
+        await runner.stop()
