@@ -9,10 +9,10 @@ REAL = parse_nvidia_smi(
 
 
 def test_resolve_placement_real_machine():
-    assert resolve_placement(REAL, "0000:25:00.0", "0000:29:00.0") == Placement("cuda:0", "cuda:1", "cuda:0")
-    assert resolve_placement(REAL, "0000:29:00.0", "0000:25:00.0") == Placement("cuda:1", "cuda:0", "cuda:1")
+    assert resolve_placement(REAL, "0000:25:00.0", "0000:29:00.0") == Placement("cuda:0", "cuda:1", "cpu")
+    assert resolve_placement(REAL, "0000:29:00.0", "0000:25:00.0") == Placement("cuda:1", "cuda:0", "cpu")
     assert resolve_placement(list(reversed(REAL)), "0000:25:00.0", "0000:29:00.0") == Placement(
-        "cuda:0", "cuda:1", "cuda:0"
+        "cuda:0", "cuda:1", "cpu"
     )
 
 

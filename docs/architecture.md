@@ -12,8 +12,8 @@ Decoupled engine and clients. The engine owns the GPUs and is the only process t
                        ├──────────────────► Engine (FastAPI, uvicorn)
  Blender add-on ───────┘  127.0.0.1:8765     │   job queue, job store, events
                                              └── Paint worker ── GPU1 (29:00.0, x16)
-                                                 Hunyuan3D-Paint diffusion
-                                                 (DINOv2 + VAE decode on GPU0)
+                                                 Hunyuan3D-Paint diffusion + VAE
+                                                 (DINOv2 encoder on the CPU)
 ```
 
 - A job runs as a two-stage pipeline: shape, then paint. The two stages live on different GPUs, so job N can paint while job N+1 builds its shape.
@@ -24,32 +24,34 @@ Decoupled engine and clients. The engine owns the GPUs and is the only process t
 
 | Component | Measured | Role |
 | :--- | :--- | :--- |
-| CPU | Ryzen 7 5800X, 8C/16T | API server, mesh post-processing, UV unwrapping |
+| CPU | Ryzen 7 5800X, 8C/16T | API server, mesh post-processing, UV unwrapping, paint's DINOv2 encoder |
 | RAM | 76 GiB | Checkpoint cache, mesh processing |
-| GPU0 | RTX 5070 12 GB, bus `25:00.0`, link PCIe 2.0 x2 | Shape stage, paint helpers (DINOv2, VAE decode) |
+| GPU0 | RTX 5070 12 GB, bus `25:00.0`, link PCIe 2.0 x2 | Shape stage only |
 | GPU1 | RTX 5070 12 GB, bus `29:00.0`, link PCIe 3.0 x16 | Paint diffusion; also drives the desktop (about 1.6 GB) |
 | Both GPUs | compute capability 12.0 (sm_120), driver 595.99.02 | |
 | OS | Ubuntu 26.04.1 LTS, kernel 7.0 | |
 
-### Stage placement (measured in the phase 1 spike)
+### Stage placement (measured in phases 1 and 2)
 
 The phase 2 spec puts shape on the fast x16 card and paint on the x2 card. This design inverts it, and the spike confirmed it works without CPU offload:
 
 | Work | GPU | Time (demo image, 6 views at 512) | Peak VRAM |
 | :--- | :--- | :--- | :--- |
-| Shape (Hunyuan3D-Shape), resident | GPU0, x2 | load 34 s, then 77 s per job | 7.6 GiB |
-| Paint multiview diffusion (UNet, text encoder, VAE encode) | GPU1, x16 | load 11 s, then 55 s per job | 8.7 GiB |
-| Paint DINOv2 image encoder and VAE decode | GPU0, x2 | inside the 55 s | 2.9 GiB |
+| Shape (Hunyuan3D-Shape), resident | GPU0, x2 | 77 s per job | 7.6 GiB allocated, 8.7 GiB held by the worker |
+| Paint diffusion and VAE (decode one view at a time) | GPU1, x16 | 58 s per job | 8.7 GiB in the phase 1 spike |
+| Paint DINOv2 image encoder (float32) | CPU | inside the 58 s (about 3 s) | none |
+
+Both workers load in about 51 s when the engine starts (phase 2 end-to-end test).
 
 Why this split:
 
 - The two cards hold 24 GB together, but that memory is not pooled: the RTX 5070 has no NVLink, so each tensor lives on one card and anything shared crosses PCIe. Upstream quotes about 10 GB for shape and 21 GB for paint, so paint cannot sit on one card.
 - GPU1 also drives the desktop, which takes about 1.6 GB of it. With all of paint on GPU1, the job runs out of memory, first during diffusion (with DINOv2 there) and then during the VAE decode of 12 images (6 views, albedo and metallic-roughness).
-- DINOv2 runs once per job and returns a small embedding; the VAE decode takes small latents and returns images. Both cross the x2 link with little data, so they go to GPU0. The VAE stays on GPU1 for encoding (the UNet consumes those latents there) and moves to GPU0 only for decoding, one image at a time (`enable_slicing`).
-- Shape fits on GPU0 and its weights stay resident: per job only an image and a mesh cross the slow link.
-- GPU0 holds shape (7.6 GiB) plus the paint helpers (2.9 GiB): 10.5 GiB of 12, so job N can paint on GPU1 while job N+1 builds its shape on GPU0.
+- The phase 1 spike moved DINOv2 and the VAE decode to GPU0. With the shape worker resident there, that ran out of memory: the shape worker holds about 8.7 GiB of GPU0 (weights plus PyTorch's cached blocks), so the 2.7 GiB of helpers did not fit.
+- DINOv2 runs once per job and returns a small embedding, so it moved to the CPU (float32): about 3 s per job, and GPU0 stays free for shape. The VAE decode stayed on GPU1 but decodes one view at a time (`enable_slicing`); the phase 1 overflow came from decoding all 12 views as one batch.
+- Shape fits on GPU0 and its weights stay resident: per job only an image and a mesh cross the slow link. Job N can paint on GPU1 while job N+1 builds its shape on GPU0.
 
-Placement is resolved by PCI bus ID, never by CUDA index, since CUDA ordering can change. Defaults: shape and paint helpers on `0000:25:00.0`, paint diffusion on `0000:29:00.0`, overridable by environment variables. Set `CUDA_DEVICE_ORDER=PCI_BUS_ID` in the engine so CUDA indexes match `nvidia-smi`; `scripts/verify_gpus.py` prints the placement.
+Placement is resolved by PCI bus ID, never by CUDA index, since CUDA ordering can change. Defaults: shape on `0000:25:00.0`, paint on `0000:29:00.0`, paint helpers on the CPU, overridable by environment variables. Set `CUDA_DEVICE_ORDER=PCI_BUS_ID` in the engine so CUDA indexes match `nvidia-smi`; `scripts/verify_gpus.py` prints the placement.
 
 Upstream's paint code has a `multiple_devices` path (albedo attention on `cuda:0`, metallic-roughness on `cuda:1`), but it is never enabled and only moves some attention layers. It is not used.
 
@@ -202,8 +204,8 @@ Server to client only. On connect the server sends a `snapshot` event with the c
 
 | Criterion | Target | Note |
 | :--- | :--- | :--- |
-| VRAM | Under 11.0 GB per GPU | Measured: GPU0 10.5 GiB (shape + paint helpers), GPU1 8.7 GiB plus the desktop |
-| Time per job | About 2 min 15 s (77 s shape + 55 s paint) with warm models | The spec's TripoSR/TRELLIS figures do not apply to Hunyuan3D 2.1 |
+| VRAM | Under 11.0 GB per GPU | Measured: GPU0 8.7 GiB (shape worker), GPU1 8.7 GiB plus the desktop |
+| Time per job | About 2 min 15 s (77 s shape + 58 s paint) with warm models | The spec's TripoSR/TRELLIS figures do not apply to Hunyuan3D 2.1 |
 | Client UI | Stays responsive while the engine works | |
 | GLB | Loads in Blender 5.2 with PBR textures attached | |
 
@@ -211,7 +213,7 @@ Server to client only. On connect the server sends a `snapshot` event with the c
 
 These are the author's calls, not the owner's, and are open to change:
 
-1. Shape and the paint helpers on the x2 card, paint diffusion on the x16 card, no CPU offload (section 2, measured).
+1. Shape on the x2 card, paint on the x16 card, DINOv2 on the CPU, no weight offload (section 2, measured).
 2. Hunyuan3D 2.1 only in v1; TRELLIS and TripoSR are out.
 3. Python 3.11 + PyTorch 2.9.1+cu130 + CUDA 13.1 toolkit.
 4. A shared `contracts` package instead of duplicating schemas in each client.

@@ -71,4 +71,4 @@ patch "$F" engine/patches/hunyuan3d-paint-device.patch
 uv run --project engine python scripts/verify_gpus.py
 ```
 
-Every line must be `[PASS]` or `[WARN]`, ending with `RESULT: OK`. The report also prints the stage placement (shape and the paint helpers on the x2 card, paint diffusion on the x16 card). A `free VRAM` warning means another process (LM Studio, Ollama) holds GPU memory; free it before generating.
+Every line must be `[PASS]` or `[WARN]`, ending with `RESULT: OK`. The report also prints the stage placement (shape on the x2 card, paint on the x16 card). A `free VRAM` warning means another process (LM Studio, Ollama) holds GPU memory; free it before generating.
