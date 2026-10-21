@@ -11,7 +11,7 @@ dependencies = [
 
 [dependency-groups]
 # fastapi and uvicorn run a fake engine in the tests.
-dev = ["pytest", "pytest-qt", "fastapi", "uvicorn"]
+dev = ["pytest", "pytest-qt", "fastapi", "uvicorn", "python-multipart", "websockets"]
 
 [build-system]
 requires = ["hatchling"]
@@ -25,6 +25,7 @@ model3d-contracts = { path = "../contracts", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 markers = [
     "webengine: needs QtWebEngine with a real display and GPU-backed rendering",
     "gpu: needs the real engine and its GPUs",
