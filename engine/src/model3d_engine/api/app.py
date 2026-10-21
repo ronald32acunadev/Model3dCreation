@@ -4,7 +4,7 @@ import io
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image
 from pydantic import ValidationError
@@ -109,6 +109,23 @@ def create_app(
         if not scheduler.cancel(job_id):
             raise ApiError(409, "job_finished", f"Job {job_id} already {record.state.value}")
         return record.to_job(scheduler.queue_position(job_id))
+
+    @app.websocket("/v1/jobs/{job_id}/events")
+    async def job_events(websocket: WebSocket, job_id: str) -> None:
+        record = store.get(job_id)
+        if record is None:
+            await websocket.close(code=4404)
+            return
+        await websocket.accept()
+        events = bus.subscribe(record)
+        try:
+            async for event in events:
+                await websocket.send_text(event.model_dump_json())
+            await websocket.close(code=1000)
+        except (WebSocketDisconnect, RuntimeError):
+            return  # the client left
+        finally:
+            await events.aclose()
 
     @app.get("/v1/health")
     async def get_health() -> dict:
