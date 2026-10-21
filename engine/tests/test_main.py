@@ -68,10 +68,10 @@ def test_build_engine_dual_gpu_health(tmp_path):
     with TestClient(app, base_url=BASE_URL) as client:
         assert wait_ready(client) == {
             "ready": True,
-            "mode": {"name": "dual_gpu", "texture": True, "reason": "Two GPUs: shape on 0000:25:00.0, paint on 0000:29:00.0"},
+            "mode": {"name": "dual_gpu", "texture": True, "reason": "Two GPUs: shape on 0000:29:00.0, paint on 0000:25:00.0"},
             "gpus": [
-                {"bus_id": "0000:25:00.0", "stage": "shape", "ready": True, "memory_used_mib": 100, "memory_total_mib": 12227, "memory_free_mib": 11761},
-                {"bus_id": "0000:29:00.0", "stage": "paint", "ready": True, "memory_used_mib": 200, "memory_total_mib": 12227, "memory_free_mib": 11173},
+                {"bus_id": "0000:25:00.0", "stage": "paint", "ready": True, "memory_used_mib": 100, "memory_total_mib": 12227, "memory_free_mib": 11761},
+                {"bus_id": "0000:29:00.0", "stage": "shape", "ready": True, "memory_used_mib": 200, "memory_total_mib": 12227, "memory_free_mib": 11173},
             ],
             "error": None,
         }

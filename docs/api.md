@@ -12,7 +12,7 @@ At startup the engine detects the NVIDIA GPUs and picks a run mode (see [Run mod
 
 | `mode.name` | When | Behavior |
 | :--- | :--- | :--- |
-| `dual_gpu` | Two GPUs each fit one stage | Shape on one card, paint on the other; job N paints while job N+1 shapes |
+| `dual_gpu` | Two GPUs each fit one stage | Paint on the card with the most free VRAM, shape on the other; job N paints while job N+1 shapes |
 | `single_gpu_resident` | One GPU fits both stages at once (about 17.5 GiB free) | Both workers stay loaded; jobs run one after another |
 | `single_gpu_swap` | One GPU fits one stage at a time (about 10.4 GiB free) | Only one worker is loaded; the loaded stage finishes its queue, then the card swaps (about 20-30 s per swap) |
 | `shape_only` | One GPU fits shape but not paint | Untextured models only; a textured request answers `400 texture_unavailable` |

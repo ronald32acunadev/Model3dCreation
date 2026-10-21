@@ -9,7 +9,7 @@ Design: `docs/superpowers/specs/2026-10-21-hardware-adaptive-engine-design.md`. 
 - S2: The five modes `dual_gpu`, `single_gpu_resident`, `single_gpu_swap`, `shape_only`, `unsupported`, chosen from measured VRAM with a 512 MiB margin (owner decision, L4), sized for `final` (design decisions 1, 11-14).
 - S3: Health reports `mode` (`name`, `texture`, `reason`) and per-GPU free VRAM; `texture_unavailable` (400) and `mode_unavailable` (health error) (design decisions 5-7, 15-16).
 - S4: `MODEL3D_MODE`, optional `MODEL3D_SHAPE_BUS`/`MODEL3D_PAINT_BUS` (both or neither) (design Goal 4, decision 8).
-- S5: The owner's machine keeps `dual_gpu`, today's placement and speed (design Goal 5).
+- S5: The owner's machine keeps `dual_gpu` and today's speed; in `dual_gpu`, paint goes to the GPU with the most free VRAM and shape to the next (owner decision, L5).
 - S6: Docs describe modes, settings, codes, and health fields.
 
 ## Tasks
@@ -32,3 +32,4 @@ Route evidence: owner chose native (inline) execution; no Writer trigger (units 
 - L2: Local LLM providers unavailable at start (LM Studio not answering, Ollama with no model loaded); host model writes the code per AGENTS.md fallback.
 - L3: Engram mirror pending (mem_save hook error: host session already ended); resync when available.
 - L4 (2026-10-21): T1 measured paint peak 10168 MiB vs GPU1 idle free 11173 MiB, so a 1 GiB margin would move paint off the desktop card. Owner: "CReo que 512 esta bien". Margin is 512 MiB.
+- L5 (2026-10-21): with desktop apps open, GPU1 fell below paint's threshold and paint moved to GPU0 (x2). Owner: "Utilizas las 2 no ?", "o la que este mas libre", "Correcto la gpu mas libre seria lo mejor". Dual placement rule changes from fastest link to most free VRAM (link breaks ties).

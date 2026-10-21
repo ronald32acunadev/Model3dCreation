@@ -31,11 +31,18 @@ OWNER = inventory(gpu("0000:25:00.0", 11761, bandwidth=1.0, index=0), gpu("0000:
 
 
 def test_owner_machine_is_dual_gpu():
+    """Paint, the larger stage, goes to the GPU with the most free VRAM (owner decision)."""
     plan = choose_mode(OWNER)
     assert plan.name == ModeName.dual_gpu
-    assert (plan.shape.bus_id, plan.paint.bus_id) == ("0000:25:00.0", "0000:29:00.0")
+    assert (plan.shape.bus_id, plan.paint.bus_id) == ("0000:29:00.0", "0000:25:00.0")
     assert plan.texture is True
-    assert plan.reason == "Two GPUs: shape on 0000:25:00.0, paint on 0000:29:00.0"
+    assert plan.reason == "Two GPUs: shape on 0000:29:00.0, paint on 0000:25:00.0"
+
+
+def test_dual_gpu_paint_follows_free_vram_not_the_link():
+    # Both cards fit paint; the slow-link card has more free VRAM, so it gets paint.
+    plan = choose_mode(inventory(gpu("0000:25:00.0", 11500, bandwidth=1.0), gpu("0000:29:00.0", 10900, index=1)))
+    assert (plan.shape.bus_id, plan.paint.bus_id) == ("0000:29:00.0", "0000:25:00.0")
 
 
 def test_thresholds_match_the_measurement():
@@ -94,7 +101,7 @@ def test_mixed_cards_use_most_free():
     assert plan.shape.bus_id == "0000:02:00.0"
 
 
-def test_three_cards_use_two_best():
+def test_three_cards_tie_on_free_vram_goes_to_the_fastest_links():
     plan = choose_mode(
         inventory(
             gpu("0000:01:00.0", 11264, bandwidth=3.94, index=0),
@@ -139,7 +146,7 @@ def test_bus_overrides():
 
 
 def test_placement_uses_cuda_indexes_in_bus_order():
-    assert placement(choose_mode(OWNER)) == Placement("cuda:0", "cuda:1", "cpu")
+    assert placement(choose_mode(OWNER)) == Placement("cuda:1", "cuda:0", "cpu")
     visible = inventory(gpu("0000:29:00.0", 11173, index=0))  # GPU0 hidden by CUDA_VISIBLE_DEVICES
     assert placement(choose_mode(visible)) == Placement("cuda:0", "cuda:0", "cpu")
     assert placement(choose_mode(OWNER, forced=ModeName.shape_only)) == Placement("cuda:0", "cuda:0", "cpu")

@@ -82,16 +82,18 @@ def _single(name: ModeName, gpu: GpuInfo) -> ModePlan:
     return ModePlan(ModeName.shape_only, False, reason, gpu, None)
 
 
-def _by_bandwidth(gpus: list[GpuInfo]) -> list[GpuInfo]:
-    return sorted(gpus, key=lambda gpu: (gpu.bandwidth_gbps, gpu.memory_free_mib), reverse=True)
+def _by_free_memory(gpus: list[GpuInfo]) -> list[GpuInfo]:
+    """Most free VRAM first; the faster PCIe link breaks ties."""
+    return sorted(gpus, key=lambda gpu: (gpu.memory_free_mib, gpu.bandwidth_gbps), reverse=True)
 
 
 def _automatic(usable: list[GpuInfo], problem: str | None) -> ModePlan:
     if not usable:
         return ModePlan(ModeName.unsupported, False, problem or "No supported NVIDIA GPU was found", None, None)
-    # Paint gets the fastest link that fits it; shape only moves an image and a mesh per job.
-    for paint in _by_bandwidth([gpu for gpu in usable if _fits(gpu, PAINT_NEED_MIB)]):
-        shapes = _by_bandwidth([gpu for gpu in usable if gpu != paint and _fits(gpu, SHAPE_NEED_MIB)])
+    # Paint, the larger stage, gets the card with the most free VRAM (the owner's rule: the
+    # most headroom against out-of-memory); shape gets the next one.
+    for paint in _by_free_memory([gpu for gpu in usable if _fits(gpu, PAINT_NEED_MIB)]):
+        shapes = _by_free_memory([gpu for gpu in usable if gpu != paint and _fits(gpu, SHAPE_NEED_MIB)])
         if shapes:
             return _dual(shapes[0], paint)
     best = max(usable, key=lambda gpu: gpu.memory_free_mib)
@@ -144,6 +146,6 @@ def choose_mode(
     if forced == ModeName.dual_gpu:
         if len(usable) < 2:
             raise ModeUnavailable(f"MODEL3D_MODE=dual_gpu needs two GPUs; found {len(usable)}")
-        paint, shape = _by_bandwidth(usable)[:2]
+        paint, shape = _by_free_memory(usable)[:2]
         return _forced(_dual(shape, paint))
     return _forced(_single(forced, max(usable, key=lambda gpu: gpu.memory_free_mib)))
