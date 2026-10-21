@@ -10,16 +10,20 @@ from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSock
 from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image
 from pydantic import ValidationError
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp, Receive, Scope, Send
 
+from model3d_contracts.health import Health
 from model3d_contracts.jobs import ErrorBody, Job, JobError, JobOptions, JobState
 
-from model3d_engine.config import Settings
+from model3d_engine.config import Settings, is_loopback_host, normalize_origin
 from model3d_engine.jobs.events import EventBus
 from model3d_engine.jobs.scheduler import Scheduler
 from model3d_engine.jobs.store import JobRecord, JobStore
 from model3d_engine.stages.protocol import MODEL_OUTPUT
 
 _SUFFIXES = {"PNG": ".png", "JPEG": ".jpg"}
+_STATE_CHANGING = {"POST", "DELETE"}
 logger = logging.getLogger(__name__)
 
 
@@ -55,28 +59,81 @@ def _parse_options(text: str) -> JobOptions:
         raise ApiError(400, "invalid_options", message) from error
 
 
+def _host_name(host: str) -> str:
+    """Host header without its port or IPv6 brackets, lowercased."""
+    host = host.lower()
+    if host.startswith("["):
+        return host[1 : host.find("]")]
+    return host.rsplit(":", 1)[0]
+
+
+class LoopbackGuard:
+    """Blocks browser pages from driving the engine: rejects a Host that is not loopback
+    (DNS rebinding) and a POST or DELETE whose Origin is not allowed (CSRF).
+
+    Clients that send no Origin header, like curl and the desktop app, are not affected.
+    """
+
+    def __init__(self, app: ASGIApp, allowed_origins: tuple[str, ...]):
+        self.app = app
+        self.allowed_origins = {normalize_origin(origin) for origin in allowed_origins}
+
+    def _rejection(self, scope: Scope) -> str | None:
+        headers = Headers(scope=scope)
+        if not is_loopback_host(_host_name(headers.get("host", ""))):
+            return "The Host header must name a loopback address"
+        origin = headers.get("origin")
+        if scope["type"] == "http" and scope["method"] in _STATE_CHANGING and origin is not None:
+            if normalize_origin(origin) not in self.allowed_origins:
+                return f"Origin {origin} may not change engine state"
+        return None
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] not in ("http", "websocket") or (message := self._rejection(scope)) is None:
+            await self.app(scope, receive, send)
+        elif scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 4403})  # before accept: the server answers 403
+        else:
+            body = ErrorBody(error=JobError(code="forbidden_origin", message=message))
+            await JSONResponse(status_code=403, content=body.model_dump())(scope, receive, send)
+
+
 def _log_startup_failure(task: asyncio.Task) -> None:
     if not task.cancelled() and task.exception() is not None:
         logger.error("Engine failed to start: %s", task.exception())
 
 
 def create_app(
-    settings: Settings, scheduler: Scheduler, store: JobStore, bus: EventBus, health: Callable[[], dict]
+    settings: Settings,
+    scheduler: Scheduler,
+    store: JobStore,
+    bus: EventBus,
+    health: Callable[[], dict],
+    texture_available: bool = True,
 ) -> FastAPI:
-    """Build the API around an existing scheduler, store, and event bus."""
+    """Build the API around an existing scheduler, store, and event bus.
+
+    `health` returns the body of GET /v1/health without its `error`, which comes from the
+    scheduler; `texture_available` is false when the run mode has no paint stage.
+    """
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Load the workers in the background so the port answers at once: health reports
         # "ready": false and submissions get 503 engine_not_ready until both are loaded.
-        startup = asyncio.create_task(scheduler.start())
-        startup.add_done_callback(_log_startup_failure)
+        # A start error set before startup (no usable GPU) means there is nothing to load.
+        startup = None
+        if scheduler.start_error is None:
+            startup = asyncio.create_task(scheduler.start())
+            startup.add_done_callback(_log_startup_failure)
         yield
-        startup.cancel()
-        await asyncio.gather(startup, return_exceptions=True)
+        if startup is not None:
+            startup.cancel()
+            await asyncio.gather(startup, return_exceptions=True)
         await scheduler.stop()
 
     app = FastAPI(title="model3d engine", lifespan=lifespan)
+    app.add_middleware(LoopbackGuard, allowed_origins=settings.allowed_origins)
     app.state.bus = bus
 
     @app.exception_handler(ApiError)
@@ -99,6 +156,10 @@ def create_app(
             raise ApiError(413, "image_too_large", f"Images are limited to {settings.max_image_bytes} bytes")
         suffix = _check_image(data)
         job_options = _parse_options(options or "{}")
+        if job_options.texture and not texture_available:
+            raise ApiError(400, "texture_unavailable", 'This engine runs without the paint stage: send "texture": false')
+        if scheduler.start_error is not None:
+            raise ApiError(503, "engine_not_ready", f"The engine failed to start: {scheduler.start_error.message}")
         if not scheduler.ready:
             raise ApiError(503, "engine_not_ready", "The engine is still loading its models")
         record = store.create(job_options, data, suffix)
@@ -143,6 +204,7 @@ def create_app(
     @app.get("/v1/health")
     def get_health() -> dict:
         # A plain def runs in the threadpool, so a slow nvidia-smi never blocks the event loop.
-        return health()
+        body = Health.model_validate({**health(), "error": scheduler.start_error})
+        return body.model_dump(mode="json")
 
     return app

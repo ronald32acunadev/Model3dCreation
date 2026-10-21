@@ -77,6 +77,7 @@ class ProcessStageRunner:
         name: str,
         start_timeout_s: float = 600.0,
         restart_delays: tuple[float, ...] = (0.0, 5.0, 30.0, 120.0),
+        task_timeout_s: float = 900.0,
     ):
         self.factory = factory
         self.kwargs = kwargs
@@ -84,6 +85,7 @@ class ProcessStageRunner:
         self.name = name
         self.start_timeout_s = start_timeout_s
         self.restart_delays = restart_delays
+        self.task_timeout_s = task_timeout_s
         self.ready = False
         self._process = None
         self._conn = None
@@ -131,6 +133,7 @@ class ProcessStageRunner:
         """Run one task in the worker, forwarding its progress.
 
         A worker that crashed, during a task or while idle, is restarted and the task waits for it.
+        A task that outlasts task_timeout_s is failed and its stuck worker killed and restarted.
         """
         async with self._lock:
             if self._restart is not None and not self._restart.done():
@@ -150,9 +153,16 @@ class ProcessStageRunner:
                     self._restart = asyncio.create_task(self._respawn())
                 raise StageError("worker_crashed", f"{self.name} worker was gone before the task started") from None
             loop = asyncio.get_running_loop()
+            deadline = time.monotonic() + self.task_timeout_s
             while True:
+                remaining = deadline - time.monotonic()
                 try:
-                    message = await loop.run_in_executor(None, _receive, self._conn, self._process, None)
+                    message = await loop.run_in_executor(None, _receive, self._conn, self._process, remaining)
+                except TimeoutError:
+                    await self._kill_stuck_worker()
+                    raise StageError(
+                        "stage_timeout", f"{self.name} did not finish within {self.task_timeout_s:.0f} s"
+                    ) from None
                 except _WorkerDied as died:
                     self.ready = False
                     if not self._stopping:
@@ -167,6 +177,14 @@ class ProcessStageRunner:
                 elif message[0] == "error":
                     raise StageError(message[1], message[2])
 
+    async def _kill_stuck_worker(self) -> None:
+        """Kill a worker that stopped answering mid-task, then restart it like a crash."""
+        self.ready = False
+        self._process.kill()
+        await asyncio.get_running_loop().run_in_executor(None, self._process.join, 5)
+        if not self._stopping:
+            self._restart = asyncio.create_task(self._respawn())
+
     async def _respawn(self) -> None:
         for delay in self.restart_delays:
             await asyncio.sleep(delay)
@@ -179,15 +197,29 @@ class ProcessStageRunner:
                 logger.error("%s worker failed to restart: %s", self.name, error.message)
         logger.error("%s worker gave up after %d restart attempts", self.name, len(self.restart_delays))
 
+    async def unload(self) -> None:
+        """Stop the worker to free its GPU, after any running task; start() loads it again."""
+        self._lock = self._lock or asyncio.Lock()
+        async with self._lock:
+            await self._cancel_restart()
+            await self._stop_process()
+
     async def stop(self) -> None:
-        """Stop the worker, killing it if it does not exit within 5 s."""
+        """Stop the worker for good, killing it if it does not exit within 5 s."""
         self._stopping = True
+        await self._cancel_restart()
+        await self._stop_process()
+
+    async def _cancel_restart(self) -> None:
         if self._restart is not None:
             self._restart.cancel()
             try:
                 await self._restart
             except (asyncio.CancelledError, StageError):
                 pass
+            self._restart = None
+
+    async def _stop_process(self) -> None:
         self.ready = False
         if self._process is not None and self._process.is_alive():
             try:
@@ -197,5 +229,7 @@ class ProcessStageRunner:
             await asyncio.get_running_loop().run_in_executor(None, self._process.join, 5)
             if self._process.is_alive():
                 self._process.kill()
+                await asyncio.get_running_loop().run_in_executor(None, self._process.join, 5)
         if self._conn is not None:
             self._conn.close()
+            self._conn = None

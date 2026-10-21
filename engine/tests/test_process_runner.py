@@ -148,3 +148,41 @@ async def test_worker_killed_while_idle_is_restarted(tmp_path):
         assert runner.ready is True
     finally:
         await runner.stop()
+
+
+async def test_stuck_task_times_out_and_worker_restarts(tmp_path):
+    """Review advisory: a worker alive but stuck in native code fails its task with stage_timeout
+    and is restarted, so the stage is not blocked forever."""
+    marker = str(tmp_path / "shape")
+    runner = ProcessStageRunner(
+        "tests.worker_stubs:EchoStage", {"mode": "hang_once", "marker": marker}, {}, name="shape", task_timeout_s=1.0
+    )
+    await runner.start()
+    try:
+        stuck = runner._process
+        with pytest.raises(StageError) as raised:
+            await asyncio.wait_for(runner.run(task(tmp_path), lambda v, m: None), 20)
+        assert raised.value.code == "stage_timeout"
+        assert "shape did not finish within 1 s" in raised.value.message
+        assert not stuck.is_alive()
+        result = await asyncio.wait_for(runner.run(task(tmp_path), lambda v, m: None), 30)
+        assert result.output.exists()
+        assert runner.ready is True
+    finally:
+        await runner.stop()
+
+
+async def test_unload_then_start_reuses_runner(tmp_path):
+    runner = ProcessStageRunner("tests.worker_stubs:EchoStage", {}, {}, name="shape")
+    await runner.start()
+    try:
+        first = runner._process
+        await runner.unload()
+        assert runner.ready is False
+        assert not first.is_alive()
+        await runner.start()
+        result = await runner.run(task(tmp_path), lambda v, m: None)
+        assert result.output.exists()
+        assert runner._process is not first
+    finally:
+        await runner.stop()

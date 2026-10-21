@@ -12,6 +12,7 @@ from model3d_engine.config import Settings
 from model3d_engine.jobs.events import EventBus
 from model3d_engine.jobs.scheduler import Scheduler
 from model3d_engine.jobs.store import JobStore
+from model3d_engine.stages.protocol import StageError
 
 from .fakes import FakeRunner
 
@@ -19,6 +20,11 @@ from .fakes import FakeRunner
 class NeverReady(FakeRunner):
     async def start(self) -> None:
         self.ready = False
+
+
+class FailingStart(FakeRunner):
+    async def start(self) -> None:
+        raise StageError("worker_start_failed", "shape worker exited with code 1 while loading")
 
 
 class SlowStart(FakeRunner):
@@ -46,12 +52,32 @@ class ReadyClient(TestClient):
         return client
 
 
-def make_client(tmp_path, max_image_bytes: int = 1024 * 1024, paint=None, shape=None, wait_ready=True) -> TestClient:
-    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", max_image_bytes=max_image_bytes)
+MODE = {"name": "dual_gpu", "texture": True, "reason": "Two GPUs: shape on 0000:25:00.0, paint on 0000:29:00.0"}
+
+
+def make_client(
+    tmp_path,
+    max_image_bytes: int = 1024 * 1024,
+    paint=None,
+    shape=None,
+    wait_ready=True,
+    allowed_origins=(),
+    texture_available=True,
+) -> TestClient:
+    settings = Settings(
+        home=tmp_path, hunyuan_dir=tmp_path / "hy", max_image_bytes=max_image_bytes, allowed_origins=allowed_origins
+    )
     store, bus = JobStore(settings.jobs_dir), EventBus()
     scheduler = Scheduler(store, bus, shape or FakeRunner("shape.glb"), paint or FakeRunner("model.glb"))
-    app = create_app(settings, scheduler, store, bus, health=lambda: {"ready": scheduler.ready, "gpus": []})
-    client = ReadyClient(app)
+    app = create_app(
+        settings,
+        scheduler,
+        store,
+        bus,
+        health=lambda: {"ready": scheduler.ready, "mode": MODE, "gpus": []},
+        texture_available=texture_available,
+    )
+    client = ReadyClient(app, base_url="http://127.0.0.1:8765")
     client.wait_ready = wait_ready
     return client
 
@@ -185,4 +211,64 @@ def test_delete_finished_job_is_409(tmp_path):
 
 def test_health_reports_injected_status(tmp_path):
     with make_client(tmp_path) as client:
-        assert client.get("/v1/health").json() == {"ready": True, "gpus": []}
+        assert client.get("/v1/health").json() == {"ready": True, "mode": MODE, "gpus": [], "error": None}
+
+
+def test_shape_only_refuses_texture(tmp_path):
+    with make_client(tmp_path, texture_available=False) as client:
+        error = assert_error(post_job(client), 400, "texture_unavailable")
+        assert error["message"] == "This engine runs without the paint stage: send \"texture\": false"
+        assert_error(post_job(client, b"not an image"), 400, "invalid_image")  # input checks come first
+        assert post_job(client, options={"texture": False}).status_code == 202
+
+
+def test_startup_failure_is_reported_in_health(tmp_path):
+    """Review advisory: a failed initial load shows in health instead of ready: false forever."""
+    with make_client(tmp_path, shape=FailingStart("shape.glb"), wait_ready=False) as client:
+        deadline = time.monotonic() + 5
+        while (health := client.get("/v1/health").json())["error"] is None:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert health["ready"] is False
+        assert health["error"] == {
+            "code": "worker_start_failed",
+            "message": "shape worker exited with code 1 while loading",
+        }
+        error = assert_error(post_job(client), 503, "engine_not_ready")
+        assert "shape worker exited with code 1 while loading" in error["message"]
+
+
+def test_cross_origin_post_and_delete_are_forbidden(tmp_path):
+    """Review advisory: a browser page on another origin cannot queue or cancel jobs."""
+    with make_client(tmp_path, shape=FakeRunner("shape.glb", delay=0.3)) as client:
+        evil = {"Origin": "http://evil.example"}
+        files = {"image": ("in.png", image_bytes(), "image/png")}
+        assert_error(client.post("/v1/jobs", files=files, headers=evil), 403, "forbidden_origin")
+        assert not (tmp_path / "jobs").exists() or not any((tmp_path / "jobs").iterdir())
+        job_id = post_job(client).json()["job_id"]
+        assert_error(client.delete(f"/v1/jobs/{job_id}", headers={"Origin": "null"}), 403, "forbidden_origin")
+        assert client.get(f"/v1/jobs/{job_id}").json()["state"] != "cancelled"
+
+
+def test_allowed_origin_can_submit(tmp_path):
+    with make_client(tmp_path, allowed_origins=("http://localhost:5173",)) as client:
+        files = {"image": ("in.png", image_bytes(), "image/png")}
+        response = client.post("/v1/jobs", files=files, headers={"Origin": "http://localhost:5173"})
+        assert response.status_code == 202, response.text
+        other = client.post("/v1/jobs", files=files, headers={"Origin": "http://localhost:3000"})
+        assert_error(other, 403, "forbidden_origin")
+
+
+def test_non_loopback_host_is_forbidden(tmp_path):
+    """Review advisory: DNS rebinding sends a foreign Host header to the loopback port."""
+    with make_client(tmp_path) as client:
+        for host in ("127.0.0.1:8765", "localhost:8765", "LocalHost:8765", "[::1]:8765", "[::1]", "127.0.0.1"):
+            assert client.get("/v1/health", headers={"Host": host}).status_code == 200, host
+        for host in ("evil.example:8765", "evil.example", "127.0.0.1.evil.example", "", "[evil]:8765"):
+            assert_error(client.get("/v1/health", headers={"Host": host}), 403, "forbidden_origin")
+        assert_error(post_job_with_host(client, "evil.example:8765"), 403, "forbidden_origin")
+
+
+def post_job_with_host(client, host: str):
+    files = {"image": ("in.png", image_bytes(), "image/png")}
+    return client.post("/v1/jobs", files=files, headers={"Host": host})
