@@ -197,15 +197,29 @@ class ProcessStageRunner:
                 logger.error("%s worker failed to restart: %s", self.name, error.message)
         logger.error("%s worker gave up after %d restart attempts", self.name, len(self.restart_delays))
 
+    async def unload(self) -> None:
+        """Stop the worker to free its GPU, after any running task; start() loads it again."""
+        self._lock = self._lock or asyncio.Lock()
+        async with self._lock:
+            await self._cancel_restart()
+            await self._stop_process()
+
     async def stop(self) -> None:
-        """Stop the worker, killing it if it does not exit within 5 s."""
+        """Stop the worker for good, killing it if it does not exit within 5 s."""
         self._stopping = True
+        await self._cancel_restart()
+        await self._stop_process()
+
+    async def _cancel_restart(self) -> None:
         if self._restart is not None:
             self._restart.cancel()
             try:
                 await self._restart
             except (asyncio.CancelledError, StageError):
                 pass
+            self._restart = None
+
+    async def _stop_process(self) -> None:
         self.ready = False
         if self._process is not None and self._process.is_alive():
             try:
@@ -215,5 +229,7 @@ class ProcessStageRunner:
             await asyncio.get_running_loop().run_in_executor(None, self._process.join, 5)
             if self._process.is_alive():
                 self._process.kill()
+                await asyncio.get_running_loop().run_in_executor(None, self._process.join, 5)
         if self._conn is not None:
             self._conn.close()
+            self._conn = None

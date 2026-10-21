@@ -169,3 +169,100 @@ async def test_ready_follows_runners(tmp_path):
     await scheduler.start()
     assert scheduler.ready is True
     await scheduler.stop()
+
+
+SHAPE, PAINT = "shape.glb", "model.glb"
+
+
+async def make_swap(tmp_path, shape_delay=0.05, paint_delay=0.05, paint_start_error=None):
+    log: list[tuple[str, str]] = []
+    shape = FakeRunner(SHAPE, delay=shape_delay, log=log)
+    paint = FakeRunner(PAINT, delay=paint_delay, log=log, start_error=paint_start_error)
+    store, bus = JobStore(tmp_path), EventBus()
+    scheduler = Scheduler(store, bus, shape, paint, swap=True)
+    await scheduler.start()
+    scheduler.runners = (shape, paint)  # for tests that compare run times
+    return scheduler, store, bus, log
+
+
+def never_both_loaded(log) -> bool:
+    loaded = set()
+    for action, name in log:
+        if action == "load":
+            loaded.add(name)
+            if len(loaded) > 1:
+                return False
+        else:
+            loaded.discard(name)
+    return True
+
+
+async def test_swap_batches_by_stage(tmp_path):
+    scheduler, store, bus, log = await make_swap(tmp_path)
+    assert scheduler.ready is True
+    records = [(await submit(scheduler, store, bus))[0] for _ in range(3)]
+    for record in records:
+        await wait_final(record)
+    await scheduler.stop()
+    assert [record.state for record in records] == [JobState.succeeded] * 3
+    assert log == [("load", SHAPE), ("unload", SHAPE), ("load", PAINT)]
+    assert never_both_loaded(log)
+
+
+async def test_swap_back_when_new_shape_work_arrives(tmp_path):
+    scheduler, store, bus, log = await make_swap(tmp_path, paint_delay=0.3)
+    first, _ = await submit(scheduler, store, bus)
+    while first.state != JobState.painting:
+        await asyncio.sleep(0.01)
+    second, events = await submit(scheduler, store, bus)
+    await wait_final(second)
+    received = await drain(events)
+    await scheduler.stop()
+    assert second.state == JobState.succeeded
+    assert received[-1].stats.textured is True
+    shape, paint = scheduler.runners
+    first_paint_end = next(end for job_id, _, end in paint.runs if job_id == first.job_id)
+    second_shape_start = next(start for job_id, start, _ in shape.runs if job_id == second.job_id)
+    assert second_shape_start >= first_paint_end  # it waited for the paint batch
+    assert log == [
+        ("load", SHAPE), ("unload", SHAPE), ("load", PAINT), ("unload", PAINT),
+        ("load", SHAPE), ("unload", SHAPE), ("load", PAINT),
+    ]
+    assert never_both_loaded(log)
+
+
+async def test_swap_untextured_jobs_never_load_paint(tmp_path):
+    scheduler, store, bus, log = await make_swap(tmp_path)
+    records = [(await submit(scheduler, store, bus, JobOptions(texture=False)))[0] for _ in range(2)]
+    for record in records:
+        await wait_final(record)
+    await scheduler.stop()
+    assert [record.state for record in records] == [JobState.succeeded] * 2
+    assert log == [("load", SHAPE)]
+
+
+async def test_swap_cancel_while_waiting_for_paint(tmp_path):
+    scheduler, store, bus, log = await make_swap(tmp_path, shape_delay=0.2)
+    record, _ = await submit(scheduler, store, bus)
+    while record.state != JobState.shaping:
+        await asyncio.sleep(0.01)
+    assert scheduler.cancel(record.job_id) is True
+    await wait_final(record)
+    await asyncio.sleep(0.1)
+    await scheduler.stop()
+    assert record.state == JobState.cancelled
+    assert ("load", PAINT) not in log
+
+
+async def test_swap_paint_load_failure_fails_waiting_jobs(tmp_path):
+    error = StageError("worker_start_failed", "paint worker exited with code 1 while loading")
+    scheduler, store, bus, log = await make_swap(tmp_path, paint_start_error=error)
+    textured, _ = await submit(scheduler, store, bus)
+    await wait_final(textured)
+    untextured, _ = await submit(scheduler, store, bus, JobOptions(texture=False))
+    await wait_final(untextured)
+    await scheduler.stop()
+    assert textured.state == JobState.failed
+    assert textured.error.code == "worker_unavailable"
+    assert untextured.state == JobState.succeeded
+    assert log == [("load", SHAPE), ("unload", SHAPE), ("load", SHAPE)]

@@ -170,3 +170,19 @@ async def test_stuck_task_times_out_and_worker_restarts(tmp_path):
         assert runner.ready is True
     finally:
         await runner.stop()
+
+
+async def test_unload_then_start_reuses_runner(tmp_path):
+    runner = ProcessStageRunner("tests.worker_stubs:EchoStage", {}, {}, name="shape")
+    await runner.start()
+    try:
+        first = runner._process
+        await runner.unload()
+        assert runner.ready is False
+        assert not first.is_alive()
+        await runner.start()
+        result = await runner.run(task(tmp_path), lambda v, m: None)
+        assert result.output.exists()
+        assert runner._process is not first
+    finally:
+        await runner.stop()

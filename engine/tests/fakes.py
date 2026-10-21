@@ -11,15 +11,32 @@ from model3d_engine.stages.protocol import ProgressCallback, StageError, StageRe
 class FakeRunner:
     """Writes a small box GLB named after the stage and reports progress 0.5 and 1.0."""
 
-    def __init__(self, output_name: str, delay: float = 0.0, fail_with: StageError | None = None):
+    def __init__(
+        self,
+        output_name: str,
+        delay: float = 0.0,
+        fail_with: StageError | None = None,
+        log: list[tuple[str, str]] | None = None,
+        start_error: StageError | None = None,
+    ):
         self.output_name = output_name
         self.delay = delay
         self.fail_with = fail_with
+        self.start_error = start_error
         self.ready = False
         self.runs: list[tuple[str, float, float]] = []  # (job_id, start, end)
+        self.log = log if log is not None else []  # ("load" | "unload", output_name), shared between runners
+        self.restart_delays: tuple[float, ...] = ()
 
     async def start(self) -> None:
+        if self.start_error is not None:
+            raise self.start_error
+        self.log.append(("load", self.output_name))
         self.ready = True
+
+    async def unload(self) -> None:
+        self.log.append(("unload", self.output_name))
+        self.ready = False
 
     async def stop(self) -> None:
         self.ready = False
