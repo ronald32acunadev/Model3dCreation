@@ -6,15 +6,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-A template repository, not an application. It holds the agent rule files that get copied into new projects (modeled after the sibling `llmtuner` project). There is no source code, package manifest, build, linter, or test suite, so there are no build/lint/test commands to run. Every tracked file is Markdown.
+It started as a template holding agent rule files and is becoming the local AI 3D-generation engine described in `Fases/` (see "Project Context" in `AGENTS.md`). The verified design, which overrides `Fases/` where they differ, is `docs/architecture.md`; environment setup is `docs/setup.md`. Phase progress is tracked in `odd/tasks/`.
 
-## Layout and the sync invariant
+## Commands
 
-- `AGENTS.md` — the canonical agent rules (language rule, local-LLM delegation hierarchy, workflow, MCP setup reference). Distributed via "Option A" in the README.
-- `.agents/rules/AGENTS.md` — a byte-identical copy of the root `AGENTS.md`, distributed via "Option B" (the `.agents/` customization folder).
-- `README.md` — summarizes the same rules and documents the two copy options.
+The engine is a uv project in `engine/` (Python 3.11, PyTorch 2.9.1+cu130). Hunyuan3D 2.1 is a git-ignored clone in `vendor/`, and weights live in `~/.local/share/model3d/hf` (set `HF_HOME` to it).
 
-The two `AGENTS.md` files must stay identical, and the README summary must stay consistent with them. Any rule change touches all three files in the same commit. Verify with:
+```bash
+cd engine && uv run pytest                         # unit tests, no GPU
+cd engine && uv run pytest -m gpu                  # needs both GPUs and the compiled extensions
+cd engine && uv run pytest tests/test_verify_gpus.py::test_parse_nvcc_version   # single test
+uv run --project engine python scripts/verify_gpus.py   # full environment check, from the repo root
+uv run --project engine python -m model3d_engine        # serve the engine on 127.0.0.1:8765
+cd contracts && uv run pytest                           # shared job and event models
+```
+
+The API process never imports torch; each GPU stage runs in its own spawned worker process (`engine/src/model3d_engine/stages/process.py`). The API is documented in `docs/api.md`.
+
+`uv sync` rebuilds `custom_rasterizer` from `vendor/`, so it needs `CUDA_HOME=/usr/local/cuda-13.1` (see `docs/setup.md`). Before GPU work, check that LM Studio or Ollama is not holding VRAM.
+
+## Rule files and the sync invariant
+
+- `AGENTS.md` is canonical and agent-neutral (Antigravity, Claude Code, Codex, Cursor, OpenCode). Claude-specific guidance belongs here.
+- `.agents/rules/AGENTS.md` is a byte-identical copy, and `README.md` summarizes the rules. Any rule change touches all three in the same commit. Verify with:
 
 ```bash
 git diff --no-index AGENTS.md .agents/rules/AGENTS.md
@@ -22,14 +36,9 @@ git diff --no-index AGENTS.md .agents/rules/AGENTS.md
 
 No output means they are in sync.
 
-## Working in this repository
+- Do not hardcode model names in the rules: the dynamic model policy is deliberate (commit `efabf70`).
+- `Agents/readme-generator.md` is a template subagent. It lives outside `.claude/agents/`, so Claude Code does not load it from here.
 
-- The delegation rule in `AGENTS.md` targets source code, tests, and scripts. Documentation, configuration, and commit messages are written by the agent itself, which covers everything currently in this repository. If executable code is ever added, the delegation hierarchy applies; in Claude Code the tools are `mcp__pumbastudio__openai_chat` (primary) and `mcp__pumbalama__chat_completion` (secondary).
-- Rules written here are consumed by several agents (Antigravity, Claude Code, Codex, Cursor, OpenCode). Keep `AGENTS.md` agent-neutral; Claude-specific guidance belongs in this file.
-- Do not hardcode model names in the rules: the dynamic model policy is deliberate (see commit `efabf70`).
-- Commits follow Conventional Commits (`feat:`, `docs:`, ...).
+## Code delegation in Claude Code
 
-## Template assets and tooling state
-
-- `Agents/readme-generator.md` — a subagent definition (Claude Code frontmatter: `name`, `description`, `model`, `color`). It is not under `.claude/agents/`, so Claude Code does not load it from here; it is a template asset documented in `README.md`.
-- `.atl/` and `.codegraph/` — locally generated tooling state (skill registry, code index). Do not stage them with a blanket `git add`.
+The delegation rule in `AGENTS.md` covers source code, tests, and scripts; docs, config, and commit messages are written by the agent. In Claude Code the tools are `mcp__pumbastudio__openai_chat` (primary) and `mcp__pumbalama__chat_completion` (secondary).
