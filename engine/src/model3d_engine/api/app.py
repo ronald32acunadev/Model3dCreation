@@ -1,6 +1,8 @@
 """REST and WebSocket API of the engine."""
 
+import asyncio
 import io
+import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
@@ -18,6 +20,7 @@ from model3d_engine.jobs.store import JobRecord, JobStore
 from model3d_engine.stages.protocol import MODEL_OUTPUT
 
 _SUFFIXES = {"PNG": ".png", "JPEG": ".jpg"}
+logger = logging.getLogger(__name__)
 
 
 class ApiError(Exception):
@@ -52,6 +55,11 @@ def _parse_options(text: str) -> JobOptions:
         raise ApiError(400, "invalid_options", message) from error
 
 
+def _log_startup_failure(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("Engine failed to start: %s", task.exception())
+
+
 def create_app(
     settings: Settings, scheduler: Scheduler, store: JobStore, bus: EventBus, health: Callable[[], dict]
 ) -> FastAPI:
@@ -59,8 +67,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        await scheduler.start()
+        # Load the workers in the background so the port answers at once: health reports
+        # "ready": false and submissions get 503 engine_not_ready until both are loaded.
+        startup = asyncio.create_task(scheduler.start())
+        startup.add_done_callback(_log_startup_failure)
         yield
+        startup.cancel()
+        await asyncio.gather(startup, return_exceptions=True)
         await scheduler.stop()
 
     app = FastAPI(title="model3d engine", lifespan=lifespan)
@@ -128,7 +141,8 @@ def create_app(
             await events.aclose()
 
     @app.get("/v1/health")
-    async def get_health() -> dict:
+    def get_health() -> dict:
+        # A plain def runs in the threadpool, so a slow nvidia-smi never blocks the event loop.
         return health()
 
     return app

@@ -1,6 +1,7 @@
 """Engine entry point: python -m model3d_engine."""
 
 import ipaddress
+import logging
 import subprocess
 import sys
 from collections.abc import Callable
@@ -25,6 +26,7 @@ from model3d_engine.stages.process import ProcessStageRunner
 
 SHAPE_FACTORY = "model3d_engine.stages.hunyuan:make_shape_stage"
 PAINT_FACTORY = "model3d_engine.stages.hunyuan:make_paint_stage"
+logger = logging.getLogger(__name__)
 MEMORY_COMMAND = ["nvidia-smi", "--query-gpu=pci.bus_id,memory.used,memory.total", "--format=csv,noheader,nounits"]
 
 
@@ -67,7 +69,11 @@ def build_engine(
     scheduler = Scheduler(store, bus, shape, paint)
 
     def health() -> dict:
-        memory = memory_reader()
+        try:
+            memory = memory_reader()
+        except Exception as error:
+            logger.warning("Could not read GPU memory: %s", error)
+            memory = {}
         gpus = []
         for bus_id, stage, runner in ((settings.shape_bus, "shape", shape), (settings.paint_bus, "paint", paint)):
             used, total = memory.get(bus_id, (None, None))
@@ -90,6 +96,7 @@ def _is_loopback(host: str) -> bool:
 
 def main() -> None:
     """Serve the engine on the configured loopback host and port."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = load_settings()
     if not _is_loopback(settings.host):
         print("MODEL3D_HOST must be a loopback address", file=sys.stderr)

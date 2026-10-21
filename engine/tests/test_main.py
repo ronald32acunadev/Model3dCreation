@@ -40,6 +40,10 @@ def test_build_engine_with_fake_factories_serves_health_and_jobs(tmp_path):
     memory = {"0000:25:00.0": (100, 12227), "0000:29:00.0": (200, 12227)}
     app = build_engine(settings, links=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=lambda: memory)
     with TestClient(app) as client:
+        deadline = time.monotonic() + 30
+        while not client.get("/v1/health").json()["ready"]:
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
         assert client.get("/v1/health").json() == {
             "ready": True,
             "gpus": [
@@ -54,3 +58,20 @@ def test_build_engine_with_fake_factories_serves_health_and_jobs(tmp_path):
             time.sleep(0.05)
         assert client.get(f"/v1/jobs/{job_id}/result").content[:4] == b"glTF"
     assert (tmp_path / "jobs" / job_id / "model.glb").exists()
+
+
+def test_health_survives_nvidia_smi_failure(tmp_path):
+    """Review finding 4: a failing memory reader yields null memory, not a 500."""
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy")
+
+    def broken_reader():
+        raise FileNotFoundError("nvidia-smi")
+
+    app = build_engine(settings, links=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=broken_reader)
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 30
+        while not (health := client.get("/v1/health")).json()["ready"]:
+            assert health.status_code == 200
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        assert [gpu["memory_used_mib"] for gpu in health.json()["gpus"]] == [None, None]

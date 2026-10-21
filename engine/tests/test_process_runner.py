@@ -82,3 +82,54 @@ async def test_factory_failure_raises_on_start():
     assert "no model here" in raised.value.message
     assert runner.ready is False
     await runner.stop()
+
+
+async def test_next_job_waits_for_restart_after_crash(tmp_path):
+    """Review finding 1: the job queued behind a crash must run once the worker is back."""
+    from model3d_engine.jobs.events import EventBus
+    from model3d_engine.jobs.scheduler import Scheduler
+    from model3d_engine.jobs.store import JobStore
+
+    marker = str(tmp_path / "shape")
+    shape = ProcessStageRunner("tests.worker_stubs:EchoStage", {"mode": "crash_once", "marker": marker}, {}, name="shape")
+    paint = ProcessStageRunner("tests.worker_stubs:EchoStage", {}, {}, name="paint")
+    store = JobStore(tmp_path / "jobs")
+    scheduler = Scheduler(store, EventBus(), shape, paint)
+    await scheduler.start()
+    try:
+        first = store.create(JobOptions(texture=False), b"png", ".png")
+        second = store.create(JobOptions(texture=False), b"png", ".png")
+        scheduler.submit(first)
+        scheduler.submit(second)
+
+        async def until_final():
+            while not (first.is_final and second.is_final):
+                await asyncio.sleep(0.05)
+
+        await asyncio.wait_for(until_final(), 60)
+    finally:
+        await scheduler.stop()
+    assert first.error.code == "worker_crashed"
+    assert second.state.value == "succeeded", second.error
+
+
+async def test_failed_reload_is_logged_and_retried(tmp_path, caplog):
+    """Review finding 3: a worker that fails to reload is retried, and the failure is logged."""
+    marker = str(tmp_path / "paint")
+    runner = ProcessStageRunner(
+        "tests.worker_stubs:EchoStage",
+        {"mode": "crash_then_fail_load", "marker": marker},
+        {},
+        name="paint",
+        restart_delays=(0.0, 0.1),
+    )
+    await runner.start()
+    try:
+        with pytest.raises(StageError):
+            await runner.run(task(tmp_path), lambda v, m: None)
+        result = await runner.run(task(tmp_path), lambda v, m: None)
+        assert result.output.exists()
+    finally:
+        await runner.stop()
+    assert "paint worker failed to restart" in caplog.text
+    assert "model file busy" in caplog.text

@@ -3,11 +3,14 @@ context, import order, and crashes to itself."""
 
 import asyncio
 import importlib
+import logging
 import multiprocessing
 import os
 import time
 
 from model3d_engine.stages.protocol import ProgressCallback, StageError, StageResult, StageTask
+
+logger = logging.getLogger(__name__)
 
 
 def worker_main(factory: str, kwargs: dict, env: dict[str, str], conn) -> None:
@@ -66,12 +69,21 @@ def _receive(conn, process, timeout: float | None):
 class ProcessStageRunner:
     """StageRunner that hosts its stage in a worker process and restarts it after a crash."""
 
-    def __init__(self, factory: str, kwargs: dict, env: dict[str, str], name: str, start_timeout_s: float = 600.0):
+    def __init__(
+        self,
+        factory: str,
+        kwargs: dict,
+        env: dict[str, str],
+        name: str,
+        start_timeout_s: float = 600.0,
+        restart_delays: tuple[float, ...] = (0.0, 5.0, 30.0, 120.0),
+    ):
         self.factory = factory
         self.kwargs = kwargs
         self.env = env
         self.name = name
         self.start_timeout_s = start_timeout_s
+        self.restart_delays = restart_delays
         self.ready = False
         self._process = None
         self._conn = None
@@ -85,6 +97,8 @@ class ProcessStageRunner:
         await self._spawn()
 
     async def _spawn(self) -> None:
+        if self._conn is not None:
+            self._conn.close()  # the previous worker's pipe
         ctx = multiprocessing.get_context("spawn")
         parent_conn, child_conn = ctx.Pipe()
         process = ctx.Process(
@@ -114,10 +128,15 @@ class ProcessStageRunner:
         self.ready = True
 
     async def run(self, task: StageTask, on_progress: ProgressCallback) -> StageResult:
-        """Run one task in the worker, forwarding its progress."""
+        """Run one task in the worker, forwarding its progress.
+
+        After a crash, the next task waits for the restart instead of failing at once.
+        """
         async with self._lock:
+            if self._restart is not None and not self._restart.done():
+                await self._restart
             if not self.ready:
-                raise StageError("engine_not_ready", f"{self.name} worker is not ready")
+                raise StageError("worker_unavailable", f"{self.name} worker could not be restarted")
             self._conn.send(("run", task))
             loop = asyncio.get_running_loop()
             while True:
@@ -138,10 +157,16 @@ class ProcessStageRunner:
                     raise StageError(message[1], message[2])
 
     async def _respawn(self) -> None:
-        try:
-            await self._spawn()
-        except StageError:
-            pass  # stays not ready; the API answers engine_not_ready
+        for delay in self.restart_delays:
+            await asyncio.sleep(delay)
+            if self._stopping:
+                return
+            try:
+                await self._spawn()
+                return
+            except StageError as error:
+                logger.error("%s worker failed to restart: %s", self.name, error.message)
+        logger.error("%s worker gave up after %d restart attempts", self.name, len(self.restart_delays))
 
     async def stop(self) -> None:
         """Stop the worker, killing it if it does not exit within 5 s."""

@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import time
@@ -20,18 +21,39 @@ class NeverReady(FakeRunner):
         self.ready = False
 
 
+class SlowStart(FakeRunner):
+    async def start(self) -> None:
+        await asyncio.sleep(0.5)
+        self.ready = True
+
+
 def image_bytes(mode: str = "RGBA", fmt: str = "PNG") -> bytes:
     buffer = io.BytesIO()
     Image.new(mode, (8, 8), (255, 0, 0, 128) if mode == "RGBA" else (255, 0, 0)).save(buffer, fmt)
     return buffer.getvalue()
 
 
-def make_client(tmp_path, max_image_bytes: int = 1024 * 1024, paint=None, shape=None) -> TestClient:
+class ReadyClient(TestClient):
+    """TestClient that waits for the engine to finish loading before the test runs."""
+
+    def __enter__(self):
+        client = super().__enter__()
+        if self.wait_ready:
+            deadline = time.monotonic() + 5
+            while not client.get("/v1/health").json()["ready"]:
+                assert time.monotonic() < deadline, "engine never became ready"
+                time.sleep(0.01)
+        return client
+
+
+def make_client(tmp_path, max_image_bytes: int = 1024 * 1024, paint=None, shape=None, wait_ready=True) -> TestClient:
     settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", max_image_bytes=max_image_bytes)
     store, bus = JobStore(settings.jobs_dir), EventBus()
     scheduler = Scheduler(store, bus, shape or FakeRunner("shape.glb"), paint or FakeRunner("model.glb"))
     app = create_app(settings, scheduler, store, bus, health=lambda: {"ready": scheduler.ready, "gpus": []})
-    return TestClient(app)
+    client = ReadyClient(app)
+    client.wait_ready = wait_ready
+    return client
 
 
 def post_job(client, data: bytes | None = None, options: dict | None = None, filename: str = "in.png"):
@@ -110,8 +132,20 @@ def test_rejects_bad_options(tmp_path):
 
 
 def test_not_ready_returns_503(tmp_path):
-    with make_client(tmp_path, shape=NeverReady("shape.glb")) as client:
+    with make_client(tmp_path, shape=NeverReady("shape.glb"), wait_ready=False) as client:
         assert_error(post_job(client), 503, "engine_not_ready")
+
+
+def test_api_answers_while_models_load(tmp_path):
+    """Review finding 2: the port answers during startup, with health not ready and 503 on submit."""
+    with make_client(tmp_path, shape=SlowStart("shape.glb"), wait_ready=False) as client:
+        assert client.get("/v1/health").json()["ready"] is False
+        assert_error(post_job(client), 503, "engine_not_ready")
+        deadline = time.monotonic() + 5
+        while not client.get("/v1/health").json()["ready"]:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        assert post_job(client).status_code == 202
 
 
 def test_result_before_finish_is_409_then_glb_after(tmp_path):

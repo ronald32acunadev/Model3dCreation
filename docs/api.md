@@ -6,7 +6,7 @@ The engine listens on `http://127.0.0.1:8765/v1` (loopback only, no authenticati
 uv run --project engine python -m model3d_engine
 ```
 
-Both GPU workers load their models when the engine starts (about 50 s); until then job submissions answer `503 engine_not_ready` and `GET /v1/health` reports `"ready": false`. Shared request and event models live in the `model3d_contracts` package (`contracts/`).
+The port answers as soon as the engine starts. Both GPU workers load their models in the background (about 50 s); until they are ready, `GET /v1/health` reports `"ready": false` and job submissions answer `503 engine_not_ready`. A worker that crashes restarts on its own (retrying after 0, 5, 30, and 120 s); jobs that reach it meanwhile wait for the restart. Shared request and event models live in the `model3d_contracts` package (`contracts/`).
 
 ## Jobs
 
@@ -90,4 +90,4 @@ Every error response has the same body:
 | `job_not_finished` | Result requested before `succeeded` (409) |
 | `job_finished` | `DELETE` on a job that already ended (409) |
 
-Job failures (in the job's `error` and the `failed` event): `gpu_out_of_memory`, `worker_crashed` (the stage process died; it restarts on its own), `internal_error`.
+Job failures (in the job's `error` and the `failed` event): `gpu_out_of_memory`, `worker_crashed` (the stage process died while running this job; it restarts on its own), `worker_unavailable` (the stage could not be restarted; see the engine log), `invalid_image` (the stored input image is missing), `internal_error`.
