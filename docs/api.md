@@ -35,7 +35,7 @@ A job turns one image into a GLB. States: `queued → shaping → painting → s
 | Field | Type | Default | Notes |
 | :--- | :--- | :--- | :--- |
 | `texture` | bool | `true` | `false` skips the paint stage |
-| `quality` | `"draft"`, `"final"`, or `"high"` | `"final"` | Shape: `draft` 25 steps, octree 256; `final` and `high` 50 steps, octree 384. Paint keeps 40000 faces (`draft`, `final`) or 150000 (`high`, about 25 s more) |
+| `quality` | `"draft"`, `"final"`, or `"high"` | `"final"` | Shape: `draft` 25 steps, octree 256; `final` and `high` 50 steps, octree 384. Paint keeps 40000 faces and paints 512 px views (`draft`, `final`); `high` keeps 150000 faces and paints 768 px views, running the guidance branches one at a time with the paint models offloaded to RAM (about 1.5 minutes more; see `docs/spikes/paint-high-detail.md`) |
 | `seed` | int or null | `null` | 0 to 2^32-1; `null` draws one, returned in the job |
 | `remove_background` | bool | `true` | Skipped when the image already has transparency |
 | `target_faces` | int or null | `null` | At least 1000; decimates the shape when it has more faces, and is the face count a textured model keeps (overrides the quality level) |

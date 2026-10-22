@@ -3,7 +3,7 @@
 import pytest
 
 from model3d_contracts.jobs import JobOptions, Quality
-from model3d_engine.stages.hunyuan import QUALITY_PRESETS, paint_face_target
+from model3d_engine.stages.hunyuan import QUALITY_PRESETS, paint_face_target, paint_settings
 
 
 def test_every_quality_has_shape_settings():
@@ -22,3 +22,17 @@ def test_target_faces_overrides_the_level_for_textured_jobs():
     # Upstream's paint stage always cut the mesh to 40000 faces, ignoring target_faces.
     assert paint_face_target(JobOptions(quality=Quality.final, target_faces=100_000)) == 100_000
     assert paint_face_target(JobOptions(quality=Quality.high, target_faces=5_000)) == 5_000
+
+
+@pytest.mark.parametrize(
+    ("quality", "resolution", "high"),
+    [(Quality.draft, 512, False), (Quality.final, 512, False), (Quality.high, 768, True)],
+)
+def test_paint_settings_per_level(quality, resolution, high):
+    settings = paint_settings(JobOptions(quality=quality))
+    assert settings.resolution == resolution
+    # 768 px only fits a 12 GB card with the guidance branches run one at a time and the
+    # pipeline offloaded to RAM between uses (docs/spikes/paint-high-detail.md).
+    assert settings.split_guidance is high
+    assert settings.offload is high
+    assert settings.max_views == 6
