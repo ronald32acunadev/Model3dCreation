@@ -4,7 +4,7 @@ Starter template repository containing universal AI coding agent rules, workflow
 
 ## Model3D
 
-This repository also holds Model3D, a local AI engine and desktop app that turn one image into a textured 3D model (GLB) on your own NVIDIA GPUs, with no cloud calls. Set it up with [docs/setup.md](docs/setup.md); the design is in [docs/architecture.md](docs/architecture.md) and the engine API in [docs/api.md](docs/api.md).
+This repository also holds Model3D, a local AI engine and desktop app that turn one image into a textured 3D model (GLB), optionally with a skeleton ready to animate, on your own NVIDIA GPUs, with no cloud calls. Set it up with [docs/setup.md](docs/setup.md); the design is in [docs/architecture.md](docs/architecture.md) and the engine API in [docs/api.md](docs/api.md).
 
 ## Overview
 

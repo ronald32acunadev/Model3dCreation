@@ -1,5 +1,7 @@
 """The library list: one row per generation, newest first."""
 
+from collections.abc import Callable
+
 from PySide6.QtCore import QEvent, QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QInputDialog, QLabel, QListWidget, QListWidgetItem, QMenu, QMessageBox, QVBoxLayout, QWidget
@@ -18,12 +20,14 @@ class LibraryPanel(QWidget):
     entry_selected = Signal(object)  # entry id, or None
     rename_requested = Signal(str, str)  # entry id, new name
     delete_requested = Signal(str)
+    add_skeleton_requested = Signal(str)  # entry id
 
     def __init__(self, library: Library, parent: QWidget | None = None):
         super().__init__(parent)
         self._library = library
         self._entries: list[Entry] = []
         self._icons: dict[str, QIcon] = {}  # thumbnails, made once per entry
+        self.can_add_skeleton: Callable[[Entry], bool] = lambda _entry: False  # set by the window
         self.title = QLabel()
         self.list = QListWidget()
         self.list.setIconSize(QSize(THUMBNAIL, THUMBNAIL))
@@ -69,7 +73,19 @@ class LibraryPanel(QWidget):
         if entry.stats is not None:
             parts.append(format_duration(entry.stats.duration_s))
         parts.append(outcomes[entry.outcome])
+        if entry.options.rig:
+            parts.append(self.tr("skeleton"))
         return f"{entry.name}\n{' · '.join(parts)}"
+
+    def build_menu(self, entry: Entry) -> QMenu:
+        """The entry's context menu: rename, delete, and add skeleton (when the engine can)."""
+        menu = QMenu(self)
+        menu.addAction(self.tr("Rename…")).setObjectName("rename")
+        menu.addAction(self.tr("Delete…")).setObjectName("delete")
+        add_skeleton = menu.addAction(self.tr("Add skeleton"))
+        add_skeleton.setObjectName("add_skeleton")
+        add_skeleton.setEnabled(self.can_add_skeleton(entry))
+        return menu
 
     def _icon(self, entry: Entry) -> QIcon:
         if entry.entry_id not in self._icons:
@@ -89,11 +105,12 @@ class LibraryPanel(QWidget):
             return
         entry_id = item.data(Qt.ItemDataRole.UserRole)
         entry = next(e for e in self._entries if e.entry_id == entry_id)
-        menu = QMenu(self)
-        rename = menu.addAction(self.tr("Rename…"))
-        delete = menu.addAction(self.tr("Delete…"))
+        menu = self.build_menu(entry)
+        rename, delete, add_skeleton = menu.actions()
         chosen = menu.exec(self.list.mapToGlobal(pos))
-        if chosen is rename:
+        if chosen is add_skeleton:
+            self.add_skeleton_requested.emit(entry_id)
+        elif chosen is rename:
             name, ok = QInputDialog.getText(self, self.tr("Rename"), self.tr("Name:"), text=entry.name)
             if ok and name.strip():
                 self.rename_requested.emit(entry_id, name)

@@ -36,3 +36,13 @@ def test_qm_is_up_to_date(tmp_path):
     subprocess.run([str(lrelease), str(I18N / "model3d_es.ts"), "-qm", str(tmp_path / "out.qm")],
                    check=True, capture_output=True)
     assert (tmp_path / "out.qm").read_bytes() == (I18N / "model3d_es.qm").read_bytes()
+
+
+def test_spanish_catalog_has_rig_strings():
+    translations = {
+        message.findtext("source"): message.findtext("translation")
+        for message in ElementTree.parse(I18N / "model3d_es.ts").getroot().findall(".//message")
+    }
+    assert translations["With skeleton"] == "Con esqueleto"
+    assert translations["Add skeleton"] == "Agregar esqueleto"
+    assert translations["Adding skeleton…"] == "Agregando esqueleto…"
