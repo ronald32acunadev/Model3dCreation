@@ -1,9 +1,8 @@
 import pytest
-from model3d_contracts.health import Health
 from model3d_contracts.jobs import JobState, Quality
-from PySide6.QtCore import QObject, Signal
 
-from fake_engine import CLOSE, FakeEngine, error_body, make_health, make_job
+from fake_engine import CLOSE, FakeEngine, error_body, make_job
+from fakes import FakeSupervisor
 from model3d_client.services.library import Library, Outcome
 from model3d_client.services.settings import Settings
 from model3d_client.services.supervisor import EngineState
@@ -19,20 +18,6 @@ def progress(stage="shape", value=0.5, message="Denoising step 25 of 50"):
 
 def completed():
     return {"type": "completed", "job_id": "J1", "ts": TS, "result_url": "/v1/jobs/J1/result", "stats": STATS}
-
-
-class FakeSupervisor(QObject):
-    state_changed = Signal(object)
-    health_changed = Signal(object)
-
-    def __init__(self, state=EngineState.ready, texture=True):
-        super().__init__()
-        self.state = state
-        self.health = Health.model_validate(make_health(ready=state == EngineState.ready, texture=texture))
-
-    def set_state(self, state):
-        self.state = state
-        self.state_changed.emit(state)
 
 
 @pytest.fixture
