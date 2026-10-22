@@ -67,173 +67,183 @@
 <context>
     <name>GenerationPanel</name>
     <message>
-        <location filename="../views/generation_panel.py" line="115"/>
+        <location filename="../views/generation_panel.py" line="116"/>
         <source>Image</source>
         <translation>Imagen</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="116"/>
+        <location filename="../views/generation_panel.py" line="117"/>
         <source>Text (coming later)</source>
         <translation>Texto (próximamente)</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="118"/>
+        <location filename="../views/generation_panel.py" line="119"/>
         <source>Drop an image here</source>
         <translation>Suelte una imagen aquí</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="119"/>
+        <location filename="../views/generation_panel.py" line="120"/>
         <source>Choose image…</source>
         <translation>Elegir imagen…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="120"/>
+        <location filename="../views/generation_panel.py" line="121"/>
         <source>Texture</source>
         <translation>Textura</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="121"/>
+        <location filename="../views/generation_panel.py" line="122"/>
         <source>Quality: draft</source>
         <translation>Calidad: borrador</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="122"/>
+        <location filename="../views/generation_panel.py" line="123"/>
         <source>Quality: final</source>
         <translation>Calidad: final</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="123"/>
+        <location filename="../views/generation_panel.py" line="124"/>
+        <source>Quality: high detail</source>
+        <translation>Calidad: alto detalle</translation>
+    </message>
+    <message>
+        <location filename="../views/generation_panel.py" line="126"/>
+        <source>Keeps more geometry: sharper ears, hands, and folds. About 25 s more per model.</source>
+        <translation>Conserva más geometría: orejas, manos y pliegues más definidos. Unos 25 s más por modelo.</translation>
+    </message>
+    <message>
+        <location filename="../views/generation_panel.py" line="129"/>
         <source>Save GLB…</source>
         <translation>Guardar GLB…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="124"/>
+        <location filename="../views/generation_panel.py" line="130"/>
         <source>Show texture</source>
         <translation>Mostrar textura</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="125"/>
+        <location filename="../views/generation_panel.py" line="131"/>
         <source>Reset camera</source>
         <translation>Restablecer cámara</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="137"/>
+        <location filename="../views/generation_panel.py" line="143"/>
         <source>This engine runs without the paint stage</source>
         <translation>Este motor funciona sin la etapa de pintura</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="140"/>
+        <location filename="../views/generation_panel.py" line="146"/>
         <source>Generate</source>
         <translation>Generar</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="143"/>
+        <location filename="../views/generation_panel.py" line="149"/>
         <source>Cancelling…</source>
         <translation>Cancelando…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="146"/>
+        <location filename="../views/generation_panel.py" line="152"/>
         <source>Cancel</source>
         <translation>Cancelar</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="152"/>
+        <location filename="../views/generation_panel.py" line="158"/>
         <source>Sending the image…</source>
         <translation>Enviando la imagen…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="153"/>
+        <location filename="../views/generation_panel.py" line="159"/>
         <source>Waiting in the queue…</source>
         <translation>Esperando en la cola…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="154"/>
+        <location filename="../views/generation_panel.py" line="160"/>
         <source>Building the shape</source>
         <translation>Construyendo la forma</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="155"/>
+        <location filename="../views/generation_panel.py" line="161"/>
         <source>Painting the texture</source>
         <translation>Pintando la textura</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="156"/>
+        <location filename="../views/generation_panel.py" line="162"/>
         <source>Cancelling: the engine finishes the current stage first…</source>
         <translation>Cancelando: el motor termina primero la etapa actual…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="164"/>
+        <location filename="../views/generation_panel.py" line="170"/>
         <source>Use a PNG or JPEG image.</source>
         <translation>Use una imagen PNG o JPEG.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="165"/>
-        <location filename="../views/generation_panel.py" line="176"/>
+        <location filename="../views/generation_panel.py" line="171"/>
+        <location filename="../views/generation_panel.py" line="182"/>
         <source>The image is larger than 20 MB.</source>
         <translation>La imagen supera los 20 MB.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="166"/>
+        <location filename="../views/generation_panel.py" line="172"/>
         <source>The image file no longer exists.</source>
         <translation>El archivo de la imagen ya no existe.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="175"/>
+        <location filename="../views/generation_panel.py" line="181"/>
         <source>The engine could not read this image.</source>
         <translation>El motor no pudo leer esta imagen.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="177"/>
+        <location filename="../views/generation_panel.py" line="183"/>
         <source>The engine is not ready yet.</source>
         <translation>El motor todavía no está listo.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="178"/>
+        <location filename="../views/generation_panel.py" line="184"/>
         <source>This engine runs without the paint stage; turn Texture off.</source>
         <translation>Este motor funciona sin la etapa de pintura; desactive Textura.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="179"/>
+        <location filename="../views/generation_panel.py" line="185"/>
         <source>The engine ran out of GPU memory. Close other programs that use the GPU and try again.</source>
         <translation>El motor se quedó sin memoria de GPU. Cierre otros programas que usen la GPU e inténtelo de nuevo.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="180"/>
+        <location filename="../views/generation_panel.py" line="186"/>
         <source>A GPU worker crashed; it restarts on its own. Try again.</source>
         <translation>Un proceso de GPU falló; se reinicia solo. Inténtelo de nuevo.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="181"/>
+        <location filename="../views/generation_panel.py" line="187"/>
         <source>A GPU worker could not be started. Restart the engine.</source>
         <translation>No se pudo iniciar un proceso de GPU. Reinicie el motor.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="182"/>
+        <location filename="../views/generation_panel.py" line="188"/>
         <source>A stage took too long and was stopped. Try again.</source>
         <translation>Una etapa tardó demasiado y se detuvo. Inténtelo de nuevo.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="183"/>
+        <location filename="../views/generation_panel.py" line="189"/>
         <source>The engine stopped answering during the generation.</source>
         <translation>El motor dejó de responder durante la generación.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="184"/>
+        <location filename="../views/generation_panel.py" line="190"/>
         <source>The engine does not answer.</source>
         <translation>El motor no responde.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="185"/>
+        <location filename="../views/generation_panel.py" line="191"/>
         <source>The engine hit an internal error. See the engine log.</source>
         <translation>El motor tuvo un error interno. Consulte el registro del motor.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="196"/>
+        <location filename="../views/generation_panel.py" line="202"/>
         <source>Choose image</source>
         <translation>Elegir imagen</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="196"/>
+        <location filename="../views/generation_panel.py" line="202"/>
         <source>Images (*.png *.jpg *.jpeg)</source>
         <translation>Imágenes (*.png *.jpg *.jpeg)</translation>
     </message>
@@ -343,78 +353,83 @@
 <context>
     <name>SettingsDialog</name>
     <message>
-        <location filename="../views/settings_dialog.py" line="99"/>
+        <location filename="../views/settings_dialog.py" line="100"/>
         <source>Settings</source>
         <translation>Configuración</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="100"/>
+        <location filename="../views/settings_dialog.py" line="101"/>
         <source>Language</source>
         <translation>Idioma</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="100"/>
+        <location filename="../views/settings_dialog.py" line="101"/>
         <source>Texture by default</source>
         <translation>Textura por defecto</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="100"/>
+        <location filename="../views/settings_dialog.py" line="101"/>
         <source>Default quality</source>
         <translation>Calidad por defecto</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="100"/>
-        <location filename="../views/settings_dialog.py" line="138"/>
+        <location filename="../views/settings_dialog.py" line="101"/>
+        <location filename="../views/settings_dialog.py" line="140"/>
         <source>Export folder</source>
         <translation>Carpeta de exportación</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="103"/>
+        <location filename="../views/settings_dialog.py" line="104"/>
         <source>Draft</source>
         <translation>Borrador</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="104"/>
+        <location filename="../views/settings_dialog.py" line="105"/>
         <source>Final</source>
         <translation>Final</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="105"/>
+        <location filename="../views/settings_dialog.py" line="106"/>
+        <source>High detail</source>
+        <translation>Alto detalle</translation>
+    </message>
+    <message>
+        <location filename="../views/settings_dialog.py" line="107"/>
         <source>Browse…</source>
         <translation>Examinar…</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="106"/>
+        <location filename="../views/settings_dialog.py" line="108"/>
         <source>Engine</source>
         <translation>Motor</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="107"/>
+        <location filename="../views/settings_dialog.py" line="109"/>
         <source>Restart engine</source>
         <translation>Reiniciar el motor</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="118"/>
+        <location filename="../views/settings_dialog.py" line="120"/>
         <source>Engine not running</source>
         <translation>Motor detenido</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="121"/>
+        <location filename="../views/settings_dialog.py" line="123"/>
         <source>Mode: %1</source>
         <translation>Modo: %1</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="126"/>
+        <location filename="../views/settings_dialog.py" line="128"/>
         <source>GPU %1: %2</source>
         <translation>GPU %1: %2</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="128"/>
+        <location filename="../views/settings_dialog.py" line="130"/>
         <source>%1 MiB free</source>
         <translation>%1 MiB libres</translation>
     </message>
     <message>
-        <location filename="../views/settings_dialog.py" line="135"/>
+        <location filename="../views/settings_dialog.py" line="137"/>
         <source>No engine log yet.</source>
         <translation>Todavía no hay registro del motor.</translation>
     </message>

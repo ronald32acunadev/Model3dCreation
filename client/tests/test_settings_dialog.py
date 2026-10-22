@@ -44,3 +44,10 @@ def test_settings_dialog_shows_engine_log_tail(window):  # noqa: F811
 def test_settings_dialog_without_log(window):  # noqa: F811
     dialog = SettingsDialog(window.vm)
     assert dialog.log_view.toPlainText() == "No engine log yet."
+
+
+def test_settings_dialog_offers_high_detail(window):  # noqa: F811
+    dialog = SettingsDialog(window.vm)
+    combo = dialog.quality_combo
+    assert [combo.itemData(i) for i in range(combo.count())] == [Quality.draft, Quality.final, Quality.high]
+    assert combo.itemText(2) == "High detail"

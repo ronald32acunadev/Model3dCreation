@@ -167,3 +167,9 @@ def test_drop_area_accepts_image_path(window, png):
     window.generation_panel.image_dropped(png)
     assert window.vm.generation.image == png
     assert not window.generation_panel.image_preview.pixmap().isNull()
+
+
+def test_quality_combo_offers_high_detail(window):
+    combo = window.generation_panel.quality_combo
+    assert [combo.itemData(i) for i in range(combo.count())] == [Quality.draft, Quality.final, Quality.high]
+    assert combo.itemText(2) == "Quality: high detail"

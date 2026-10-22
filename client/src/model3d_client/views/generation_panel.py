@@ -72,6 +72,7 @@ class GenerationPanel(QWidget):
         self.quality_combo = QComboBox()
         self.quality_combo.addItem("", Quality.draft)
         self.quality_combo.addItem("", Quality.final)
+        self.quality_combo.addItem("", Quality.high)
         self.quality_combo.setCurrentIndex(self.quality_combo.findData(vm.quality))
         self.quality_combo.currentIndexChanged.connect(lambda _i: vm.set_quality(self.quality_combo.currentData()))
         self.generate_button = QPushButton()
@@ -120,6 +121,11 @@ class GenerationPanel(QWidget):
         self.texture_check.setText(self.tr("Texture"))
         self.quality_combo.setItemText(0, self.tr("Quality: draft"))
         self.quality_combo.setItemText(1, self.tr("Quality: final"))
+        self.quality_combo.setItemText(2, self.tr("Quality: high detail"))
+        self.quality_combo.setItemData(
+            2, self.tr("Keeps more geometry: sharper ears, hands, and folds. About 25 s more per model."),
+            Qt.ItemDataRole.ToolTipRole,
+        )
         self.save_button.setText(self.tr("Save GLB…"))
         self.show_texture_check.setText(self.tr("Show texture"))
         self.reset_camera_button.setText(self.tr("Reset camera"))
