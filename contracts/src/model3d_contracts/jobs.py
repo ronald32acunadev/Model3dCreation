@@ -26,6 +26,7 @@ class Quality(str, Enum):
 
     draft = "draft"
     final = "final"
+    high = "high"
 
 
 def _serialize_utc(value: datetime) -> str:

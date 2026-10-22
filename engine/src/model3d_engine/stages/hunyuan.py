@@ -9,6 +9,8 @@ import os
 import sys
 from pathlib import Path
 
+from model3d_contracts.jobs import JobOptions
+
 from model3d_engine.config import Settings
 from model3d_engine.stages.protocol import (
     MODEL_OUTPUT,
@@ -22,7 +24,10 @@ from model3d_engine.stages.protocol import (
 HUNYUAN_MODEL = "tencent/Hunyuan3D-2.1"
 # Quality preset -> (num_inference_steps, octree_resolution). "final" is upstream's default
 # (measured 77 s on GPU0); "draft" is this project's choice.
-QUALITY_PRESETS = {"final": (50, 384), "draft": (25, 256)}
+QUALITY_PRESETS = {"final": (50, 384), "draft": (25, 256), "high": (50, 384)}
+# Faces the paint stage keeps (it decimates the shape before unwrapping and baking). Upstream
+# always cuts to 40000; "high" keeps 150000: +24 s paint and +0.6 GiB VRAM, measured 2026-10-22.
+PAINT_FACES = {"draft": 40_000, "final": 40_000, "high": 150_000}
 PATCHED_LINE = ".to(pbr_hs.device)"
 
 
@@ -35,6 +40,13 @@ def stage_env(settings: Settings) -> dict[str, str]:
         "U2NET_HOME": str(settings.home / "u2net"),
         "PYTORCH_ALLOC_CONF": "expandable_segments:True",
     }
+
+
+def paint_face_target(options: JobOptions) -> int:
+    """Faces the paint stage keeps: the job's target_faces, else its quality level's."""
+    if options.target_faces is not None:
+        return options.target_faces
+    return PAINT_FACES[options.quality.value]
 
 
 def _input_image(job_dir: Path) -> Path:
@@ -192,12 +204,20 @@ class PaintStage:
 
         torch = self.torch
         torch.cuda.set_device(self.device)
+        from utils.simplify_mesh_utils import mesh_simplify_trimesh
+
         progress(0.05, "Remeshing and generating views")
         try:
+            # Simplify here, to the job's face target, instead of upstream's fixed 40000.
+            remeshed = task.job_dir / "white_mesh_remesh.obj"
+            mesh_simplify_trimesh(
+                str(task.job_dir / SHAPE_OUTPUT), str(remeshed), target_count=paint_face_target(task.options)
+            )
             self.paint(
-                mesh_path=str(task.job_dir / SHAPE_OUTPUT),
+                mesh_path=str(remeshed),
                 image_path=str(_input_image(task.job_dir)),
                 output_mesh_path=str(task.job_dir / "textured.obj"),
+                use_remesh=False,
             )
         except torch.OutOfMemoryError as error:
             raise StageError("gpu_out_of_memory", f"Paint stage ran out of VRAM: {error}") from error

@@ -35,10 +35,10 @@ A job turns one image into a GLB. States: `queued → shaping → painting → s
 | Field | Type | Default | Notes |
 | :--- | :--- | :--- | :--- |
 | `texture` | bool | `true` | `false` skips the paint stage |
-| `quality` | `"draft"` or `"final"` | `"final"` | `final`: 50 steps, octree 384; `draft`: 25 steps, octree 256 |
+| `quality` | `"draft"`, `"final"`, or `"high"` | `"final"` | Shape: `draft` 25 steps, octree 256; `final` and `high` 50 steps, octree 384. Paint keeps 40000 faces (`draft`, `final`) or 150000 (`high`, about 25 s more) |
 | `seed` | int or null | `null` | 0 to 2^32-1; `null` draws one, returned in the job |
 | `remove_background` | bool | `true` | Skipped when the image already has transparency |
-| `target_faces` | int or null | `null` | At least 1000; decimates the shape when it has more faces |
+| `target_faces` | int or null | `null` | At least 1000; decimates the shape when it has more faces, and is the face count a textured model keeps (overrides the quality level) |
 
 ```bash
 curl -F image=@penguin.png -F 'options={"quality": "draft"}' http://127.0.0.1:8765/v1/jobs
