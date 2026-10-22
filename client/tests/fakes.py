@@ -14,10 +14,12 @@ class FakeSupervisor(QObject):
     state_changed = Signal(object)
     health_changed = Signal(object)
 
-    def __init__(self, state=EngineState.ready, texture=True):
+    def __init__(self, state=EngineState.ready, texture=True, rig=True, rig_reason=None):
         super().__init__()
         self.state = state
-        self.health = Health.model_validate(make_health(ready=state == EngineState.ready, texture=texture))
+        self.health = Health.model_validate(
+            make_health(ready=state == EngineState.ready, texture=texture, rig=rig, rig_reason=rig_reason)
+        )
         self.failure = None
         self.owned = True
         self.stopped = 0

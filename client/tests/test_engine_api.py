@@ -102,3 +102,12 @@ def test_download_result_writes_file_atomically(qtbot, engine, tmp_path, make_ap
     assert call(qtbot, make_api(engine.url).download_result, "J1", target) == target
     assert target.read_bytes() == b"glTF fake model"
     assert not target.with_suffix(".part").exists()
+
+
+def test_submit_rig_posts_model_part(qtbot, engine, tmp_path, make_api):
+    model = tmp_path / "model.glb"
+    model.write_bytes(b"glTF model bytes")
+    job = call(qtbot, make_api(engine.url).submit_rig, model)
+    assert isinstance(job, Job) and job.job_id == "J1"
+    sent = engine.controller.rig_submissions[0]
+    assert (sent["filename"], sent["content_type"], sent["model"]) == ("model.glb", "model/gltf-binary", b"glTF model bytes")

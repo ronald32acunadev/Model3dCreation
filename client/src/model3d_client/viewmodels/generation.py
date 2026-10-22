@@ -25,6 +25,7 @@ class Phase(str, Enum):
     queued = "queued"
     shaping = "shaping"
     painting = "painting"
+    rigging = "rigging"
     cancelling = "cancelling"
 
 
@@ -43,6 +44,7 @@ class GenerationViewModel(QObject):
         self.image_problem: str | None = None
         self.texture = settings.default_texture
         self.quality = settings.default_quality
+        self.rig = False
         self.phase = Phase.idle
         self.progress = 0.0
         self.message = ""
@@ -61,6 +63,25 @@ class GenerationViewModel(QObject):
         return health.mode.texture if health is not None else True
 
     @property
+    def rig_available(self) -> bool:
+        health: Health | None = self._supervisor.health
+        return health.rig if health is not None else False
+
+    @property
+    def rig_reason(self) -> str | None:
+        health: Health | None = self._supervisor.health
+        return health.rig_reason if health is not None else None
+
+    def can_add_skeleton(self, entry: Entry) -> bool:
+        return (
+            self._supervisor.state == EngineState.ready
+            and self.phase == Phase.idle
+            and self.rig_available
+            and entry.outcome == Outcome.succeeded
+            and not self._library.has_skeleton(entry)
+        )
+
+    @property
     def can_generate(self) -> bool:
         return (
             self._supervisor.state == EngineState.ready
@@ -71,7 +92,7 @@ class GenerationViewModel(QObject):
 
     @property
     def can_cancel(self) -> bool:
-        return self.phase in (Phase.submitting, Phase.queued, Phase.shaping, Phase.painting)
+        return self.phase in (Phase.submitting, Phase.queued, Phase.shaping, Phase.painting, Phase.rigging)
 
     def set_image(self, path: Path) -> None:
         self.image = path
@@ -89,6 +110,10 @@ class GenerationViewModel(QObject):
         self.texture = texture
         self.changed.emit()
 
+    def set_rig(self, rig: bool) -> None:
+        self.rig = rig
+        self.changed.emit()
+
     def set_quality(self, quality: Quality) -> None:
         self.quality = quality
         self.changed.emit()
@@ -96,14 +121,28 @@ class GenerationViewModel(QObject):
     def generate(self) -> None:
         if not self.can_generate:
             return
-        options = JobOptions(texture=self.texture and self.texture_available, quality=self.quality)
+        options = JobOptions(
+            texture=self.texture and self.texture_available, quality=self.quality, rig=self.rig and self.rig_available
+        )
         self.entry = self._library.create(self.image, options)
+        self._start()
+        self._api.submit(self.image, options, self._on_submitted)
+
+    def add_skeleton(self, entry_id: str) -> None:
+        """Rig an existing entry's model into a new entry; the original stays as it is."""
+        source = next((entry for entry in self._library.entries() if entry.entry_id == entry_id), None)
+        if source is None or not self.can_add_skeleton(source):
+            return
+        self.entry = self._library.create_derived(entry_id)
+        self._start()
+        self._api.submit_rig(self._library.model_path(entry_id), self._on_submitted)
+
+    def _start(self) -> None:
         self.library_changed.emit()
         self.error = None
         self._cancel_pending = False
         self._reconnected = False
         self._set_phase(Phase.submitting, 0.0, "")
-        self._api.submit(self.image, options, self._on_submitted)
 
     def cancel(self) -> None:
         if not self.can_cancel:
@@ -140,7 +179,7 @@ class GenerationViewModel(QObject):
         if self.entry is None:
             return
         if isinstance(event, (SnapshotEvent, ProgressEvent)):
-            phase = {"shape": Phase.shaping, "paint": Phase.painting}.get(event.stage, Phase.queued)
+            phase = {"shape": Phase.shaping, "paint": Phase.painting, "rig": Phase.rigging}.get(event.stage, Phase.queued)
             if self.phase == Phase.cancelling:
                 phase = Phase.cancelling
             self._set_phase(phase, event.progress, getattr(event, "message", ""))

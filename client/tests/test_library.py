@@ -66,3 +66,19 @@ def test_running_entries_become_interrupted_on_load(tmp_path, png):
     assert Library(tmp_path).entries()[0].outcome == Outcome.interrupted
     assert lib.entries()[0].entry_id == e.entry_id
     assert lib.entries()[0].outcome == Outcome.interrupted  # persisted, not only in memory
+
+
+def test_create_derived_copies_input_and_links_source(tmp_path, png):
+    lib = Library(tmp_path)
+    source = lib.create(png, JobOptions(quality=Quality.high))
+    lib.update(source.model_copy(update={"outcome": Outcome.succeeded}))
+    source_json = (lib.folder(source.entry_id) / "entry.json").read_bytes()
+    derived = lib.create_derived(source.entry_id)
+    assert derived.entry_id != source.entry_id
+    assert derived.name == "penguin (rigged)"
+    assert derived.source_entry_id == source.entry_id
+    assert derived.options == JobOptions(quality=Quality.high, rig=True)
+    assert derived.outcome == Outcome.running
+    assert lib.input_path(derived.entry_id).read_bytes() == png.read_bytes()
+    assert (lib.folder(source.entry_id) / "entry.json").read_bytes() == source_json
+    assert lib.has_skeleton(derived) and not lib.has_skeleton(lib._read(source.entry_id))
