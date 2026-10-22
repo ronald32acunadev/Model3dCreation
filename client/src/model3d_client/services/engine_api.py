@@ -70,6 +70,11 @@ class EngineApi(QObject):
         self._manager = QNetworkAccessManager(self)
         self._replies: set[QNetworkReply] = set()
 
+    @property
+    def pending(self) -> int:
+        """Requests still in flight; an EngineApi must outlive them."""
+        return len(self._replies)
+
     def health(self, on_done: Callable[[Health | None], None]) -> None:
         def done(reply: QNetworkReply) -> None:
             if self._status(reply) != 200:

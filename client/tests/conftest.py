@@ -25,3 +25,19 @@ def png(tmp_path):
     path.parent.mkdir()
     path.write_bytes(png_bytes())
     return path
+
+
+@pytest.fixture
+def make_api(qtbot):
+    """EngineApi factory; teardown waits for in-flight requests so Python never frees an api mid-request."""
+    from model3d_client.services.engine_api import EngineApi
+
+    apis = []
+
+    def make(url: str) -> EngineApi:
+        apis.append(EngineApi(url))
+        return apis[-1]
+
+    yield make
+    qtbot.waitUntil(lambda: all(api.pending == 0 for api in apis), timeout=10000)
+    qtbot.wait(50)  # let finished replies run their deleteLater while their manager still exists
