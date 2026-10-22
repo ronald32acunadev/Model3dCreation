@@ -155,3 +155,13 @@ def test_forced_shape_only_refuses_textured_jobs(tmp_path):
         assert [gpu["stage"] for gpu in health["gpus"]] == ["shape", None]  # the card with the most free VRAM
         assert post_job(client).json()["error"]["code"] == "texture_unavailable"
         run_job(client, {"texture": False})
+
+
+def test_uvicorn_can_serve_websockets():
+    # The job events route is a WebSocket; without a WebSocket library uvicorn answers it with 404.
+    # TestClient bypasses uvicorn, so only this check catches a missing library.
+    import uvicorn
+
+    config = uvicorn.Config(app=lambda scope, receive, send: None, ws="auto")
+    config.load()
+    assert config.ws_protocol_class is not None

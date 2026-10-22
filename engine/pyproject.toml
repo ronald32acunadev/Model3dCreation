@@ -47,6 +47,8 @@ dependencies = [
     "model3d-contracts",
     "fastapi==0.115.12",
     "uvicorn==0.34.3",
+    # uvicorn needs a WebSocket library to serve the job events route; without one it answers 404.
+    "websockets==15.0.1",
     "python-multipart",
 ]
 
