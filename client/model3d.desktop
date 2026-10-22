@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Model3D
+Comment=Turn an image into a textured 3D model on your own GPUs
+Exec=@CLIENT_DIR@/launch.sh
+Terminal=false
+Categories=Graphics;3DGraphics;

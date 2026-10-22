@@ -135,10 +135,11 @@ The paint pipeline imports `bpy` (`DifferentiableRenderer/mesh_utils.py`) to con
 │   └── tests/
 ├── blender_addon/model3d_bridge/               # Blender extension (phase 4)
 ├── scripts/verify_gpus.py                      # phase 1 environment check
+├── data/                                       # git-ignored runtime data: hf/, u2net/, jobs/, library/
 └── vendor/                                     # git-ignored: Hunyuan3D-2.1 clone
 ```
 
-Runtime data lives outside the repository tree by default, in `~/.local/share/model3d/` (Hugging Face cache in `hf/`, job folders), overridable with `MODEL3D_HOME`. Environment setup: [setup.md](setup.md).
+Runtime data lives in the git-ignored `data/` folder at the repository root (Hugging Face cache in `hf/`, rembg model in `u2net/`, engine job folders in `jobs/`, the desktop app's library in `library/`), so the project folder is self-contained; `MODEL3D_HOME` overrides it. Environment setup: [setup.md](setup.md).
 
 ## 5. API contracts (v1)
 
@@ -229,6 +230,16 @@ Server to client only. On connect the server sends a `snapshot` event with the c
 ```
 
 `progress` is 0.0 to 1.0 within the current stage.
+
+## 5b. Desktop client (phase 3)
+
+The PySide6 app in `client/` (package `model3d_client`) is the engine's first client. Its design and the owner's decisions are in `docs/superpowers/specs/2026-10-21-desktop-app-design.md`; the essentials:
+
+- **Process model.** The app starts the engine itself (`EngineSupervisor`, a `QProcess` running the engine's own Python), adopts an engine that already answers on port 8765 instead of starting a second one, and stops only the engine it started when it closes. Engine output goes to `data/logs/engine.log`.
+- **Layers.** Views (Qt widgets) bind to view models (`MainViewModel`, `GenerationViewModel`), which call services: `EngineApi` (non-blocking `QNetworkAccessManager` and `QWebSocket`), `Library` (one folder per generation under `data/library/`, with the input, the GLB, and an `entry.json`), `Settings`, and `run_checks` for diagnostics. The UI thread never waits on the network, the engine process, or `nvidia-smi`.
+- **Viewer.** Three.js (vendored, no network) inside `QWebEngineView`, served through a `model3d://` URL scheme that only answers inside the viewer and library folders. On NVIDIA with Wayland the app passes `--ignore-gpu-blocklist` to Chromium; without it WebGL2 stays off and the viewer is black.
+- **Diagnostics.** When the engine cannot start, the viewer area lists what is missing (NVIDIA GPU, engine environment, Hunyuan3D clone, weights) with a sentence per check and a "Restart engine" button.
+- **Languages.** Source strings are English; Spanish lives in `client/src/model3d_client/i18n/model3d_es.ts`, compiled to the committed `.qm` by `client/scripts/update_translations.sh`. Switching language in Settings retranslates the open window at once.
 
 ## 6. Acceptance criteria carried from phase 5
 

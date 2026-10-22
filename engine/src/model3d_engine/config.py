@@ -64,7 +64,7 @@ def load_settings(env: Mapping[str, str] | None = None, repo_root: Path | None =
     if mode is not None and mode not in forcible:
         raise ValueError(f"MODEL3D_MODE must be one of {', '.join(forcible)}; got {mode!r}")
     return Settings(
-        home=Path(home).expanduser() if home else Path.home() / ".local/share/model3d",
+        home=Path(home).expanduser() if home else repo_root / "data",
         hunyuan_dir=Path(hunyuan_dir).expanduser() if hunyuan_dir else repo_root / "vendor/Hunyuan3D-2.1",
         host=env.get("MODEL3D_HOST", "127.0.0.1"),
         port=int(env.get("MODEL3D_PORT", "8765")),

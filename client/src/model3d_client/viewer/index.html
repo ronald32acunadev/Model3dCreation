@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>model3d viewer</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #2b2d31; }
+    canvas { display: block; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "model3d://viewer/vendor/three.module.js",
+        "three/addons/": "model3d://viewer/vendor/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <script type="module" src="model3d://viewer/viewer.js"></script>
+</body>
+</html>

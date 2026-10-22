@@ -84,3 +84,8 @@ def test_parse_event_rejects_unknown_type():
 
 def test_final_states():
     assert FINAL_STATES == {JobState.succeeded, JobState.failed, JobState.cancelled}
+
+
+def test_quality_has_a_high_detail_level():
+    assert [q.value for q in Quality] == ["draft", "final", "high"]
+    assert JobOptions.model_validate({"quality": "high"}).quality == Quality.high

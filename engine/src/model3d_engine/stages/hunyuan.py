@@ -7,7 +7,10 @@ stage_env() and the factory names without loading any of them.
 
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+
+from model3d_contracts.jobs import JobOptions
 
 from model3d_engine.config import Settings
 from model3d_engine.stages.protocol import (
@@ -22,7 +25,10 @@ from model3d_engine.stages.protocol import (
 HUNYUAN_MODEL = "tencent/Hunyuan3D-2.1"
 # Quality preset -> (num_inference_steps, octree_resolution). "final" is upstream's default
 # (measured 77 s on GPU0); "draft" is this project's choice.
-QUALITY_PRESETS = {"final": (50, 384), "draft": (25, 256)}
+QUALITY_PRESETS = {"final": (50, 384), "draft": (25, 256), "high": (50, 384)}
+# Faces the paint stage keeps (it decimates the shape before unwrapping and baking). Upstream
+# always cuts to 40000; "high" keeps 150000: +24 s paint and +0.6 GiB VRAM, measured 2026-10-22.
+PAINT_FACES = {"draft": 40_000, "final": 40_000, "high": 150_000}
 PATCHED_LINE = ".to(pbr_hs.device)"
 
 
@@ -35,6 +41,30 @@ def stage_env(settings: Settings) -> dict[str, str]:
         "U2NET_HOME": str(settings.home / "u2net"),
         "PYTORCH_ALLOC_CONF": "expandable_segments:True",
     }
+
+
+@dataclass(frozen=True)
+class PaintSettings:
+    """How the paint worker runs a job: per-view resolution, views, and memory savers."""
+
+    resolution: int
+    max_views: int
+    split_guidance: bool  # run the three classifier-free-guidance branches one at a time
+    offload: bool  # move the paint pipeline's sub-models to RAM between uses
+
+
+def paint_settings(options: JobOptions) -> PaintSettings:
+    """768 px per view for the high level; it fits a 12 GB card only with both memory savers
+    (peak 7.2 GiB against 9.3 GiB at 512 px; docs/spikes/paint-high-detail.md)."""
+    high = options.quality.value == "high"
+    return PaintSettings(resolution=768 if high else 512, max_views=6, split_guidance=high, offload=high)
+
+
+def paint_face_target(options: JobOptions) -> int:
+    """Faces the paint stage keeps: the job's target_faces, else its quality level's."""
+    if options.target_faces is not None:
+        return options.target_faces
+    return PAINT_FACES[options.quality.value]
 
 
 def _input_image(job_dir: Path) -> Path:
@@ -184,7 +214,72 @@ class PaintStage:
                     vae.to(device)
 
             vae.decode = decode_on_helper
+
+        pipeline = multiview.pipeline
+        self._pipeline = pipeline
+        # The paint UNet uses learned text tokens, so the text encoder (0.64 GiB) is never called.
+        self._park_text_encoder()
+        # Upstream builds tensors on pipeline.device and vae.device, which report "cpu" under
+        # offload hooks: pin the pipeline device and move the VAE's input explicitly.
+        exec_device = torch.device(device)
+        type(pipeline).device = property(lambda _pipeline: exec_device)
+        encode_images = pipeline.encode_images
+        pipeline.encode_images = lambda images: encode_images(images.to(exec_device))
+        self._split = False
+        self._install_split_guidance(pipeline.unet)
+        self._settings = PaintSettings(resolution=512, max_views=6, split_guidance=False, offload=False)
         torch.cuda.empty_cache()
+
+    def _park_text_encoder(self) -> None:
+        if getattr(self._pipeline, "text_encoder", None) is not None:
+            self._pipeline.text_encoder.to("cpu")
+
+    def _install_split_guidance(self, unet) -> None:
+        """Let the UNet run its classifier-free-guidance batch one branch at a time.
+
+        The batch stacks three independent branches (unconditional, reference, full); only the
+        batch dimension mixes them, so running them in turn gives the same result with about a
+        third of the activation memory.
+        """
+        torch = self.torch
+        forward = unet.forward
+
+        def split_forward(sample, timestep, encoder_hidden_states, *args, **kwargs):
+            if not self._split:
+                return forward(sample, timestep, encoder_hidden_states, *args, **kwargs)
+            batch = sample.shape[0]
+            kwargs.pop("cache", None)
+            outputs = []
+            for index in range(batch):
+                part = slice(index, index + 1)
+                chunk = {
+                    key: value[part]
+                    if isinstance(value, torch.Tensor) and value.dim() > 0 and value.shape[0] == batch
+                    else value
+                    for key, value in kwargs.items()
+                }
+                output = forward(sample[part], timestep, encoder_hidden_states[part], *args, **chunk)
+                outputs.append(output[0] if isinstance(output, tuple) else output)
+            return (torch.cat(outputs, dim=0),)
+
+        unet.forward = split_forward
+
+    def _apply(self, settings: PaintSettings) -> None:
+        """Reconfigure the worker for a job's settings; switching levels costs a few seconds."""
+        if settings == self._settings:
+            return
+        torch = self.torch
+        self.paint.config.resolution = settings.resolution
+        self.paint.config.max_selected_view_num = settings.max_views
+        self._split = settings.split_guidance
+        if settings.offload and not self._settings.offload:
+            self._pipeline.enable_model_cpu_offload(gpu_id=torch.device(self.device).index)
+        elif self._settings.offload and not settings.offload:
+            self._pipeline.remove_all_hooks()
+            self._pipeline.to(self.device)
+            self._park_text_encoder()
+        torch.cuda.empty_cache()
+        self._settings = settings
 
     def run(self, task: StageTask, progress: ProgressCallback) -> StageResult:
         """Texture SHAPE_OUTPUT and write MODEL_OUTPUT in the job folder."""
@@ -192,12 +287,22 @@ class PaintStage:
 
         torch = self.torch
         torch.cuda.set_device(self.device)
+        from utils.simplify_mesh_utils import mesh_simplify_trimesh
+
+        self._apply(paint_settings(task.options))
+
         progress(0.05, "Remeshing and generating views")
         try:
+            # Simplify here, to the job's face target, instead of upstream's fixed 40000.
+            remeshed = task.job_dir / "white_mesh_remesh.obj"
+            mesh_simplify_trimesh(
+                str(task.job_dir / SHAPE_OUTPUT), str(remeshed), target_count=paint_face_target(task.options)
+            )
             self.paint(
-                mesh_path=str(task.job_dir / SHAPE_OUTPUT),
+                mesh_path=str(remeshed),
                 image_path=str(_input_image(task.job_dir)),
                 output_mesh_path=str(task.job_dir / "textured.obj"),
+                use_remesh=False,
             )
         except torch.OutOfMemoryError as error:
             raise StageError("gpu_out_of_memory", f"Paint stage ran out of VRAM: {error}") from error
