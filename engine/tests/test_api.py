@@ -211,7 +211,7 @@ def test_delete_finished_job_is_409(tmp_path):
 
 def test_health_reports_injected_status(tmp_path):
     with make_client(tmp_path) as client:
-        assert client.get("/v1/health").json() == {"ready": True, "mode": MODE, "gpus": [], "error": None}
+        assert client.get("/v1/health").json() == {"ready": True, "mode": MODE, "gpus": [], "error": None, "rig": False, "rig_reason": None}
 
 
 def test_shape_only_refuses_texture(tmp_path):

@@ -74,6 +74,8 @@ def test_build_engine_dual_gpu_health(tmp_path):
                 {"bus_id": "0000:29:00.0", "stage": "shape", "ready": True, "memory_used_mib": 200, "memory_total_mib": 12227, "memory_free_mib": 11173},
             ],
             "error": None,
+            "rig": False,
+            "rig_reason": None,
         }
         job_id = run_job(client, {"texture": False})
         assert client.get(f"/v1/jobs/{job_id}/result").content[:4] == b"glTF"

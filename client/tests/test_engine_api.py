@@ -41,7 +41,7 @@ def test_submit_sends_multipart_and_returns_job(qtbot, engine, png, make_api):
     assert job.job_id == "J1" and job.seed == 42
     sent = engine.controller.submissions[0]
     assert json.loads(sent["options"]) == {"texture": False, "quality": "draft", "seed": None,
-                                           "remove_background": True, "target_faces": None}
+                                           "remove_background": True, "target_faces": None, "rig": False}
     assert sent["filename"] == "penguin.png"
     assert sent["image"] == png.read_bytes()
     assert engine.controller.origins == [None]

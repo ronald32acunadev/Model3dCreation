@@ -13,6 +13,7 @@ class JobState(str, Enum):
     queued = "queued"
     shaping = "shaping"
     painting = "painting"
+    rigging = "rigging"
     succeeded = "succeeded"
     failed = "failed"
     cancelled = "cancelled"
@@ -48,6 +49,7 @@ class JobOptions(BaseModel):
     seed: int | None = Field(default=None, ge=0, lt=2**32)
     remove_background: bool = True
     target_faces: int | None = None
+    rig: bool = False  # add a skeleton (UniRig) after shape and paint
 
     @field_validator("target_faces")
     @classmethod
@@ -78,7 +80,7 @@ class ErrorBody(BaseModel):
     error: JobError
 
 
-Stage = Literal["shape", "paint"]
+Stage = Literal["shape", "paint", "rig"]
 
 
 class Job(BaseModel):

@@ -12,7 +12,7 @@ from model3d_contracts.events import (
     SnapshotEvent,
     parse_event,
 )
-from model3d_contracts.jobs import FINAL_STATES, JobError, JobOptions, JobState, Quality
+from model3d_contracts.jobs import FINAL_STATES, Job, JobError, JobOptions, JobState, Quality
 
 TS = datetime(2026, 10, 20, 19, 5, tzinfo=UTC)
 
@@ -89,3 +89,24 @@ def test_final_states():
 def test_quality_has_a_high_detail_level():
     assert [q.value for q in Quality] == ["draft", "final", "high"]
     assert JobOptions.model_validate({"quality": "high"}).quality == Quality.high
+
+
+def test_job_options_rig_defaults_false():
+    assert JobOptions().rig is False
+    assert JobOptions.model_validate({"rig": True}).rig is True
+
+
+def test_rigging_state_and_rig_stage():
+    assert JobState("rigging") == JobState.rigging
+    job = Job.model_validate(
+        {
+            "job_id": "x",
+            "state": "rigging",
+            "stage": "rig",
+            "seed": 1,
+            "created_at": "2026-10-22T19:05:00Z",
+            "links": {"self": "/v1/jobs/x", "events": "/v1/jobs/x/events", "result": "/v1/jobs/x/result"},
+        }
+    )
+    assert job.state == JobState.rigging
+    assert job.stage == "rig"
