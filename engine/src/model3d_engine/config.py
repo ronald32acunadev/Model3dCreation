@@ -27,6 +27,8 @@ class Settings:
     allowed_origins: tuple[str, ...] = ()
     # Longest a stage may run one task before its worker is killed; measured runs take 60-80 s.
     stage_timeout_s: float = 900.0
+    # UniRig's clone with its own .venv; rigging is unavailable when it is missing.
+    unirig_dir: Path = REPO_ROOT / "vendor/UniRig"
 
     @property
     def jobs_dir(self) -> Path:
@@ -56,6 +58,7 @@ def load_settings(env: Mapping[str, str] | None = None, repo_root: Path | None =
     repo_root = REPO_ROOT if repo_root is None else repo_root
     home = env.get("MODEL3D_HOME")
     hunyuan_dir = env.get("MODEL3D_HUNYUAN_DIR")
+    unirig_dir = env.get("MODEL3D_UNIRIG_DIR")
     shape_bus, paint_bus = env.get("MODEL3D_SHAPE_BUS"), env.get("MODEL3D_PAINT_BUS")
     if (shape_bus is None) != (paint_bus is None):
         raise ValueError("Set both MODEL3D_SHAPE_BUS and MODEL3D_PAINT_BUS, or neither")
@@ -66,6 +69,7 @@ def load_settings(env: Mapping[str, str] | None = None, repo_root: Path | None =
     return Settings(
         home=Path(home).expanduser() if home else repo_root / "data",
         hunyuan_dir=Path(hunyuan_dir).expanduser() if hunyuan_dir else repo_root / "vendor/Hunyuan3D-2.1",
+        unirig_dir=Path(unirig_dir).expanduser() if unirig_dir else repo_root / "vendor/UniRig",
         host=env.get("MODEL3D_HOST", "127.0.0.1"),
         port=int(env.get("MODEL3D_PORT", "8765")),
         shape_bus=normalize_bus_id(shape_bus) if shape_bus is not None else None,

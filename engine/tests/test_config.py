@@ -54,3 +54,8 @@ def test_mode_and_bus_validation(tmp_path):
         assert str(raised.value) == (
             f"MODEL3D_MODE must be one of dual_gpu, single_gpu_resident, single_gpu_swap, shape_only; got {mode!r}"
         )
+
+
+def test_unirig_dir_default_and_override(tmp_path):
+    assert load_settings({}, repo_root=tmp_path).unirig_dir == tmp_path / "vendor/UniRig"
+    assert load_settings({"MODEL3D_UNIRIG_DIR": str(tmp_path / "rig")}, repo_root=tmp_path).unirig_dir == tmp_path / "rig"
