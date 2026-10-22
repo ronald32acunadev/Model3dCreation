@@ -17,20 +17,21 @@ Design: `docs/superpowers/specs/2026-10-21-desktop-app-design.md`. Plan: `docs/s
 
 | ID | Specs | Route | Status | Commit |
 | :--- | :--- | :--- | :--- | :--- |
-| T1 Engine data in `data/` | S1 | inline | pending | |
-| T2 Client project, paths, settings | S1, S6 | inline | pending | |
-| T3 Library service | S4 | inline | pending | |
-| T4 Engine API client | S2 | inline | pending | |
-| T5 Engine supervisor | S5 | inline | pending | |
-| T6 Diagnostics | S5 | inline | pending | |
-| T7 Generation view model | S2 | inline | pending | |
-| T8 Three.js viewer | S2, S3 | inline | pending | |
-| T9 Main window | S2-S5 | inline | pending | |
-| T10 Settings and Spanish | S6 | inline | pending | |
-| T11 Launcher, docs, acceptance | S7 | inline | pending | |
+| T1 Engine data in `data/` | S1 | inline | done | 8baad13 |
+| T2 Client project, paths, settings | S1, S6 | inline | done | 1038372 |
+| T3 Library service | S4 | inline | done | 5b6e593 |
+| T4 Engine API client | S2 | inline | done | 9a240a0 |
+| T5 Engine supervisor | S5 | inline | done | 3d53c55 |
+| T6 Diagnostics | S5 | inline | done | e7ef42f |
+| T7 Generation view model | S2 | inline | done | 0c17fc9 |
+| T8 Three.js viewer | S2, S3 | inline | done | ec2501e |
+| T9 Main window | S2-S5 | inline | done | 180b49b, 2812972 |
+| T10 Settings and Spanish | S6 | inline | done | 19b6888 |
+| T11 Launcher, docs, acceptance | S7 | inline | done | 15aba4b |
 
 Route evidence: one dependent chain (T7 consumes T3-T5, T9 consumes all); no writer trigger fires, so the parent writes inline. Code authorship: LM Studio and Ollama had no model loaded on 2026-10-21, so the host model writes the code (`AGENTS.md` fallback).
 
 ## Log
 
 - L1 (2026-10-21): "Parece que es momento de continuar con la fase3". Owner approved the design ("Apruebo el diseño, pasá al plan") and the plan in native mode ("El plan está bien, ejecutalo en modo nativo").
+- L2 (2026-10-22): T1-T11 landed; T4 also got 54a6cfb (keep API objects alive until requests finish). Added on the owner's request: the high detail quality level (6bda627, 31f108b, d2f597d, 57e5209). Branch merged to main through PR #1 (270fb87). Phase 3 closed; next is phase 4, the Blender add-on.
