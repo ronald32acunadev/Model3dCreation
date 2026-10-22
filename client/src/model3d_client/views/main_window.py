@@ -62,7 +62,9 @@ class MainWindow(QMainWindow):
         self.retranslate()
 
     def open_settings(self) -> None:
-        """Opens the settings dialog (added with the translations)."""
+        from model3d_client.views.settings_dialog import SettingsDialog
+
+        SettingsDialog(self.vm, self).exec()
 
     def ask_close_anyway(self) -> bool:
         answer = QMessageBox.question(self, self.tr("Close Model3D"),

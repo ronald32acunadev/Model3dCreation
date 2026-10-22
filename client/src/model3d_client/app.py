@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from PySide6.QtCore import QLocale
 from PySide6.QtWidgets import QApplication, QWidget
 
+from model3d_client.i18n import apply_language
 from model3d_client.paths import app_paths
 from model3d_client.services.engine_api import EngineApi
 from model3d_client.services.library import Library
@@ -31,6 +32,7 @@ def build_app(
     app.setApplicationName("Model3D")
     paths = app_paths(env)
     settings = load_settings(paths.settings_file, QLocale.system().name())
+    apply_language(app, settings.language)
     api = EngineApi(parent=app)
     library = Library(paths.library)
     supervisor = EngineSupervisor(api, paths, parent=app)
