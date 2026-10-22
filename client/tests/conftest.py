@@ -5,7 +5,12 @@ import zlib
 import pytest
 
 # Widgets render offscreen in tests; set before any Qt module is imported.
+# webengine tests run on the real display: QT_QPA_PLATFORM=wayland (or xcb) uv run pytest -m webengine
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from model3d_client.views.scheme import prepare_webengine  # noqa: E402
+
+prepare_webengine()  # before pytest-qt creates the QApplication
 
 
 def png_bytes(width: int = 2, height: int = 2) -> bytes:
