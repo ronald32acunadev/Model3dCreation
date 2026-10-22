@@ -66,6 +66,21 @@ packages = ["src/model3d_engine"]
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 no-build-isolation-package = ["basicsr", "custom-rasterizer"]
 
+# basicsr and custom_rasterizer build without isolation and their setup.py imports torch, so uv cannot
+# read their metadata before torch is installed; declare it here. basicsr's list mirrors its 1.4.2 sdist.
+[[tool.uv.dependency-metadata]]
+name = "basicsr"
+version = "1.4.2"
+requires-dist = [
+    "addict", "future", "lmdb", "numpy", "opencv-python", "pillow", "pyyaml", "requests",
+    "scikit-image", "scipy", "tb-nightly", "torch", "torchvision", "tqdm", "yapf",
+]
+
+[[tool.uv.dependency-metadata]]
+name = "custom-rasterizer"
+version = "0.1"
+requires-dist = []
+
 [tool.uv.sources]
 torch = { index = "pytorch-cu130" }
 torchvision = { index = "pytorch-cu130" }
