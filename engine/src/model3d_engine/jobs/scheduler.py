@@ -1,5 +1,5 @@
-"""Two-stage job pipeline: shape on one GPU and paint on the other, or both taking turns
-on one GPU."""
+"""Job pipeline: shape on one GPU and paint on the other, or both taking turns on one GPU,
+plus an optional rig stage that adds a skeleton to finished models."""
 
 import asyncio
 import logging
@@ -12,6 +12,7 @@ from model3d_engine.jobs.events import EventBus, utcnow
 from model3d_engine.jobs.store import JobRecord, JobStore
 from model3d_engine.stages.protocol import (
     MODEL_OUTPUT,
+    RIG_INPUT,
     ProgressCallback,
     StageError,
     StageResult,
@@ -28,15 +29,37 @@ class Scheduler:
 
     With swap=True both stages share one GPU and only one worker is loaded at a time: the
     loaded stage drains its queue, then the card swaps to the other stage if it has work.
+
+    Jobs with a skeleton go through `rig` last. `cards` maps "shape", "paint", and "rig" to a
+    device; stages on the same device take turns, one task at a time. When the rig card has no
+    room for a task, the workers on it are parked (unloaded) and loaded again before their next
+    task; a parked worker still counts as ready.
     """
 
-    def __init__(self, store: JobStore, bus: EventBus, shape: StageRunner, paint: StageRunner, swap: bool = False):
+    def __init__(
+        self,
+        store: JobStore,
+        bus: EventBus,
+        shape: StageRunner,
+        paint: StageRunner,
+        swap: bool = False,
+        rig: StageRunner | None = None,
+        cards: dict[str, str] | None = None,
+    ):
         self._store = store
         self._bus = bus
         self._shape = shape
         self._paint = paint
+        self._rig = rig
         self._shape_queue: asyncio.Queue[str] = asyncio.Queue()
         self._paint_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._rig_queue: asyncio.Queue[str] = asyncio.Queue()
+        locks: dict[str, asyncio.Lock] = {}
+        cards = cards or {}
+        # One lock per device; without a device each stage gets its own lock.
+        self._card_lock = {name: locks.setdefault(cards.get(name, name), asyncio.Lock()) for name in ("shape", "paint", "rig")}
+        self._parked: set[int] = set()  # id() of runners unloaded to make room for rigging
+        self._rigging = False
         self._waiting: list[str] = []
         self._tasks: list[asyncio.Task] = []
         self.start_error: JobError | None = None
@@ -50,8 +73,13 @@ class Scheduler:
         """Whether the engine can take jobs: both runners loaded, or in swap mode the loaded one
         (or a swap in progress)."""
         if self._swap:
-            return self._swapping or (self._loaded is not None and self._loaded.ready)
-        return self._shape.ready and self._paint.ready
+            return self._swapping or self._rigging or (self._loaded is not None and self._loaded.ready)
+        return all(runner.ready or id(runner) in self._parked for runner in (self._shape, self._paint))
+
+    @property
+    def rig_available(self) -> bool:
+        """Whether jobs may ask for a skeleton."""
+        return self._rig is not None and self._rig.ready
 
     async def start(self) -> None:
         """Start both runners and the two stage loops; a failure is kept in start_error.
@@ -71,10 +99,13 @@ class Scheduler:
         except Exception as error:
             self.start_error = JobError(code="internal_error", message=f"{type(error).__name__}: {error}")
             raise
+        if self._rig is not None:
+            await self._rig.start()
         if self._swap:
             self._tasks = [asyncio.create_task(self._swap_loop())]
         else:
-            self._tasks = [asyncio.create_task(self._shape_loop()), asyncio.create_task(self._paint_loop())]
+            loops = [self._shape_loop(), self._paint_loop(), self._rig_loop()]
+            self._tasks = [asyncio.create_task(loop) for loop in loops]
 
     async def stop(self) -> None:
         """Stop the stage loops, then both runners."""
@@ -83,12 +114,20 @@ class Scheduler:
         await asyncio.gather(*self._tasks, return_exceptions=True)
         await self._shape.stop()
         await self._paint.stop()
+        if self._rig is not None:
+            await self._rig.stop()
 
     def submit(self, record: JobRecord) -> None:
         """Queue a new job for the shape stage."""
         self._store.persist(record)
         self._waiting.append(record.job_id)
         self._shape_queue.put_nowait(record.job_id)
+        self._work.set()
+
+    def submit_rig(self, record: JobRecord) -> None:
+        """Queue a rig-only job: its model is already in RIG_INPUT."""
+        self._store.persist(record)
+        self._rig_queue.put_nowait(record.job_id)
         self._work.set()
 
     def queue_position(self, job_id: str) -> int | None:
@@ -101,7 +140,8 @@ class Scheduler:
         if record is None or record.is_final:
             return False
         if record.state == JobState.queued:
-            self._waiting.remove(job_id)
+            if job_id in self._waiting:  # rig-only jobs never wait for shape
+                self._waiting.remove(job_id)
             self._cancel(record)
         else:
             record.cancel_requested = True
@@ -158,6 +198,28 @@ class Scheduler:
         self._store.persist(record)
         self._progress(record, stage)(0.0, f"Starting {stage}")
 
+    async def _on_card(self, record: JobRecord, runner: StageRunner, stage: str) -> StageResult | None:
+        """Run one stage task holding its card, loading the worker again if it was parked."""
+        async with self._card_lock[stage]:
+            if id(runner) in self._parked:
+                self._parked.discard(id(runner))
+                try:
+                    await runner.start()
+                except Exception as error:
+                    message = error.message if isinstance(error, StageError) else str(error)
+                    self._fail(record, "worker_unavailable", f"{stage} worker could not be loaded again: {message}")
+                    return None
+            return await self._run_stage(record, runner, stage)
+
+    def _model_ready(self, record: JobRecord, result: StageResult, textured: bool) -> None:
+        """A job's model is done: queue it for a skeleton, or finish it."""
+        if not record.options.rig:
+            self._succeed(record, result, textured)
+            return
+        result.output.replace(record.dir / RIG_INPUT)
+        self._rig_queue.put_nowait(record.job_id)
+        self._work.set()
+
     async def _shape_job(self, job_id: str) -> None:
         if job_id in self._waiting:
             self._waiting.remove(job_id)
@@ -168,14 +230,14 @@ class Scheduler:
             self._cancel(record)
             return
         self._begin(record, JobState.shaping, "shape")
-        result = await self._run_stage(record, self._shape, "shape")
+        result = await self._on_card(record, self._shape, "shape")
         if result is None:
             return
         if record.cancel_requested:
             self._cancel(record)
         elif not record.options.texture:
             model = result.output.replace(record.dir / MODEL_OUTPUT)
-            self._succeed(record, StageResult(output=model, vertices=result.vertices, faces=result.faces), False)
+            self._model_ready(record, StageResult(output=model, vertices=result.vertices, faces=result.faces), False)
         else:
             self._paint_queue.put_nowait(job_id)
             self._work.set()
@@ -188,13 +250,55 @@ class Scheduler:
             self._cancel(record)
             return
         self._begin(record, JobState.painting, "paint")
-        result = await self._run_stage(record, self._paint, "paint")
+        result = await self._on_card(record, self._paint, "paint")
         if result is None:
             return
         if record.cancel_requested:
             self._cancel(record)
         else:
-            self._succeed(record, result, True)
+            self._model_ready(record, result, True)
+
+    async def _rig_job(self, job_id: str) -> None:
+        record = self._store.get(job_id)
+        if record is None or record.is_final:
+            return
+        if record.cancel_requested:
+            self._cancel(record)
+            return
+        if self._rig is None:
+            self._fail(record, "rig_unavailable", "This engine has no rig stage")
+            return
+        self._begin(record, JobState.rigging, "rig")
+        async with self._card_lock["rig"]:
+            await self._make_room_for_rig()
+            self._rigging = True
+            try:
+                result = await self._run_stage(record, self._rig, "rig")
+            finally:
+                self._rigging = False
+        if result is None:
+            return
+        if record.cancel_requested:
+            self._cancel(record)
+        else:
+            self._succeed(record, result, record.options.texture)
+
+    async def _make_room_for_rig(self) -> None:
+        """Called holding the rig card: park the workers on it when the rig task would not fit."""
+        if await self._rig.fits():
+            return
+        if self._swap:
+            if self._loaded is not None:
+                try:
+                    await self._loaded.unload()
+                except Exception:
+                    logger.exception("Could not unload the %s worker", self._name(self._loaded))
+                self._loaded = None
+            return
+        for stage, runner in (("shape", self._shape), ("paint", self._paint)):
+            if self._card_lock[stage] is self._card_lock["rig"] and runner.ready:
+                await runner.unload()
+                self._parked.add(id(runner))
 
     async def _shape_loop(self) -> None:
         while True:
@@ -203,6 +307,10 @@ class Scheduler:
     async def _paint_loop(self) -> None:
         while True:
             await self._paint_job(await self._paint_queue.get())
+
+    async def _rig_loop(self) -> None:
+        while True:
+            await self._rig_job(await self._rig_queue.get())
 
     def _needs_run(self, job_id: str) -> bool:
         record = self._store.get(job_id)
@@ -257,16 +365,22 @@ class Scheduler:
     async def _swap_loop(self) -> None:
         stages = {self._shape: (self._shape_queue, self._shape_job), self._paint: (self._paint_queue, self._paint_job)}
         while True:
-            for queue, job in stages.values():
+            for queue, job in (*stages.values(), (self._rig_queue, self._rig_job)):
                 for settled in self._settle_queue(queue, job):
                     await settled
-            if self._shape_queue.empty() and self._paint_queue.empty():
+            if self._shape_queue.empty() and self._paint_queue.empty() and self._rig_queue.empty():
                 self._work.clear()
                 await self._work.wait()
                 continue
             loaded_queue, loaded_job = stages[self._loaded] if self._loaded is not None else (None, None)
             if loaded_queue is not None and not loaded_queue.empty():
                 await loaded_job(loaded_queue.get_nowait())
+                continue
+            if not self._rig_queue.empty():
+                # Rigging needs no worker loaded; it parks the loaded one only when the card is full.
+                await self._rig_job(self._rig_queue.get_nowait())
+                continue
+            if self._shape_queue.empty() and self._paint_queue.empty():
                 continue
             if self._loaded is None:
                 target = self._shape if not self._shape_queue.empty() else self._paint

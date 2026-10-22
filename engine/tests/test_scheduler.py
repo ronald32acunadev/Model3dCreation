@@ -319,3 +319,156 @@ async def test_swap_cancel_of_a_job_already_waiting_for_paint(tmp_path):
     assert first.state == JobState.cancelled
     assert second.state == JobState.succeeded
     assert ("load", PAINT) not in log
+
+
+RIG = "rigged.glb"
+DUAL_CARDS = {"shape": "cuda:0", "paint": "cuda:1", "rig": "cuda:1"}
+
+
+async def make_rig(tmp_path, swap=False, cards=DUAL_CARDS, rig_fits=True, delay=0.0, rig_error=None):
+    log: list[tuple[str, str]] = []
+    shape = FakeRunner(SHAPE, delay=delay, log=log)
+    paint = FakeRunner(PAINT, delay=delay, log=log)
+    rig = FakeRunner(RIG, delay=delay, log=log, fits_result=rig_fits, fail_with=rig_error)
+    store, bus = JobStore(tmp_path), EventBus()
+    scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=cards)
+    await scheduler.start()
+    return scheduler, store, bus, shape, paint, rig, log
+
+
+def states(events) -> list[str]:
+    return [getattr(event, "stage", None) or event.type for event in events]
+
+
+async def test_untextured_rig_job_runs_shape_then_rig(tmp_path):
+    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path)
+    record, events = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    await wait_final(record)
+    assert record.state == JobState.succeeded
+    assert [r[0] for r in rig.runs] == [record.job_id]
+    assert paint.runs == []
+    seen = await drain(events)
+    assert "rig" in [getattr(event, "stage", None) for event in seen]
+    assert seen[-1].stats.textured is False
+    await scheduler.stop()
+
+
+async def test_textured_rig_job_runs_all_three_stages_in_order(tmp_path):
+    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path)
+    record, events = await submit(scheduler, store, bus, JobOptions(rig=True))
+    await wait_final(record)
+    assert record.state == JobState.succeeded
+    assert shape.runs[0][2] <= paint.runs[0][1] and paint.runs[0][2] <= rig.runs[0][1]
+    stages = [event.stage for event in await drain(events) if event.type == "progress"]
+    assert stages.index("shape") < stages.index("paint") < stages.index("rig")
+    await scheduler.stop()
+
+
+async def test_rig_only_job_skips_shape_and_paint(tmp_path):
+    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path)
+    record = store.create_rig(b"glTF", textured=True)
+    events = bus.subscribe(record)
+    await events.__anext__()
+    scheduler.submit_rig(record)
+    await wait_final(record)
+    assert record.state == JobState.succeeded
+    assert shape.runs == [] and paint.runs == []
+    assert (await drain(events))[-1].stats.textured is True
+    await scheduler.stop()
+
+
+async def test_rig_never_overlaps_paint_on_shared_card(tmp_path):
+    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path, delay=0.05)
+    records = [(await submit(scheduler, store, bus, JobOptions(rig=True)))[0] for _ in range(3)]
+    for record in records:
+        await wait_final(record)
+    for _job, p_start, p_end in paint.runs:
+        for _job2, r_start, r_end in rig.runs:
+            assert p_end <= r_start or r_end <= p_start
+    await scheduler.stop()
+
+
+async def test_rig_parks_paint_when_card_is_full_and_ready_stays_true(tmp_path):
+    scheduler, store, bus, shape, paint, rig, log = await make_rig(tmp_path, rig_fits=False)
+    ready_during_rig = []
+    original = rig.run
+
+    async def run(task, on_progress):
+        ready_during_rig.append(scheduler.ready)
+        return await original(task, on_progress)
+
+    rig.run = run
+    first, _ = await submit(scheduler, store, bus, JobOptions(rig=True))
+    await wait_final(first)
+    assert ("unload", PAINT) in log
+    assert ready_during_rig == [True]
+    assert scheduler.ready is True
+    second, _ = await submit(scheduler, store, bus, JobOptions())
+    await wait_final(second)
+    assert second.state == JobState.succeeded
+    assert log[-1] == ("load", PAINT)
+    assert ("unload", SHAPE) not in log  # shape sits on the other card
+    await scheduler.stop()
+
+
+async def test_swap_mode_rig_unloads_loaded_worker_when_it_does_not_fit(tmp_path):
+    one_card = {"shape": "cuda:0", "paint": "cuda:0", "rig": "cuda:0"}
+    scheduler, store, bus, shape, paint, rig, log = await make_rig(tmp_path, swap=True, cards=one_card, rig_fits=False)
+    record, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    await wait_final(record)
+    assert record.state == JobState.succeeded
+    workers = [entry for entry in log if entry[1] != RIG]  # the rig fake logs its no-op start
+    assert workers == [("load", SHAPE), ("unload", SHAPE)]
+    following, _ = await submit(scheduler, store, bus, JobOptions(texture=False))
+    await wait_final(following)
+    assert following.state == JobState.succeeded
+    assert log[-1] == ("load", SHAPE)
+    await scheduler.stop()
+
+
+async def test_rig_failure_fails_job_with_its_code(tmp_path):
+    error = StageError("rig_failed", "UniRig skeleton step failed")
+    scheduler, store, bus, *_rest = await make_rig(tmp_path, rig_error=error)
+    record, events = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    await wait_final(record)
+    assert record.state == JobState.failed
+    assert (await drain(events))[-1].error.code == "rig_failed"
+    await scheduler.stop()
+
+
+async def test_cancel_while_painting_skips_rig(tmp_path):
+    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path, delay=0.1)
+    record, _ = await submit(scheduler, store, bus, JobOptions(rig=True))
+    while record.state != JobState.painting:
+        await asyncio.sleep(0.01)
+    scheduler.cancel(record.job_id)
+    await wait_final(record)
+    assert record.state == JobState.cancelled
+    assert rig.runs == []
+    await scheduler.stop()
+
+
+async def test_jobs_without_rig_never_touch_rig_runner(tmp_path):
+    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path, rig_fits=False)
+    for options in (JobOptions(), JobOptions(texture=False)):
+        record, _ = await submit(scheduler, store, bus, options)
+        await wait_final(record)
+        assert record.state == JobState.succeeded
+    assert rig.runs == []
+    assert scheduler.rig_available is True
+    await scheduler.stop()
+
+
+async def test_cancel_queued_rig_only_job(tmp_path):
+    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path, delay=0.2)
+    busy = store.create_rig(b"glTF", textured=False)
+    scheduler.submit_rig(busy)
+    queued = store.create_rig(b"glTF", textured=False)
+    scheduler.submit_rig(queued)
+    await asyncio.sleep(0.05)
+    assert scheduler.cancel(queued.job_id) is True
+    await wait_final(queued)
+    assert queued.state == JobState.cancelled
+    await wait_final(busy)
+    assert [run[0] for run in rig.runs] == [busy.job_id]
+    await scheduler.stop()

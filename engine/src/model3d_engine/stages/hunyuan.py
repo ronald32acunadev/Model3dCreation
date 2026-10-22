@@ -15,6 +15,7 @@ from model3d_contracts.jobs import JobOptions
 from model3d_engine.config import Settings
 from model3d_engine.stages.protocol import (
     MODEL_OUTPUT,
+    RIG_FACES,
     SHAPE_OUTPUT,
     ProgressCallback,
     StageError,
@@ -65,6 +66,19 @@ def paint_face_target(options: JobOptions) -> int:
     if options.target_faces is not None:
         return options.target_faces
     return PAINT_FACES[options.quality.value]
+
+
+def shape_face_target(options: JobOptions) -> int | None:
+    """Faces the shape stage keeps: target_faces, else the rig cap for untextured rig jobs.
+
+    Untextured jobs are otherwise not decimated (up to about 860,000 faces); rigging was
+    measured on meshes of at most RIG_FACES.
+    """
+    if options.target_faces is not None:
+        return options.target_faces
+    if options.rig and not options.texture:
+        return RIG_FACES
+    return None
 
 
 def _input_image(job_dir: Path) -> Path:
@@ -126,7 +140,7 @@ class ShapeStage:
             )[0]
         except torch.OutOfMemoryError as error:
             raise StageError("gpu_out_of_memory", f"Shape stage ran out of VRAM on {self.device}: {error}") from error
-        target = task.options.target_faces
+        target = shape_face_target(task.options)
         if target and len(mesh.faces) > target:
             mesh = mesh.simplify_quadric_decimation(target)
         output = task.job_dir / SHAPE_OUTPUT

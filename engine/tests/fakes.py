@@ -18,6 +18,7 @@ class FakeRunner:
         fail_with: StageError | None = None,
         log: list[tuple[str, str]] | None = None,
         start_error: StageError | None = None,
+        fits_result: bool = True,
     ):
         self.output_name = output_name
         self.delay = delay
@@ -27,6 +28,7 @@ class FakeRunner:
         self.runs: list[tuple[str, float, float]] = []  # (job_id, start, end)
         self.log = log if log is not None else []  # ("load" | "unload", output_name), shared between runners
         self.restart_delays: tuple[float, ...] = ()
+        self.fits_result = fits_result
 
     async def start(self) -> None:
         if self.start_error is not None:
@@ -40,6 +42,10 @@ class FakeRunner:
 
     async def stop(self) -> None:
         self.ready = False
+
+    async def fits(self) -> bool:
+        """Rig runner only: whether its card has room without parking a worker."""
+        return self.fits_result
 
     async def run(self, task: StageTask, on_progress: ProgressCallback) -> StageResult:
         start = time.monotonic()

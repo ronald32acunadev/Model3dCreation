@@ -36,3 +36,12 @@ def test_paint_settings_per_level(quality, resolution, high):
     assert settings.split_guidance is high
     assert settings.offload is high
     assert settings.max_views == 6
+
+
+def test_shape_face_target():
+    from model3d_engine.stages.hunyuan import shape_face_target
+
+    assert shape_face_target(JobOptions(target_faces=5000)) == 5000
+    assert shape_face_target(JobOptions(rig=True, texture=False)) == 150_000
+    assert shape_face_target(JobOptions(rig=True, texture=True)) is None
+    assert shape_face_target(JobOptions()) is None
