@@ -33,3 +33,12 @@ def test_step_commands_follow_unirig_launch_scripts(tmp_path):
     outputs = {name: output for name, _command, output in steps}
     assert outputs["skeleton"] == work / "skeleton.fbx"
     assert outputs["merge"] == tmp_path / "out.glb"
+
+
+def test_extract_outputs_follow_unirig_path_rule(tmp_path):
+    """UniRig saves to os.path.join(npz_dir, input without suffix): beside an absolute input."""
+    work = tmp_path / "work"
+    steps = unirig_job.step_commands("/venv/python", tmp_path / "job/rig_input.glb", tmp_path / "out.glb", work, "T")
+    outputs = {name: output for name, _command, output in steps}
+    assert outputs["extract"] == tmp_path / "job/rig_input/raw_data.npz"
+    assert outputs["extract skin"] == work / "skeleton/raw_data.npz"

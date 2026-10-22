@@ -10,6 +10,7 @@ Only the standard library is imported at module level, so the engine's tests can
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -52,6 +53,14 @@ def classify_failure(stderr: str) -> str:
     return "rig_failed"
 
 
+def npz_file(npz: Path, source: Path) -> Path:
+    """Where UniRig's extract and run.py keep a mesh's data: os.path.join(npz_dir, input without its
+    suffix) (src/data/extract.py get_files). An absolute input makes join drop npz_dir, so the data
+    lands beside the input."""
+    name = str(source).removeprefix("./")
+    return Path(os.path.join(str(npz), ".".join(name.split(".")[:-1]))) / "raw_data.npz"
+
+
 def step_commands(python: str, mesh: Path, output: Path, work: Path, stamp: str) -> list[tuple[str, list[str], Path]]:
     """(name, command, file it must produce) for each UniRig step, in order."""
     npz = work / "npz"
@@ -76,9 +85,9 @@ def step_commands(python: str, mesh: Path, output: Path, work: Path, stamp: str)
                 f"--output={target}", f"--npz_dir={npz}", *extra]
 
     return [
-        ("extract", extract(mesh), npz),
+        ("extract", extract(mesh), npz_file(npz, mesh)),
         ("skeleton", run(SKELETON_TASK, mesh, skeleton), skeleton),
-        ("extract skin", extract(skeleton), npz),
+        ("extract skin", extract(skeleton), npz_file(npz, skeleton)),
         ("skin", run(SKIN_TASK, skeleton, skin, "--data_name=raw_data.npz"), skin),
         ("merge", [python, "-m", "src.inference.merge", f"--require_suffix={SUFFIXES}", "--num_runs=1", "--id=0",
                    f"--source={skin}", f"--target={mesh}", f"--output={output}"], output),
