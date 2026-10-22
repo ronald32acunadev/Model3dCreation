@@ -19,9 +19,14 @@ cd engine && uv run pytest tests/test_verify_gpus.py::test_parse_nvcc_version   
 uv run --project engine python scripts/verify_gpus.py   # full environment check, from the repo root
 uv run --project engine python -m model3d_engine        # serve the engine on 127.0.0.1:8765
 cd contracts && uv run pytest                           # shared job and event models
+cd client && uv run pytest                              # desktop app, offscreen widgets
+cd client && QT_QPA_PLATFORM=wayland uv run pytest -m webengine   # 3D viewer, needs a real display
+cd client && uv run pytest -m gpu                       # app + real engine end to end, GPUs free
+uv run --project client python -m model3d_client        # run the desktop app
+client/scripts/update_translations.sh                   # refresh the Spanish .ts and .qm
 ```
 
-The API process never imports torch; each GPU stage runs in its own spawned worker process (`engine/src/model3d_engine/stages/process.py`). The API is documented in `docs/api.md`.
+The desktop app (`client/`, PySide6) starts and stops the engine itself; see section 5b of `docs/architecture.md`. The API process never imports torch; each GPU stage runs in its own spawned worker process (`engine/src/model3d_engine/stages/process.py`). The API is documented in `docs/api.md`.
 
 `uv sync` rebuilds `custom_rasterizer` from `vendor/`, so it needs `CUDA_HOME=/usr/local/cuda-13.1` (see `docs/setup.md`). Before GPU work, check that LM Studio or Ollama is not holding VRAM.
 

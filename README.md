@@ -2,6 +2,10 @@
 
 Starter template repository containing universal AI coding agent rules, workflow standards, and subagent configurations for bootstrapping new projects.
 
+## Model3D
+
+This repository also holds Model3D, a local AI engine and desktop app that turn one image into a textured 3D model (GLB) on your own NVIDIA GPUs, with no cloud calls. Set it up with [docs/setup.md](docs/setup.md); the design is in [docs/architecture.md](docs/architecture.md) and the engine API in [docs/api.md](docs/api.md).
+
 ## Overview
 
 This repository provides standardized configurations and operational guidelines for AI coding assistants (including Antigravity, Claude Code, Cursor, OpenCode, and Codex). It establishes strict development conventions:

@@ -80,3 +80,21 @@ uv run --project engine python -m model3d_engine
 ```
 
 It serves `http://127.0.0.1:8765/v1` (see [api.md](api.md)), picks a run mode for the detected GPUs (a few seconds before the port opens), and loads the workers in about 50 s. Close GPU-heavy apps first: the mode is chosen from the free VRAM at startup. `MODEL3D_HOME`, `MODEL3D_PORT`, `MODEL3D_HUNYUAN_DIR`, `MODEL3D_MODE` (force a run mode), `MODEL3D_SHAPE_BUS` and `MODEL3D_PAINT_BUS` (force the cards; set both or neither), `MODEL3D_ALLOWED_ORIGINS` (browser origins allowed to submit or cancel jobs, comma-separated, empty by default), and `MODEL3D_STAGE_TIMEOUT_S` (default 900) override the defaults; `MODEL3D_HOST` must stay a loopback address.
+
+## 8. Desktop app
+
+The app has its own environment (PySide6, no PyTorch):
+
+```bash
+cd client && uv sync
+uv run --project client python -m model3d_client
+```
+
+It starts the engine by itself, or uses one already running on port 8765. To add it to the application menu, install the launcher with this folder's absolute path:
+
+```bash
+sed "s|@CLIENT_DIR@|$PWD/client|" client/model3d.desktop > ~/.local/share/applications/model3d.desktop
+```
+
+`client/launch.sh` finds `uv` in `~/.local/bin` when the desktop session does not have it on `PATH`. After changing any user-visible string, run `client/scripts/update_translations.sh`, translate the new entries in `client/src/model3d_client/i18n/model3d_es.ts`, and run the script again.
+
