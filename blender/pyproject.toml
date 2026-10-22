@@ -1,0 +1,18 @@
+[project]
+name = "model3d-blender"
+version = "0.1.0"
+description = "Blender add-on for the Model3D engine; this project only runs its tests outside Blender."
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["blender: runs Blender itself (blender on PATH)"]
+addopts = "-m 'not blender'"
