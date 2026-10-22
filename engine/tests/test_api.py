@@ -63,19 +63,27 @@ def make_client(
     wait_ready=True,
     allowed_origins=(),
     texture_available=True,
+    rig=None,
+    max_model_bytes: int = 1024 * 1024,
 ) -> TestClient:
     settings = Settings(
-        home=tmp_path, hunyuan_dir=tmp_path / "hy", max_image_bytes=max_image_bytes, allowed_origins=allowed_origins
+        home=tmp_path,
+        hunyuan_dir=tmp_path / "hy",
+        max_image_bytes=max_image_bytes,
+        allowed_origins=allowed_origins,
+        max_model_bytes=max_model_bytes,
     )
     store, bus = JobStore(settings.jobs_dir), EventBus()
-    scheduler = Scheduler(store, bus, shape or FakeRunner("shape.glb"), paint or FakeRunner("model.glb"))
+    scheduler = Scheduler(store, bus, shape or FakeRunner("shape.glb"), paint or FakeRunner("model.glb"), rig=rig)
+    reason = None if rig is not None else "UniRig is not installed in vendor/UniRig (see docs/setup.md)"
     app = create_app(
         settings,
         scheduler,
         store,
         bus,
-        health=lambda: {"ready": scheduler.ready, "mode": MODE, "gpus": []},
+        health=lambda: {"ready": scheduler.ready, "mode": MODE, "gpus": [], "rig": scheduler.rig_available, "rig_reason": reason},
         texture_available=texture_available,
+        rig_reason=lambda: reason,
     )
     client = ReadyClient(app, base_url="http://127.0.0.1:8765")
     client.wait_ready = wait_ready
@@ -211,7 +219,14 @@ def test_delete_finished_job_is_409(tmp_path):
 
 def test_health_reports_injected_status(tmp_path):
     with make_client(tmp_path) as client:
-        assert client.get("/v1/health").json() == {"ready": True, "mode": MODE, "gpus": [], "error": None, "rig": False, "rig_reason": None}
+        assert client.get("/v1/health").json() == {
+            "ready": True,
+            "mode": MODE,
+            "gpus": [],
+            "error": None,
+            "rig": False,
+            "rig_reason": "UniRig is not installed in vendor/UniRig (see docs/setup.md)",
+        }
 
 
 def test_shape_only_refuses_texture(tmp_path):
@@ -272,3 +287,64 @@ def test_non_loopback_host_is_forbidden(tmp_path):
 def post_job_with_host(client, host: str):
     files = {"image": ("in.png", image_bytes(), "image/png")}
     return client.post("/v1/jobs", files=files, headers={"Host": host})
+
+
+def glb_bytes(textured: bool) -> bytes:
+    import numpy
+    import trimesh
+
+    mesh = trimesh.creation.box()
+    if textured:
+        uv = numpy.zeros((len(mesh.vertices), 2))
+        mesh.visual = trimesh.visual.TextureVisuals(uv=uv, image=Image.new("RGB", (4, 4), (255, 0, 0)))
+    return mesh.export(file_type="glb")
+
+
+def post_model(client, data: bytes | None):
+    files = {"model": ("model.glb", data, "model/gltf-binary")} if data is not None else {}
+    return client.post("/v1/rig-jobs", files=files)
+
+
+def test_glb_has_images():
+    from model3d_engine.api.app import glb_has_images
+
+    assert glb_has_images(glb_bytes(textured=True)) is True
+    assert glb_has_images(glb_bytes(textured=False)) is False
+
+
+def test_rig_job_accepts_glb_and_reports_rigging(tmp_path):
+    with make_client(tmp_path, rig=FakeRunner("model.glb")) as client:
+        response = post_model(client, glb_bytes(textured=True))
+        assert response.status_code == 202, response.text
+        job_id = response.json()["job_id"]
+        wait_state(client, job_id, "succeeded")
+        assert client.get(f"/v1/jobs/{job_id}/result").content[:4] == b"glTF"
+
+
+def test_rig_job_rejects_non_glb(tmp_path):
+    with make_client(tmp_path, rig=FakeRunner("model.glb")) as client:
+        assert_error(post_model(client, image_bytes()), 400, "invalid_model")
+        assert_error(post_model(client, None), 400, "invalid_model")
+
+
+def test_rig_job_rejects_truncated_glb(tmp_path):
+    with make_client(tmp_path, rig=FakeRunner("model.glb")) as client:
+        assert_error(post_model(client, glb_bytes(textured=False)[:40]), 400, "invalid_model")
+
+
+def test_rig_job_rejects_oversized_model(tmp_path):
+    with make_client(tmp_path, rig=FakeRunner("model.glb"), max_model_bytes=100) as client:
+        assert_error(post_model(client, glb_bytes(textured=False)), 413, "model_too_large")
+
+
+def test_rig_option_rejected_when_rig_unavailable(tmp_path):
+    with make_client(tmp_path) as client:
+        error = assert_error(post_job(client, options={"rig": True}), 400, "rig_unavailable")
+        assert error["message"] == "UniRig is not installed in vendor/UniRig (see docs/setup.md)"
+        assert_error(post_model(client, glb_bytes(textured=False)), 400, "rig_unavailable")
+
+
+def test_health_reports_rig_availability(tmp_path):
+    with make_client(tmp_path, rig=FakeRunner("model.glb")) as client:
+        health = client.get("/v1/health").json()
+        assert (health["rig"], health["rig_reason"]) == (True, None)

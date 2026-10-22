@@ -26,7 +26,7 @@ Every request must carry a loopback `Host` header (`127.0.0.1`, `localhost`, `[:
 
 ## Jobs
 
-A job turns one image into a GLB. States: `queued → shaping → painting → succeeded`, plus `failed` and `cancelled` from any non-final state. A job with `"texture": false` goes `shaping → succeeded`.
+A job turns one image into a GLB. States: `queued → shaping → painting → succeeded`, plus `failed` and `cancelled` from any non-final state. A job with `"texture": false` goes `shaping → succeeded`. A job with `"rig": true` adds `rigging` (stage `rig`) before `succeeded`, and a rig-only job (`POST /v1/rig-jobs`) goes `queued → rigging → succeeded`.
 
 ### `POST /v1/jobs`
 
@@ -39,6 +39,7 @@ A job turns one image into a GLB. States: `queued → shaping → painting → s
 | `seed` | int or null | `null` | 0 to 2^32-1; `null` draws one, returned in the job |
 | `remove_background` | bool | `true` | Skipped when the image already has transparency |
 | `target_faces` | int or null | `null` | At least 1000; decimates the shape when it has more faces, and is the face count a textured model keeps (overrides the quality level) |
+| `rig` | bool | `false` | Add a skeleton with UniRig after shape (and paint): the result GLB carries an armature bound to the mesh. An untextured rig job keeps at most 150,000 faces. Answers `400 rig_unavailable` when health reports `"rig": false` |
 
 ```bash
 curl -F image=@penguin.png -F 'options={"quality": "draft"}' http://127.0.0.1:8765/v1/jobs
@@ -73,8 +74,9 @@ Answers `202` with the job:
 | :--- | :--- | :--- |
 | `GET /v1/jobs/{id}` | `200` job | `404 job_not_found` |
 | `GET /v1/jobs/{id}/result` | `200` `model/gltf-binary` | `404 job_not_found`, `409 job_not_finished` |
+| `POST /v1/rig-jobs` | `202` job: multipart field `model`, a binary glTF 2.0 (`.glb`) up to 200 MiB, that only gets a skeleton. Its `textured` stat is whether the GLB has images; an untextured model over 150,000 faces is decimated first | `400 invalid_model`, `413 model_too_large`, `400 rig_unavailable`, `503 engine_not_ready` |
 | `DELETE /v1/jobs/{id}` | `202` job; a queued job is cancelled at once, a running one at its next stage boundary | `404 job_not_found`, `409 job_finished` |
-| `GET /v1/health` | `200` `{"ready": bool, "mode": {"name", "texture", "reason"}, "gpus": [{"bus_id", "stage", "ready", "memory_used_mib", "memory_total_mib", "memory_free_mib"}], "error": null or {"code", "message"}}`. `stage` is `"shape"`, `"paint"`, `"shape+paint"`, or `null` for an unused GPU; `memory_free_mib` is the free VRAM when the engine started. `error` is set when no mode is usable (`mode_unavailable`) or the workers failed to load (`worker_start_failed`, or `internal_error`). The model is `model3d_contracts.health.Health` | |
+| `GET /v1/health` | `200` `{"ready": bool, "mode": {"name", "texture", "reason"}, "gpus": [{"bus_id", "stage", "ready", "memory_used_mib", "memory_total_mib", "memory_free_mib"}], "error": null or {"code", "message"}}`. `stage` is `"shape"`, `"paint"`, `"shape+paint"`, or `null` for an unused GPU; `memory_free_mib` is the free VRAM when the engine started. `error` is set when no mode is usable (`mode_unavailable`) or the workers failed to load (`worker_start_failed`, or `internal_error`). `rig` says whether jobs may ask for a skeleton, and `rig_reason` why not (UniRig's clone, environment, or weights missing, or no usable GPU). The model is `model3d_contracts.health.Health` | |
 
 ## Events: `WS /v1/jobs/{id}/events`
 
@@ -102,10 +104,13 @@ Every error response has the same body:
 | `image_too_large` | `POST /v1/jobs`: over 20 MiB (413) |
 | `invalid_options` | `POST /v1/jobs`: options are not valid JSON or break a rule (400) |
 | `texture_unavailable` | `POST /v1/jobs` with `"texture": true` (the default) in `shape_only` mode (400) |
+| `rig_unavailable` | `POST /v1/jobs` with `"rig": true`, or `POST /v1/rig-jobs`, while health reports `"rig": false`; the message is `rig_reason` (400) |
+| `invalid_model` | `POST /v1/rig-jobs`: missing file, or not a complete binary glTF 2.0 (400) |
+| `model_too_large` | `POST /v1/rig-jobs`: over 200 MiB (413) |
 | `engine_not_ready` | `POST /v1/jobs` while the workers load or restart, or after they failed to load or no mode was usable; the message then names the cause (503) |
 | `forbidden_origin` | Any route: the `Host` is not loopback, or a `POST` or `DELETE` carries an `Origin` not in `MODEL3D_ALLOWED_ORIGINS` (403) |
 | `job_not_found` | Any job route with an unknown id (404) |
 | `job_not_finished` | Result requested before `succeeded` (409) |
 | `job_finished` | `DELETE` on a job that already ended (409) |
 
-Job failures (in the job's `error` and the `failed` event): `gpu_out_of_memory`, `worker_crashed` (the stage process died while running this job; it restarts on its own), `worker_unavailable` (the stage could not be restarted; see the engine log), `stage_timeout` (the stage ran longer than `MODEL3D_STAGE_TIMEOUT_S`; its worker is killed and restarts on its own), `invalid_image` (the stored input image is missing), `internal_error`.
+Job failures (in the job's `error` and the `failed` event): `gpu_out_of_memory`, `worker_crashed` (the stage process died while running this job; it restarts on its own), `worker_unavailable` (the stage could not be restarted; see the engine log), `stage_timeout` (the stage ran longer than `MODEL3D_STAGE_TIMEOUT_S`; its worker is killed and restarts on its own), `invalid_image` (the stored input image is missing), `rig_failed` (a UniRig step failed; the job folder keeps `rig.log`), `internal_error`.

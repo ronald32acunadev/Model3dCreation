@@ -23,6 +23,8 @@ class Settings:
     paint_bus: str | None = None
     mode: str | None = None
     max_image_bytes: int = 20 * 1024 * 1024
+    # Models sent for rigging only; a dense untextured model is about 30 MB.
+    max_model_bytes: int = 200 * 1024 * 1024
     # Browser origins allowed to POST or DELETE; requests without an Origin header are always allowed.
     allowed_origins: tuple[str, ...] = ()
     # Longest a stage may run one task before its worker is killed; measured runs take 60-80 s.

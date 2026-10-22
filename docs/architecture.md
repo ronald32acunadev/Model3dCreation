@@ -92,6 +92,16 @@ Upstream's paint code has a `multiple_devices` path (albedo attention on `cuda:0
 - Apply `engine/patches/hunyuan3d-paint-device.patch`: upstream hardcodes `.to("cuda:0")` in `attn_processor.py`, so paint only runs on CUDA device 0. The Hugging Face model snapshot ships its own copy of that file (`hunyuan3d-paintpbr-v2-1/unet/attn_processor.py`), which is the one diffusers loads, so the patch applies to both (see [setup.md](setup.md)).
 - After an exception, the process can hang at interpreter teardown in a native thread; workers exit with `os._exit`.
 
+### Rigging (phase 4)
+
+A job with `"rig": true`, or a rig-only job from `POST /v1/rig-jobs`, ends with the `rig` stage: [UniRig](https://github.com/VAST-AI-Research/UniRig) (MIT code and weights) predicts a skeleton and skinning weights and merges them into the GLB. Design: `docs/superpowers/specs/2026-10-22-rigging-and-blender-addon-design.md`.
+
+- **Separate environment.** UniRig needs `bpy` 4.2, `transformers` 4.51.3, `flash_attn`, and `spconv`, so it lives in `vendor/UniRig/.venv` (see [setup.md](setup.md)). Each task runs `engine/src/model3d_engine/stages/unirig_job.py` with that interpreter in a new process (`stages/rig.py`); nothing stays loaded between tasks. The script calls UniRig's Python modules directly, because its `extract.sh` runs `pip install` on every call, and loads the skin checkpoint by allowlisting `box.Box` for `torch.load` instead of turning `weights_only` off.
+- **Optional.** When the clone, its environment, or the weights are missing, health reports `"rig": false` with the reason, and rig requests answer `400 rig_unavailable`.
+- **Placement.** Rigging runs on the paint card (the shape card in `shape_only`) and takes turns with the stage on that card: the scheduler keeps one lock per device, held for a whole task. Before a rig task it reads the card's free VRAM; below 6100 MiB (the measured 5514 MiB peak plus the 512 MiB margin) it parks the workers on that card (unloads them) and loads each again before its next task. A parked worker still counts as ready. In swap mode the loaded worker is unloaded instead.
+- **Mesh size.** Rigging was measured on meshes of at most 150,000 faces, so an untextured rig job is decimated to that (or `target_faces`); textured models are already capped by the paint stage.
+- **Spike numbers (2026-10-22, RTX 5070, textured 85,000-vertex characters).** About 100 s per model warm (skeleton 33-40 s, skin 40-51 s, merge 16-20 s), 163 s on a cold first run; peak 5.5 GB. The skeletons are humanoid-like even for animals (no tail bones), and bones are named `bone_0` to `bone_N`.
+
 ## 3. Stack (corrected versions)
 
 | Layer | Choice | Correction from the phase specs |

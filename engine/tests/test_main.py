@@ -62,7 +62,7 @@ def test_main_runs_uvicorn_on_loopback(monkeypatch):
 
 
 def test_build_engine_dual_gpu_health(tmp_path):
-    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy")
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", unirig_dir=tmp_path / "UniRig")
     memory = {"0000:25:00.0": (100, 12227), "0000:29:00.0": (200, 12227)}
     app = build_engine(settings, inventory=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=lambda: memory)
     with TestClient(app, base_url=BASE_URL) as client:
@@ -75,7 +75,7 @@ def test_build_engine_dual_gpu_health(tmp_path):
             ],
             "error": None,
             "rig": False,
-            "rig_reason": None,
+            "rig_reason": "UniRig is not installed in vendor/UniRig (see docs/setup.md)",
         }
         job_id = run_job(client, {"texture": False})
         assert client.get(f"/v1/jobs/{job_id}/result").content[:4] == b"glTF"
@@ -167,3 +167,25 @@ def test_uvicorn_can_serve_websockets():
     config = uvicorn.Config(app=lambda scope, receive, send: None, ws="auto")
     config.load()
     assert config.ws_protocol_class is not None
+
+
+def test_build_engine_wires_rig_on_paint_card(tmp_path):
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", unirig_dir=tmp_path / "UniRig")
+    memory = {"0000:25:00.0": (4000, 12227), "0000:29:00.0": (200, 12227)}
+    app = build_engine(settings, inventory=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=lambda: memory)
+    rig = app.state.rig
+    assert rig.device == "cuda:0"  # paint sits on 0000:25:00.0, the card with the most free VRAM
+    assert rig.free_mib() == 12227 - 4000
+    with TestClient(app, base_url=BASE_URL) as client:
+        health = wait_ready(client)
+        assert health["rig"] is False
+        assert health["rig_reason"] == "UniRig is not installed in vendor/UniRig (see docs/setup.md)"
+
+
+def test_build_engine_unsupported_has_no_rig(tmp_path):
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy")
+    app = build_engine(settings, inventory=NO_GPU, shape_factory=STUB, paint_factory=STUB, memory_reader=dict)
+    assert app.state.rig is None
+    with TestClient(app, base_url=BASE_URL) as client:
+        health = client.get("/v1/health").json()
+        assert (health["rig"], health["rig_reason"]) == (False, "Rigging needs a usable GPU")
