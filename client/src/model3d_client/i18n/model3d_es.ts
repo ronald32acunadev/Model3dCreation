@@ -108,8 +108,8 @@
     </message>
     <message>
         <location filename="../views/generation_panel.py" line="126"/>
-        <source>Keeps more geometry: sharper ears, hands, and folds. About 25 s more per model.</source>
-        <translation>Conserva más geometría: orejas, manos y pliegues más definidos. Unos 25 s más por modelo.</translation>
+        <source>Sharper texture (768 px views: logos, eyes, small details) and more geometry. About 1.5 minutes more per model.</source>
+        <translation>Textura más nítida (vistas de 768 px: logos, ojos, detalles pequeños) y más geometría. Unos 1,5 minutos más por modelo.</translation>
     </message>
     <message>
         <location filename="../views/generation_panel.py" line="129"/>

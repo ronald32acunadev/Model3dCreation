@@ -123,7 +123,7 @@ class GenerationPanel(QWidget):
         self.quality_combo.setItemText(1, self.tr("Quality: final"))
         self.quality_combo.setItemText(2, self.tr("Quality: high detail"))
         self.quality_combo.setItemData(
-            2, self.tr("Keeps more geometry: sharper ears, hands, and folds. About 25 s more per model."),
+            2, self.tr("Sharper texture (768 px views: logos, eyes, small details) and more geometry. About 1.5 minutes more per model."),
             Qt.ItemDataRole.ToolTipRole,
         )
         self.save_button.setText(self.tr("Save GLB…"))
