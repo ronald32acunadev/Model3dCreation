@@ -65,6 +65,35 @@ cp --remove-destination "$(readlink -f "$F")" "$F"
 patch "$F" engine/patches/hunyuan3d-paint-device.patch
 ```
 
+## 5b. Rigging (optional): UniRig
+
+Skeletons (`"rig": true`, `POST /v1/rig-jobs`) come from [UniRig](https://github.com/VAST-AI-Research/UniRig) (MIT code and weights), which needs its own environment. Without it the engine runs normally and reports `"rig": false` in health. From the repository root, with `CUDA_HOME` as in section 3:
+
+```bash
+git clone https://github.com/VAST-AI-Research/UniRig.git vendor/UniRig
+git -C vendor/UniRig checkout 6793c66
+cd vendor/UniRig
+uv venv --python 3.11 .venv
+uv pip install --python .venv torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu130
+grep -v flash_attn requirements.txt > /tmp/unirig-requirements.txt
+uv pip install --python .venv -r /tmp/unirig-requirements.txt spconv-cu126 numpy==1.26.4 ninja packaging psutil setuptools wheel
+uv pip install --python .venv torch_scatter torch_cluster -f https://data.pyg.org/whl/torch-2.9.1+cu130.html
+FLASH_ATTN_CUDA_ARCHS=120 MAX_JOBS=6 NVCC_THREADS=2 PATH=/usr/local/cuda-13.1/bin:$PATH \
+    uv pip install --python .venv --no-build-isolation flash-attn
+cd ../..
+```
+
+`flash-attn` compiles from source for sm_120 (about 18 minutes with 6 jobs; more jobs need more RAM). `spconv-cu126` is the newest build and its kernels run on sm_120. The weights (5.8 GB) go into `data/hf` like Hunyuan3D's:
+
+```bash
+HF_HOME=data/hf vendor/UniRig/.venv/bin/python -c "
+from huggingface_hub import hf_hub_download as get
+for name in ('skeleton/articulation-xl_quantization_256/model.ckpt', 'skin/articulation-xl/model.ckpt'):
+    get('VAST-AI/UniRig', name)"
+```
+
+Do not edit the clone: the engine loads UniRig's skin checkpoint through its own wrapper (`engine/src/model3d_engine/stages/unirig_job.py`), which allowlists the one class `torch.load` rejects. `MODEL3D_UNIRIG_DIR` points the engine at another clone.
+
 ## 6. Verify
 
 ```bash
@@ -79,7 +108,7 @@ Every line must be `[PASS]` or `[WARN]`, ending with `RESULT: OK`. The report al
 uv run --project engine python -m model3d_engine
 ```
 
-It serves `http://127.0.0.1:8765/v1` (see [api.md](api.md)), picks a run mode for the detected GPUs (a few seconds before the port opens), and loads the workers in about 50 s. Close GPU-heavy apps first: the mode is chosen from the free VRAM at startup. `MODEL3D_HOME`, `MODEL3D_PORT`, `MODEL3D_HUNYUAN_DIR`, `MODEL3D_MODE` (force a run mode), `MODEL3D_SHAPE_BUS` and `MODEL3D_PAINT_BUS` (force the cards; set both or neither), `MODEL3D_ALLOWED_ORIGINS` (browser origins allowed to submit or cancel jobs, comma-separated, empty by default), and `MODEL3D_STAGE_TIMEOUT_S` (default 900) override the defaults; `MODEL3D_HOST` must stay a loopback address.
+It serves `http://127.0.0.1:8765/v1` (see [api.md](api.md)), picks a run mode for the detected GPUs (a few seconds before the port opens), and loads the workers in about 50 s. Close GPU-heavy apps first: the mode is chosen from the free VRAM at startup. `MODEL3D_HOME`, `MODEL3D_PORT`, `MODEL3D_HUNYUAN_DIR`, `MODEL3D_UNIRIG_DIR`, `MODEL3D_MODE` (force a run mode), `MODEL3D_SHAPE_BUS` and `MODEL3D_PAINT_BUS` (force the cards; set both or neither), `MODEL3D_ALLOWED_ORIGINS` (browser origins allowed to submit or cancel jobs, comma-separated, empty by default), and `MODEL3D_STAGE_TIMEOUT_S` (default 900) override the defaults; `MODEL3D_HOST` must stay a loopback address.
 
 ## 8. Desktop app
 
@@ -98,3 +127,19 @@ sed "s|@CLIENT_DIR@|$PWD/client|" client/model3d.desktop > ~/.local/share/applic
 
 `client/launch.sh` finds `uv` in `~/.local/bin` when the desktop session does not have it on `PATH`. After changing any user-visible string, run `client/scripts/update_translations.sh`, translate the new entries in `client/src/model3d_client/i18n/model3d_es.ts`, and run the script again.
 
+
+## 9. Blender add-on
+
+The add-on (`blender/model3d`) generates models, adds skeletons, and opens library models from Blender 4.2 or newer (tested on 5.2.2). It only talks to an engine that is already running, so open the desktop app first; when the engine does not answer, the panel says "Open the Model3D desktop app". Build the extension and install it:
+
+```bash
+blender --command extension build --source-dir blender/model3d --output-dir /tmp
+blender --command extension install-file -r user_default -e /tmp/model3d-0.1.0.zip
+```
+
+Then, in Blender, open Edit > Preferences > Add-ons > Model3D and set "Model3D folder" to this repository (the folder that holds `data/library`). The panel is in the 3D viewport's sidebar (N), tab "Model3D". Its tests run outside Blender, plus a headless Blender check:
+
+```bash
+cd blender && uv run pytest              # engine client, library, job flow (no Blender needed)
+cd blender && uv run pytest -m blender   # registers the add-on in blender -b and validates the manifest
+```

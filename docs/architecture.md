@@ -252,6 +252,16 @@ The PySide6 app in `client/` (package `model3d_client`) is the engine's first cl
 - **Languages.** Source strings are English; Spanish lives in `client/src/model3d_client/i18n/model3d_es.ts`, compiled to the committed `.qm` by `client/scripts/update_translations.sh`. Switching language in Settings retranslates the open window at once.
 - **Skeletons (phase 4).** The generation panel's "With skeleton" sends `"rig": true`; a finished library entry's context menu offers "Add skeleton", which sends its GLB to `POST /v1/rig-jobs` and saves the result as a new entry (`source_entry_id` links it, the name gets " (rigged)", the original stays untouched). Both are disabled, with health's `rig_reason` as the tooltip, when the engine cannot rig. The library is read again whenever the window becomes active, so entries the Blender add-on writes show up without a restart.
 
+## 5c. Blender add-on (phase 4)
+
+`blender/model3d` is a Blender extension (`blender_manifest.toml`, Blender 4.2+, tested on 5.2.2 with its bundled Python 3.13). Design: `docs/superpowers/specs/2026-10-22-rigging-and-blender-addon-design.md`.
+
+- **Engine.** It never starts or stops the engine: when `127.0.0.1:8765` does not answer, it says "Open the Model3D desktop app". Closing the app mid-job stops the engine, so the add-on marks the entry failed (`engine_lost`) after three missed polls.
+- **Standard library only.** Blender's Python cannot install packages, so `engine_client.py` speaks HTTP with `urllib` and polls `GET /v1/jobs/{id}` once a second (no WebSocket client in the standard library).
+- **Threads.** `jobs.py` (no `bpy`) does the work on a worker thread: check health, write the library entry, submit, follow, download. A `bpy.app.timers` callback on the main thread reads the shared `JobStatus`, redraws the sidebar, and imports finished GLBs with the glTF importer, selecting the new objects with the armature active. The bones' display shape the importer adds is left out of the selection.
+- **Library.** `library.py` writes the desktop app's entry format (`client/tests/test_addon_library_compat.py` checks the app reads it); the folder comes from the "Model3D folder" preference. "Add skeleton" creates a new entry, like the app.
+- **Tests.** `cd blender && uv run pytest` covers the client, library, tracker, and job flow against a standard-library fake engine; `-m blender` registers the add-on inside `blender -b`, imports a rigged GLB, and validates the manifest.
+
 ## 6. Acceptance criteria carried from phase 5
 
 | Criterion | Target | Note |
