@@ -14,5 +14,7 @@ Paste this list into the system message of every code request to a local model. 
 - Read files through the given root path, never a path relative to the current directory.
 - Every command gets the full env the task lists; do not drop it on some commands.
 - `glob()` returns a generator, always truthy: use `any(...)` or `next(..., None)`.
+- Qt `Signal(...)` is declared at class level, never assigned in `__init__`.
+- Ask for one file per request and end the request with a 3-line checklist of the rules it most needs.
 - Tests: pytest functions with `tmp_path`; never write to `/tmp`; never patch a whole module; import every name used.
 - Tests: keep each requested test's name, inputs, and assertions exactly; assert exact values.
