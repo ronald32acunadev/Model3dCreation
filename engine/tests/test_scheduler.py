@@ -472,3 +472,92 @@ async def test_cancel_queued_rig_only_job(tmp_path):
     await wait_final(busy)
     assert [run[0] for run in rig.runs] == [busy.job_id]
     await scheduler.stop()
+
+
+async def test_swap_mode_stays_ready_after_rig_parks_the_loaded_worker(tmp_path):
+    one_card = {"shape": "cuda:0", "paint": "cuda:0", "rig": "cuda:0"}
+    scheduler, store, bus, shape, paint, rig, log = await make_rig(tmp_path, swap=True, cards=one_card, rig_fits=False)
+    ready_during_rig = []
+    original = rig.run
+
+    async def run(task, on_progress):
+        ready_during_rig.append(scheduler.ready)
+        return await original(task, on_progress)
+
+    rig.run = run
+    record, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    await wait_final(record)
+    assert ready_during_rig == [True]
+    assert scheduler.ready is True  # the API's gate: new jobs must not get 503 engine_not_ready
+    await scheduler.stop()
+
+
+class FailingUnload(FakeRunner):
+    async def unload(self) -> None:
+        raise RuntimeError("driver busy")
+
+
+async def test_failed_unload_fails_the_rig_job_and_keeps_the_rig_loop(tmp_path):
+    log: list[tuple[str, str]] = []
+    shape, paint = FakeRunner(SHAPE, log=log), FailingUnload(PAINT, log=log)
+    rig = FakeRunner(RIG, log=log, fits_result=False)
+    store, bus = JobStore(tmp_path), EventBus()
+    scheduler = Scheduler(store, bus, shape, paint, rig=rig, cards=DUAL_CARDS)
+    await scheduler.start()
+    first, events = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    await wait_final(first)
+    assert first.state == JobState.failed
+    assert (await drain(events))[-1].error.code == "worker_unavailable"
+    rig.fits_result = True
+    second, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    await wait_final(second)
+    assert second.state == JobState.succeeded
+    await scheduler.stop()
+
+
+class FailsOnce(FakeRunner):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.starts = 0
+
+    async def start(self) -> None:
+        self.starts += 1
+        if self.starts == 2:  # the reload right after rigging
+            raise StageError("worker_start_failed", "VRAM not released yet")
+        await super().start()
+
+
+async def test_failed_reload_after_parking_keeps_engine_ready_and_retries(tmp_path):
+    log: list[tuple[str, str]] = []
+    shape, paint = FakeRunner(SHAPE, log=log), FailsOnce(PAINT, log=log)
+    rig = FakeRunner(RIG, log=log, fits_result=False)
+    store, bus = JobStore(tmp_path), EventBus()
+    scheduler = Scheduler(store, bus, shape, paint, rig=rig, cards=DUAL_CARDS)
+    await scheduler.start()
+    rigged, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    await wait_final(rigged)
+    failed, _ = await submit(scheduler, store, bus, JobOptions())
+    await wait_final(failed)
+    assert failed.state == JobState.failed and failed.error.code == "worker_unavailable"
+    assert scheduler.ready is True
+    retried, _ = await submit(scheduler, store, bus, JobOptions())
+    await wait_final(retried)
+    assert retried.state == JobState.succeeded
+    await scheduler.stop()
+
+
+async def test_unexpected_error_in_a_job_does_not_end_its_stage_loop(tmp_path):
+    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path)
+
+    async def boom():
+        raise RuntimeError("unexpected")
+
+    rig.fits = boom
+    first, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    await wait_final(first)
+    assert first.state == JobState.failed
+    del rig.fits
+    second, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    await wait_final(second)
+    assert second.state == JobState.succeeded
+    await scheduler.stop()
