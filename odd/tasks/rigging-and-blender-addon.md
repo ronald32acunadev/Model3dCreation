@@ -15,18 +15,19 @@ Design: `docs/superpowers/specs/2026-10-22-rigging-and-blender-addon-design.md`.
 
 | ID | Specs | Route | Status | Commit |
 | :--- | :--- | :--- | :--- | :--- |
-| T1 Contracts | S1, S2 | inline | pending | |
-| T2 UniRig script and RigRunner | S1 | inline | pending | |
-| T3 Scheduler rig stage, card locks | S1, S5 | inline | pending | |
-| T4 API, health, wiring | S1, S2, S3 | inline | pending | |
-| T5 GPU tests and setup guide | S1, S5 | inline | pending | |
-| T6 Client services and view model | S2, S3 | inline | pending | |
-| T7 Client UI, rescan, Spanish | S3 | inline | pending | |
-| T8 Add-on core | S4 | inline | pending | |
-| T9 Add-on UI, packaging, docs | S4 | inline | pending | |
+| T1 Contracts | S1, S2 | inline | committed | 89b8373 |
+| T2 UniRig script and RigRunner | S1 | inline | committed | 672f1d0 |
+| T3 Scheduler rig stage, card locks | S1, S5 | inline | committed | f7aafe0, d0a6fa5 |
+| T4 API, health, wiring | S1, S2, S3 | inline | committed | d541cdc, 744424e |
+| T5 GPU tests and setup guide | S1, S5 | inline | committed | 543e154 |
+| T6 Client services and view model | S2, S3 | inline | committed | 30623e1 |
+| T7 Client UI, rescan, Spanish | S3 | inline | committed | 3b0adea, 9cc88c8 |
+| T8 Add-on core | S4 | inline | committed | 7d067d6 |
+| T9 Add-on UI, packaging, docs | S4 | inline | committed | fedb3bc, 21cef77 |
 
 Route evidence: one dependent chain (each task consumes the previous task's interfaces); no writer trigger fires, so the parent writes inline. Code authorship: LM Studio unreachable and Ollama without a loaded model on 2026-10-22, so the host model writes the code (`AGENTS.md` fallback).
 
 ## Log
 
 - L1 (2026-10-22): "Dale arranquemos con la fase 4". Spike of UniRig succeeded (about 100 s and 5.5 GB per model). Owner approved the design ("Apruebo el diseño, pasá al plan") and the plan in native mode ("El plan está bien, ejecutalo en modo nativo").
+- L2 (2026-10-22): "Continuemos con la fase 4". Every task is committed on the branch (table above); the task table had not been updated. Re-running the suites is blocked: `uv` and its managed Python (`~/.local/share/uv/python`) are missing from the machine, so every package `.venv` points at a deleted interpreter. Next: reinstall uv, `uv sync` each package, run the four unit suites, then push and PR (owner's decision).
