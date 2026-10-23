@@ -96,3 +96,23 @@ def test_development_sources_point_at_the_repository():
     sources = default_sources()
     assert sources.app_root == REPO_ROOT
     assert sources.app_version == model3d_client.__version__
+
+
+def test_build_setup_resumes_an_existing_install(qtbot, installed):
+    from model3d_client.app import build_setup
+    from model3d_client.viewmodels.setup import SetupPage
+
+    env, folder = installed
+    _app, wizard = build_setup([], env, "resume")
+    qtbot.addWidget(wizard)
+    assert wizard.vm.folder == folder
+    assert wizard.vm.page in (SetupPage.requirements, SetupPage.install)
+
+
+def test_build_setup_first_run_starts_on_welcome(qtbot, tmp_path):
+    from model3d_client.app import build_setup
+    from model3d_client.viewmodels.setup import SetupPage
+
+    _app, wizard = build_setup([], {"XDG_CONFIG_HOME": str(tmp_path)}, "setup")
+    qtbot.addWidget(wizard)
+    assert wizard.vm.page == SetupPage.welcome

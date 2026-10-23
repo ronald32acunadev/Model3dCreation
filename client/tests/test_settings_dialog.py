@@ -51,3 +51,37 @@ def test_settings_dialog_offers_high_detail(window):  # noqa: F811
     combo = dialog.quality_combo
     assert [combo.itemData(i) for i in range(combo.count())] == [Quality.draft, Quality.final, Quality.high]
     assert combo.itemText(2) == "High detail"
+
+
+def test_settings_hides_install_actions_in_development(window):  # noqa: F811
+    dialog = SettingsDialog(window.vm)
+    assert window.vm.install_dir is None
+    assert dialog.install_group.isHidden()
+
+
+def test_settings_shows_skeleton_and_repair_actions_when_installed(window, tmp_path):  # noqa: F811
+    from model3d_client.setup.state import InstallState, save_state
+
+    folder = tmp_path / "m3d"
+    save_state(folder, InstallState(app_version="0.1.0", components=["base"]))
+    window.vm.install_dir = folder
+    requested = []
+    window.vm.setup_requested.connect(requested.append)
+    dialog = SettingsDialog(window.vm)
+    assert not dialog.install_group.isHidden()
+    assert str(folder) in dialog.install_label.text()
+    assert dialog.addon_edit.text().endswith("blender/model3d.zip")
+    assert dialog.skeletons_button.isEnabled()
+    dialog.skeletons_button.click()
+    dialog.repair_button.click()
+    assert requested == ["add_skeletons", "repair"]
+
+
+def test_settings_disables_add_skeletons_when_installed_with_them(window, tmp_path):  # noqa: F811
+    from model3d_client.setup.state import InstallState, save_state
+
+    folder = tmp_path / "m3d"
+    save_state(folder, InstallState(app_version="0.1.0", components=["base", "skeletons"]))
+    window.vm.install_dir = folder
+    dialog = SettingsDialog(window.vm)
+    assert not dialog.skeletons_button.isEnabled()

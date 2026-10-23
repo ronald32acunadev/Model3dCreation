@@ -42,6 +42,7 @@ class MainViewModel(QObject):
     selection_changed = Signal()
     entries_changed = Signal()
     diagnostics_changed = Signal()
+    setup_requested = Signal(str)  # a setup wizard mode: add_skeletons or repair
 
     def __init__(
         self,
@@ -56,6 +57,7 @@ class MainViewModel(QObject):
     ):
         super().__init__(parent)
         self.paths = paths
+        self.install_dir: Path | None = None  # set when installed from the .deb
         self.api = api
         self.supervisor = supervisor
         self.library = library

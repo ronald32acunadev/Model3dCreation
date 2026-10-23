@@ -83,3 +83,25 @@ def build_app(
     else:
         viewer = viewer_factory()
     return app, MainWindow(vm, viewer)
+
+
+def build_setup(argv: list[str], env: Mapping[str, str], mode: str) -> tuple[QApplication, "SetupWizard"]:
+    """Create (or reuse) the QApplication and the setup wizard for a startup mode other than main."""
+    from model3d_client.viewmodels.setup import SetupViewModel, default_check
+    from model3d_client.views.setup_wizard import SetupWizard
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    app = QApplication.instance()
+    if app is None:
+        prepare_webengine()
+        app = QApplication(argv)
+    app.setApplicationName("Model3D")
+    apply_language(app, load_settings(app_paths(env).settings_file, QLocale.system().name()).language)
+    kwargs = dict(sources=default_sources(), env=env, check=default_check(env), parent=app)
+    folder = read_pointer(env)
+    if mode == "setup" or folder is None:
+        vm = SetupViewModel(**kwargs)
+    else:
+        # update and resume both redo what is pending; repair also rechecks every step's result.
+        vm = SetupViewModel.for_existing(folder, "resume" if mode == "update" else mode, **kwargs)
+    return app, SetupWizard(vm)
