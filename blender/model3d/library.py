@@ -9,11 +9,30 @@ import json
 import os
 import secrets
 import shutil
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
 ENTRY_FILE = "entry.json"
 MODEL_FILE = "model.glb"
+
+
+def default_root(env: Mapping[str, str]) -> Path | None:
+    """The desktop app's library, found through its install pointer, or None when there is no usable pointer."""
+    if env.get("XDG_CONFIG_HOME"):
+        config_dir = Path(env["XDG_CONFIG_HOME"])
+    elif env.get("HOME"):
+        config_dir = Path(env["HOME"]) / ".config"
+    else:
+        return None
+    try:
+        data = json.loads((config_dir / "model3d" / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    install_dir = data.get("install_dir") if isinstance(data, dict) else None
+    if not isinstance(install_dir, str) or not install_dir:
+        return None
+    return Path(install_dir) / "data" / "library"
 
 
 def model_path(root: Path, entry_id: str) -> Path:

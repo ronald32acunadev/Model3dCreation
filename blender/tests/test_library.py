@@ -50,3 +50,35 @@ def test_list_entries_skips_unreadable(tmp_path):
     second = library.create_entry(tmp_path, make_image(tmp_path), {})
     assert [entry["entry_id"] for entry in library.list_entries(tmp_path)] == [second["entry_id"], first["entry_id"]]
     assert library.list_entries(tmp_path / "missing") == []
+
+
+def write_pointer(config_home, install_dir):
+    path = config_home / "model3d" / "config.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"install_dir": str(install_dir)}))
+    return path
+
+
+def test_default_root_from_pointer(tmp_path):
+    install = tmp_path / "Disco 2" / "M3D"
+    write_pointer(tmp_path / "cfg", install)
+    assert library.default_root({"XDG_CONFIG_HOME": str(tmp_path / "cfg")}) == install / "data" / "library"
+
+
+def test_default_root_falls_back_to_home_config(tmp_path):
+    install = tmp_path / "M3D"
+    write_pointer(tmp_path / "home" / ".config", install)
+    assert library.default_root({"HOME": str(tmp_path / "home")}) == install / "data" / "library"
+
+
+def test_default_root_none_without_pointer(tmp_path):
+    assert library.default_root({"XDG_CONFIG_HOME": str(tmp_path / "empty")}) is None
+    assert library.default_root({}) is None
+
+
+def test_default_root_none_with_corrupt_pointer(tmp_path):
+    path = write_pointer(tmp_path / "cfg", tmp_path)
+    env = {"XDG_CONFIG_HOME": str(tmp_path / "cfg")}
+    for content in ("not json", "[1]", '{"install_dir": ""}', '{"install_dir": 3}'):
+        path.write_text(content)
+        assert library.default_root(env) is None

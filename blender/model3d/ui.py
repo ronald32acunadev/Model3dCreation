@@ -4,6 +4,7 @@ Network and job work runs on a worker thread (jobs.py); the timer runs on Blende
 thread, reads the shared JobStatus, redraws the panel, and imports finished models.
 """
 
+import os
 import threading
 import traceback
 from pathlib import Path
@@ -31,10 +32,11 @@ def _preferences(context):
 
 
 def library_root(context) -> Path | None:
+    """The project folder's library when that preference is set, else the installed app's."""
     preferences = _preferences(context)
-    if preferences is None or not preferences.project_dir:
-        return None
-    return Path(bpy.path.abspath(preferences.project_dir)) / "data" / "library"
+    if preferences is not None and preferences.project_dir:
+        return Path(bpy.path.abspath(preferences.project_dir)) / "data" / "library"
+    return library.default_root(os.environ)
 
 
 def import_glb(path: Path) -> list:
@@ -92,7 +94,7 @@ class Model3DPreferences(AddonPreferences):
 
     project_dir: StringProperty(
         name="Model3D folder",
-        description="The folder that holds data/library (the Model3D repository)",
+        description="Only for a Model3D repository checkout: the folder that holds data/library. Leave it empty to use the installed app's library",
         subtype="DIR_PATH",
     )
 
@@ -130,7 +132,7 @@ class MODEL3D_OT_generate(Operator):
     def execute(self, context):
         root = library_root(context)
         if root is None:
-            self.report({"ERROR"}, iface_("Set the Model3D folder in the add-on preferences"))
+            self.report({"ERROR"}, iface_("Install the Model3D app, or set the Model3D folder in the add-on preferences"))
             return {"CANCELLED"}
         settings = context.scene.model3d
         image = Path(bpy.path.abspath(settings.image_path))
@@ -225,7 +227,7 @@ class MODEL3D_PT_main(Panel):
         settings = context.scene.model3d
         status = STATUS.snapshot()
         if library_root(context) is None:
-            layout.label(text="Set the Model3D folder in the add-on preferences", icon="ERROR")
+            layout.label(text="Install the Model3D app, or set the Model3D folder in the add-on preferences", icon="ERROR")
         column = layout.column()
         column.enabled = not status["busy"]
         column.prop(settings, "image_path")
