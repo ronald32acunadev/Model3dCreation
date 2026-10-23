@@ -50,6 +50,7 @@ Local models are the owner's dedicated code synthesizers, exposed to agents as M
 3. **Prepare Prompt**:
    - Call `pumbastudio` (or fallback to `pumbalama`) with a self-contained prompt that follows the Prompt Template below.
    - **System message**: Include project rules that apply (language, architecture constraints, style).
+     Always paste the rules in `.agents/local-llm-prompt-rules.md`, and add a short rule there whenever a review rejects part of an answer.
    - **User message**: Include the Library Context Brief, the exact task, target file paths, relevant existing code verbatim, and expected output format (full file or exact replacement block).
 4. **Review**: Check the answer against the request, the Library Context Brief, project rules, and language requirements. Reject any API, import, or option that is not in the brief or in the existing code. If incorrect or incomplete, send a follow-up naming the specific defect and the correct API.
 5. **Apply and Test**: Apply the code to files using file tools and run applicable tests.
