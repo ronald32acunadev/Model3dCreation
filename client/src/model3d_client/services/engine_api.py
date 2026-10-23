@@ -109,6 +109,22 @@ class EngineApi(QObject):
         multi.setParent(reply)
         self._send(reply, self._job_handler(202, on_done))
 
+    def submit_rig(self, model: Path, on_done: Callable[[Job | ApiError], None]) -> None:
+        """Ask for a skeleton on an existing model (a GLB file)."""
+        multi = QHttpMultiPart(QHttpMultiPart.ContentType.FormDataType)
+        model_part = QHttpPart()
+        model_part.setHeader(
+            QNetworkRequest.KnownHeaders.ContentDispositionHeader,
+            f'form-data; name="model"; filename="{model.name}"',
+        )
+        model_part.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "model/gltf-binary")
+        model_part.setBody(QByteArray(model.read_bytes()))
+        multi.append(model_part)
+        # A dense model can take a moment to upload, even over loopback.
+        reply = self._manager.post(self._request("/v1/rig-jobs", 120000), multi)
+        multi.setParent(reply)
+        self._send(reply, self._job_handler(202, on_done))
+
     def cancel(self, job_id: str, on_done: Callable[[Job | ApiError], None]) -> None:
         reply = self._manager.deleteResource(self._request(f"/v1/jobs/{job_id}"))
         self._send(reply, self._job_handler(202, on_done))

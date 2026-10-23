@@ -20,6 +20,7 @@ from model3d_engine.jobs.scheduler import Scheduler
 from model3d_engine.jobs.store import JobStore
 from model3d_engine.stages.hunyuan import stage_env
 from model3d_engine.stages.process import ProcessStageRunner
+from model3d_engine.stages.rig import RigRunner
 
 SHAPE_FACTORY = "model3d_engine.stages.hunyuan:make_shape_stage"
 PAINT_FACTORY = "model3d_engine.stages.hunyuan:make_paint_stage"
@@ -44,6 +45,7 @@ def build_engine(
     shape_factory: str = SHAPE_FACTORY,
     paint_factory: str = PAINT_FACTORY,
     memory_reader: Callable[[], dict[str, tuple[int, int]]] = read_memory,
+    rig_runner: RigRunner | None = None,
 ) -> FastAPI:
     """Pick the run mode for the detected GPUs and wire workers, scheduler, store, and bus into the API."""
     inventory = probe_gpus() if inventory is None else inventory
@@ -70,9 +72,31 @@ def build_engine(
         name="paint",
         task_timeout_s=settings.stage_timeout_s,
     )
+    # Rigging runs on the paint card (the shape card in shape_only), taking turns with that
+    # stage; with no usable GPU there is nothing to rig on.
+    rig = rig_runner
+    rig_gpu = (plan.paint if plan.texture else plan.shape) if plan.name != ModeName.unsupported else None
+    if rig is None and rig_gpu is not None:
+
+        def rig_free_mib() -> int | None:
+            try:
+                used, total = memory_reader()[rig_gpu.bus_id]
+            except Exception:
+                return None
+            return total - used
+
+        rig = RigRunner(
+            settings.unirig_dir,
+            settings.hf_home,
+            devices.paint if plan.texture else devices.shape,
+            rig_free_mib,
+            env=env,
+            task_timeout_s=settings.stage_timeout_s,
+        )
+    cards = {"shape": devices.shape, "paint": devices.paint, "rig": devices.paint if plan.texture else devices.shape}
     store, bus = JobStore(settings.jobs_dir), EventBus()
     swap = plan.name in (ModeName.single_gpu_swap, ModeName.shape_only)
-    scheduler = Scheduler(store, bus, shape, paint, swap=swap)
+    scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=cards)
     if plan.name == ModeName.unsupported:
         scheduler.start_error = JobError(code=ModeUnavailable.code, message=plan.reason)
 
@@ -100,11 +124,20 @@ def build_engine(
             "ready": scheduler.ready,
             "mode": {"name": plan.name.value, "texture": plan.texture, "reason": plan.reason},
             "gpus": [gpu_entry(gpu, memory) for gpu in inventory.gpus],
+            "rig": scheduler.rig_available,
+            "rig_reason": rig_reason(),
         }
+
+    def rig_reason() -> str | None:
+        if rig is None:
+            return "Rigging needs a usable GPU"
+        return None if rig.ready else getattr(rig, "reason", None)
 
     # Only shape_only refuses textured jobs; with no usable GPU every job gets 503 and the cause.
     texture_available = plan.name != ModeName.shape_only
-    return create_app(settings, scheduler, store, bus, health, texture_available=texture_available)
+    app = create_app(settings, scheduler, store, bus, health, texture_available=texture_available, rig_reason=rig_reason)
+    app.state.rig = rig
+    return app
 
 
 def main() -> None:

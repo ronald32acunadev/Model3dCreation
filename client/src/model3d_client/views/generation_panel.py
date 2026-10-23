@@ -69,6 +69,12 @@ class GenerationPanel(QWidget):
         self.texture_check = QCheckBox()
         self.texture_check.setChecked(vm.texture)
         self.texture_check.toggled.connect(vm.set_texture)
+        self.rig_check = QCheckBox()
+        self.rig_check.setChecked(vm.rig)
+        self.rig_check.toggled.connect(vm.set_rig)
+        self.rig_hint = QLabel()  # why skeletons are unavailable, shown under the option
+        self.rig_hint.setWordWrap(True)
+        self.rig_hint.setStyleSheet("color: palette(placeholder-text);")
         self.quality_combo = QComboBox()
         self.quality_combo.addItem("", Quality.draft)
         self.quality_combo.addItem("", Quality.final)
@@ -94,7 +100,7 @@ class GenerationPanel(QWidget):
         self.reset_camera_button.clicked.connect(self.reset_camera_requested)
 
         layout = QVBoxLayout(self)
-        for widget in (self.source_tabs, self.texture_check, self.quality_combo, self.generate_button,
+        for widget in (self.source_tabs, self.texture_check, self.rig_check, self.rig_hint, self.quality_combo, self.generate_button,
                        self.progress_bar, self.stage_label, self.error_label, self.save_button,
                        self.show_texture_check, self.reset_camera_button):
             layout.addWidget(widget)
@@ -119,6 +125,7 @@ class GenerationPanel(QWidget):
             self.image_preview.setText(self.tr("Drop an image here"))
         self.choose_button.setText(self.tr("Choose image…"))
         self.texture_check.setText(self.tr("Texture"))
+        self.rig_check.setText(self.tr("With skeleton"))
         self.quality_combo.setItemText(0, self.tr("Quality: draft"))
         self.quality_combo.setItemText(1, self.tr("Quality: final"))
         self.quality_combo.setItemText(2, self.tr("Quality: high detail"))
@@ -141,6 +148,16 @@ class GenerationPanel(QWidget):
         available = vm.texture_available
         self.texture_check.setEnabled(available and vm.phase == Phase.idle)
         self.texture_check.setToolTip("" if available else self.tr("This engine runs without the paint stage"))
+        rig_available = vm.rig_available
+        self.rig_check.setEnabled(rig_available and vm.phase == Phase.idle)
+        self.rig_check.setToolTip(
+            self.tr("Adds a skeleton (UniRig) so the model is ready to animate. About 2 minutes more per model.")
+            if rig_available
+            else vm.rig_reason or self.tr("This engine cannot add skeletons")
+        )
+        # Only when the engine said why; before its first health answer there is nothing to explain.
+        self.rig_hint.setText(vm.rig_reason or "")
+        self.rig_hint.setVisible(not rig_available and bool(vm.rig_reason))
         self.quality_combo.setEnabled(vm.phase == Phase.idle)
         if vm.phase == Phase.idle:
             self.generate_button.setText(self.tr("Generate"))
@@ -159,6 +176,7 @@ class GenerationPanel(QWidget):
             Phase.queued: self.tr("Waiting in the queue…"),
             Phase.shaping: self.tr("Building the shape"),
             Phase.painting: self.tr("Painting the texture"),
+            Phase.rigging: self.tr("Adding skeleton…"),
             Phase.cancelling: self.tr("Cancelling: the engine finishes the current stage first…"),
         }
         stage = phases[vm.phase]
@@ -182,6 +200,10 @@ class GenerationPanel(QWidget):
             "image_too_large": self.tr("The image is larger than 20 MB."),
             "engine_not_ready": self.tr("The engine is not ready yet."),
             "texture_unavailable": self.tr("This engine runs without the paint stage; turn Texture off."),
+            "rig_unavailable": self.tr("This engine cannot add skeletons; see the setup guide."),
+            "rig_failed": self.tr("Adding the skeleton failed. The job folder has rig.log with the details."),
+            "invalid_model": self.tr("The engine could not read this model."),
+            "model_too_large": self.tr("The model is too large to add a skeleton to."),
             "gpu_out_of_memory": self.tr("The engine ran out of GPU memory. Close other programs that use the GPU and try again."),
             "worker_crashed": self.tr("A GPU worker crashed; it restarts on its own. Try again."),
             "worker_unavailable": self.tr("A GPU worker could not be started. Restart the engine."),

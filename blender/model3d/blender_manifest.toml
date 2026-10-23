@@ -1,0 +1,20 @@
+schema_version = "1.0.0"
+
+id = "model3d"
+version = "0.1.0"
+name = "Model3D"
+tagline = "Generate and rig 3D models with the local Model3D engine"
+maintainer = "Ronald Daniel Acuña Arias"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+
+# Add-ons that import bpy are conventionally GPL; the engine they talk to is a separate program.
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+network = "Talk to the local Model3D engine"
+files = "Read images and the Model3D library"
+
+[build]
+paths_exclude_pattern = ["__pycache__/"]

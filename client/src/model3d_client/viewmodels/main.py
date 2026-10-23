@@ -74,6 +74,10 @@ class MainViewModel(QObject):
     def entries(self) -> list[Entry]:
         return self.library.entries()
 
+    def refresh_entries(self) -> None:
+        """Read the library again: another program (the Blender add-on) may have added entries."""
+        self.entries_changed.emit()
+
     def select(self, entry_id: str | None) -> None:
         self.selected = next((e for e in self.entries() if e.entry_id == entry_id), None)
         self.selection_changed.emit()

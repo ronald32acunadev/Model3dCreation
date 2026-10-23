@@ -173,3 +173,101 @@ def test_quality_combo_offers_high_detail(window):
     combo = window.generation_panel.quality_combo
     assert [combo.itemData(i) for i in range(combo.count())] == [Quality.draft, Quality.final, Quality.high]
     assert combo.itemText(2) == "Quality: high detail"
+
+
+def ready_window(qtbot, tmp_path, make_api, supervisor):
+    paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
+    library = Library(paths.library)
+    api = make_api("http://127.0.0.1:9")
+    generation = GenerationViewModel(api, library, supervisor, Settings())
+    win = MainWindow(MainViewModel(paths, api, supervisor, library, generation, Settings()), viewer=StubViewer())
+    win.ask_close_anyway = lambda: True
+    qtbot.addWidget(win)
+    return win
+
+
+def test_rig_checkbox_disabled_with_reason(qtbot, tmp_path, make_api):
+    reason = "UniRig weights are missing from data/hf (see docs/setup.md)"
+    win = ready_window(qtbot, tmp_path, make_api, FakeSupervisor(rig=False, rig_reason=reason))
+    check = win.generation_panel.rig_check
+    assert not check.isEnabled()
+    assert reason in check.toolTip()
+
+
+def test_rig_checkbox_sends_rig_option(qtbot, tmp_path, make_api):
+    win = ready_window(qtbot, tmp_path, make_api, FakeSupervisor())
+    check = win.generation_panel.rig_check
+    assert check.isEnabled() and check.text() == "With skeleton"
+    check.setChecked(True)
+    assert win.vm.generation.rig is True
+
+
+def test_rigging_phase_has_its_text(qtbot, tmp_path, make_api):
+    win = ready_window(qtbot, tmp_path, make_api, FakeSupervisor())
+    win.vm.generation._set_phase(Phase.rigging, 0.4, "Skeleton ready")
+    assert win.generation_panel.stage_label.text() == "Adding skeleton… — Skeleton ready"
+
+
+def test_library_menu_add_skeleton_starts_rig_job(qtbot, tmp_path, make_api, png):
+    win = ready_window(qtbot, tmp_path, make_api, FakeSupervisor())
+    plain = add_succeeded(win.vm.library, png, "Robot")
+    win.vm.entries_changed.emit()
+    menu = win.library_panel.build_menu(plain)
+    assert next(a for a in menu.actions() if a.objectName() == "add_skeleton").isEnabled()
+    started = []
+    win.vm.generation.changed.connect(lambda: started.append(win.vm.generation.phase))
+    win.library_panel.add_skeleton_requested.emit(plain.entry_id)
+    assert Phase.submitting in started
+    rigged = [entry for entry in win.vm.library.entries() if entry.source_entry_id == plain.entry_id]
+    assert len(rigged) == 1 and rigged[0].name == "Robot (rigged)"
+
+
+def test_add_skeleton_disabled_for_rigged_entry(qtbot, tmp_path, make_api, png):
+    win = ready_window(qtbot, tmp_path, make_api, FakeSupervisor())
+    entry = add_succeeded(win.vm.library, png, "Robot")
+    rigged = entry.model_copy(update={"options": JobOptions(rig=True)})
+    win.vm.library.update(rigged)
+    win.vm.entries_changed.emit()
+    menu = win.library_panel.build_menu(rigged)
+    assert not next(a for a in menu.actions() if a.objectName() == "add_skeleton").isEnabled()
+    assert "skeleton" in win.library_panel.list.item(0).text()
+
+
+def test_library_rescans_when_app_becomes_active(qtbot, window, png, qapp):
+    add_succeeded(Library(window.vm.library.root), png, "From Blender")
+    assert window.library_panel.list.count() == 0
+    qapp.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
+    assert window.library_panel.list.count() == 1
+
+
+def test_half_written_entry_is_skipped(qtbot, window, png, qapp):
+    add_succeeded(window.vm.library, png, "Robot")
+    broken = window.vm.library.root / "20261022T120000-abcdef"
+    broken.mkdir()
+    (broken / "entry.json").write_text('{"entry_id": "20261022T1200')
+    qapp.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
+    assert window.library_panel.list.count() == 1
+
+
+def test_rig_reason_is_visible_text_and_menu_tooltip(qtbot, tmp_path, make_api, png):
+    reason = "UniRig weights are missing from data/hf (see docs/setup.md)"
+    win = ready_window(qtbot, tmp_path, make_api, FakeSupervisor(rig=False, rig_reason=reason))
+    hint = win.generation_panel.rig_hint
+    assert not hint.isHidden() and reason in hint.text()
+    entry = add_succeeded(win.vm.library, png, "Robot")
+    win.vm.entries_changed.emit()
+    menu = win.library_panel.build_menu(entry)
+    action = next(a for a in menu.actions() if a.objectName() == "add_skeleton")
+    assert not action.isEnabled() and reason in action.toolTip()
+    assert menu.toolTipsVisible()
+
+
+def test_rig_hint_hidden_when_rig_available(qtbot, tmp_path, make_api):
+    win = ready_window(qtbot, tmp_path, make_api, FakeSupervisor())
+    assert win.generation_panel.rig_hint.isHidden()
+
+
+def test_rig_hint_hidden_before_the_engine_answers(window):
+    window.vm.supervisor.health = None
+    window.vm.generation.changed.emit()
+    assert window.generation_panel.rig_hint.isHidden()

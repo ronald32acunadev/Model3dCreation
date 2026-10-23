@@ -24,7 +24,18 @@ def test_health_round_trips():
             },
         ],
         "error": None,
+        "rig": False,
+        "rig_reason": None,
     }
     assert Health.model_validate(body).model_dump(mode="json") == body
     failed = {**body, "ready": False, "error": {"code": "mode_unavailable", "message": "No NVIDIA GPU is visible to PyTorch"}}
     assert Health.model_validate(failed).error.code == "mode_unavailable"
+
+
+def test_health_rig_fields_default():
+    body = {"ready": True, "mode": {"name": "dual_gpu", "texture": True, "reason": "x"}, "gpus": [], "error": None}
+    health = Health.model_validate(body)
+    assert health.rig is False
+    assert health.rig_reason is None
+    unavailable = {**body, "rig": False, "rig_reason": "UniRig environment missing"}
+    assert Health.model_validate(unavailable).model_dump(mode="json") == unavailable
