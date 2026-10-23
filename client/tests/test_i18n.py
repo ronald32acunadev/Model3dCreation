@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 from xml.etree import ElementTree
 
+import pytest
+
 import model3d_client.i18n
 from model3d_client.i18n import apply_language
 from test_main_window import window  # noqa: F401  (fixture)
@@ -33,6 +35,8 @@ def test_every_source_string_is_translated():
 
 def test_qm_is_up_to_date(tmp_path):
     lrelease = Path(sys.executable).parent / "pyside6-lrelease"
+    if not lrelease.exists():
+        pytest.skip("pyside6-lrelease comes with the pip PySide6, not with the system one")
     subprocess.run([str(lrelease), str(I18N / "model3d_es.ts"), "-qm", str(tmp_path / "out.qm")],
                    check=True, capture_output=True)
     assert (tmp_path / "out.qm").read_bytes() == (I18N / "model3d_es.qm").read_bytes()

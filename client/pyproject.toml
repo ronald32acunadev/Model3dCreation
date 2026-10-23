@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "PySide6 desktop app for the local model3d engine."
 requires-python = ">=3.11"
 dependencies = [
-    "PySide6==6.12.0",
+    "PySide6>=6.10,<7",  # Ubuntu 26.04 ships 6.10; the .deb uses the system copy
     "pydantic>=2.10,<3",
     "model3d-contracts",
 ]
