@@ -104,6 +104,8 @@ class StepRunner:
         except StepFailed as error:
             if self._cancel.is_set() and error.code != "cancelled":
                 raise StepFailed("cancelled", "Installation cancelled", step.id) from error
+            if not error.step_id:  # raised by an action, which does not know its step
+                raise StepFailed(error.code, error.message, step.id) from error
             raise
         except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
             raise StepFailed("network", str(error), step.id) from error

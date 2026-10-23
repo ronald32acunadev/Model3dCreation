@@ -168,3 +168,15 @@ def test_state_keeps_records_of_steps_outside_this_run(folder):
     runner(folder, [touch_step("b")]).run()
     assert set(load_state(folder).steps) == {"a", "b"}
     assert isinstance(load_state(folder), InstallState)
+
+
+def test_action_failure_without_step_id_gets_the_step_id(folder):
+    def fails(ctx):
+        raise StepFailed("network", "connection reset", "")
+
+    steps = [Step(id="fetch", title="fetch", component="base", size_bytes=0, fingerprint="f",
+                  actions=[fails], done_check=lambda folder: False)]
+    with pytest.raises(StepFailed) as failure:
+        runner(folder, steps).run()
+    assert failure.value.step_id == "fetch"
+    assert failure.value.code == "network"
