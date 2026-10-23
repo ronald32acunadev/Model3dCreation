@@ -64,6 +64,22 @@ Put the three rules the task most needs at the very end: small models weigh the 
 3. Every defect that could repeat becomes one line in `.agents/local-llm-prompt-rules.md`: the rule only, no history, imperative, under 25 words. Keep the file under 300 words; merge or drop rules that never fire.
 4. Note in the commit or task log when the host model rewrote the answer, so the rules file can be judged by its rejection rate.
 
+## Choosing and calling the model
+
+Measured on 2026-10-23 with one real request (a 180-line Python module, scored by its 12 tests), on two RTX 5070:
+
+| Model | Time | Result |
+| :--- | :--- | :--- |
+| gemma-4-31b-it-qat (dense), reasoning off | 67 s | 11/11 tests |
+| gemma-4-31b-it-qat, reasoning on | 128 s | 11/11 tests |
+| qwen3-coder-30b-a3b (MoE, ~3B active) | fast | did not import |
+| gemma-4-12b, reasoning off | 27 s | 0/12 tests |
+| gemma-4-12b and gemma4:26b (MoE), reasoning on | 8-13 min | empty: reasoning filled the 32k window |
+
+- Prefer a dense model of about 30B for code; small or MoE models are fast but their code needs rewriting.
+- Send `"reasoning_effort": "none"` in the chat request (LM Studio's OpenAI API honors it); thinking models otherwise reason until the window is full.
+- A 30B dense model needs 1-2 minutes per file: call the HTTP API directly with a long timeout when an MCP tool gives up first.
+
 ## Provider order
 
 1. LM Studio (`pumbastudio`, port 1234): whatever model is loaded; check `GET /v1/models`.
