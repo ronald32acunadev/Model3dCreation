@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Model3D
+Comment=Turn an image into a textured 3D model on your own GPU
+Comment[es]=Convierte una imagen en un modelo 3D con textura en tu propia GPU
+Exec=/usr/bin/model3d
+Icon=model3d
+Terminal=false
+Categories=Graphics;3DGraphics;

@@ -1,0 +1,13 @@
+Package: model3d
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Ronald Daniel Acuña Arias <ronald32acunadev@gmail.com>
+Section: graphics
+Priority: optional
+Depends: python3, python3-pydantic, python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets, python3-pyside6.qtnetwork, python3-pyside6.qtwebsockets, python3-pyside6.qtwebenginecore, python3-pyside6.qtwebenginewidgets, build-essential, patch
+Homepage: https://github.com/ronald32acunadev/Model3dCreation
+Description: Turn an image into a textured, optionally rigged 3D model on your own NVIDIA GPU
+ Model3D generates GLB models locally with Hunyuan3D 2.1 and adds skeletons with UniRig.
+ On first start its setup wizard checks the NVIDIA driver and CUDA toolkit 13, then
+ installs the engine, its Python environment, and about 40 GB of models into a folder
+ you choose. A Blender add-on is included in /opt/model3d/blender.
