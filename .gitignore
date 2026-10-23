@@ -4,4 +4,8 @@ __pycache__/
 .pytest_cache/
 vendor/
 .superpowers/
+.context/
+.atl/
+.codegraph/
 data/
+
