@@ -24,6 +24,12 @@ def png_bytes(width: int = 2, height: int = 2) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
 
 
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path_factory, monkeypatch):
+    """Hide the user's setup pointer, so the suite always runs against the repository."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg")))
+
+
 @pytest.fixture
 def png(tmp_path):
     path = tmp_path / "inputs" / "penguin.png"
