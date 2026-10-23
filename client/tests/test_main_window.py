@@ -247,3 +247,27 @@ def test_half_written_entry_is_skipped(qtbot, window, png, qapp):
     (broken / "entry.json").write_text('{"entry_id": "20261022T1200')
     qapp.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
     assert window.library_panel.list.count() == 1
+
+
+def test_rig_reason_is_visible_text_and_menu_tooltip(qtbot, tmp_path, make_api, png):
+    reason = "UniRig weights are missing from data/hf (see docs/setup.md)"
+    win = ready_window(qtbot, tmp_path, make_api, FakeSupervisor(rig=False, rig_reason=reason))
+    hint = win.generation_panel.rig_hint
+    assert not hint.isHidden() and reason in hint.text()
+    entry = add_succeeded(win.vm.library, png, "Robot")
+    win.vm.entries_changed.emit()
+    menu = win.library_panel.build_menu(entry)
+    action = next(a for a in menu.actions() if a.objectName() == "add_skeleton")
+    assert not action.isEnabled() and reason in action.toolTip()
+    assert menu.toolTipsVisible()
+
+
+def test_rig_hint_hidden_when_rig_available(qtbot, tmp_path, make_api):
+    win = ready_window(qtbot, tmp_path, make_api, FakeSupervisor())
+    assert win.generation_panel.rig_hint.isHidden()
+
+
+def test_rig_hint_hidden_before_the_engine_answers(window):
+    window.vm.supervisor.health = None
+    window.vm.generation.changed.emit()
+    assert window.generation_panel.rig_hint.isHidden()

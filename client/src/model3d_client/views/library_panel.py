@@ -28,6 +28,7 @@ class LibraryPanel(QWidget):
         self._entries: list[Entry] = []
         self._icons: dict[str, QIcon] = {}  # thumbnails, made once per entry
         self.can_add_skeleton: Callable[[Entry], bool] = lambda _entry: False  # set by the window
+        self.rig_reason: Callable[[], str | None] = lambda: None  # why the engine cannot rig, if it cannot
         self.title = QLabel()
         self.list = QListWidget()
         self.list.setIconSize(QSize(THUMBNAIL, THUMBNAIL))
@@ -80,11 +81,14 @@ class LibraryPanel(QWidget):
     def build_menu(self, entry: Entry) -> QMenu:
         """The entry's context menu: rename, delete, and add skeleton (when the engine can)."""
         menu = QMenu(self)
+        menu.setToolTipsVisible(True)
         menu.addAction(self.tr("Rename…")).setObjectName("rename")
         menu.addAction(self.tr("Delete…")).setObjectName("delete")
         add_skeleton = menu.addAction(self.tr("Add skeleton"))
         add_skeleton.setObjectName("add_skeleton")
         add_skeleton.setEnabled(self.can_add_skeleton(entry))
+        if not add_skeleton.isEnabled() and self.rig_reason():
+            add_skeleton.setToolTip(self.rig_reason())
         return menu
 
     def _icon(self, entry: Entry) -> QIcon:

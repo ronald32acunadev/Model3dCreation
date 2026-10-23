@@ -72,6 +72,9 @@ class GenerationPanel(QWidget):
         self.rig_check = QCheckBox()
         self.rig_check.setChecked(vm.rig)
         self.rig_check.toggled.connect(vm.set_rig)
+        self.rig_hint = QLabel()  # why skeletons are unavailable, shown under the option
+        self.rig_hint.setWordWrap(True)
+        self.rig_hint.setStyleSheet("color: palette(placeholder-text);")
         self.quality_combo = QComboBox()
         self.quality_combo.addItem("", Quality.draft)
         self.quality_combo.addItem("", Quality.final)
@@ -97,7 +100,7 @@ class GenerationPanel(QWidget):
         self.reset_camera_button.clicked.connect(self.reset_camera_requested)
 
         layout = QVBoxLayout(self)
-        for widget in (self.source_tabs, self.texture_check, self.rig_check, self.quality_combo, self.generate_button,
+        for widget in (self.source_tabs, self.texture_check, self.rig_check, self.rig_hint, self.quality_combo, self.generate_button,
                        self.progress_bar, self.stage_label, self.error_label, self.save_button,
                        self.show_texture_check, self.reset_camera_button):
             layout.addWidget(widget)
@@ -152,6 +155,9 @@ class GenerationPanel(QWidget):
             if rig_available
             else vm.rig_reason or self.tr("This engine cannot add skeletons")
         )
+        # Only when the engine said why; before its first health answer there is nothing to explain.
+        self.rig_hint.setText(vm.rig_reason or "")
+        self.rig_hint.setVisible(not rig_available and bool(vm.rig_reason))
         self.quality_combo.setEnabled(vm.phase == Phase.idle)
         if vm.phase == Phase.idle:
             self.generate_button.setText(self.tr("Generate"))

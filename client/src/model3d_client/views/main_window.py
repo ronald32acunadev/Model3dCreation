@@ -54,6 +54,7 @@ class MainWindow(QMainWindow):
         self.library_panel.rename_requested.connect(vm.rename)
         self.library_panel.delete_requested.connect(vm.delete)
         self.library_panel.can_add_skeleton = vm.generation.can_add_skeleton
+        self.library_panel.rig_reason = lambda: vm.generation.rig_reason
         self.library_panel.add_skeleton_requested.connect(vm.generation.add_skeleton)
         QApplication.instance().applicationStateChanged.connect(self._on_app_state)
         self.diagnostics_panel.restart_requested.connect(vm.restart_engine)
