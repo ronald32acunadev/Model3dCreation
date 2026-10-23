@@ -201,3 +201,17 @@ def test_missing_folder_mode_opens_missing_folder_page(make_vm, tmp_path):
     assert vm.folder == tmp_path / "unplugged"
     vm.start_over()
     assert vm.page == SetupPage.welcome
+
+
+def test_retry_folder_resumes_once_the_disk_is_back(make_vm, tmp_path):
+    folder = tmp_path / "unplugged"
+    vm = SetupViewModel.for_existing(
+        folder, "missing_folder", sources=Sources(tmp_path / "opt", tmp_path / "opt/bin/uv", "0.1.0"),
+        env=make_vm.env, check=lambda: (requirements(), TOOLCHAIN), runner_factory=FakeRunner,
+        recipe=fake_recipe, background=lambda work: work())
+    vm.retry_folder()
+    assert vm.page == SetupPage.missing_folder
+    folder.mkdir()
+    vm.retry_folder()
+    assert vm.page == SetupPage.done
+    assert FakeRunner.instances[0].install_dir == folder

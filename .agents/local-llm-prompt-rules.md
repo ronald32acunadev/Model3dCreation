@@ -8,7 +8,7 @@ Paste this list into the system message of every code request to a local model. 
 - `subprocess.Popen`: call `wait()` before reading `returncode`.
 - An `except` that maps some exception types re-raises all others.
 - Timers and callbacks capture what they need in a local variable.
-- Only real imports: `collections.abc` for `Mapping`/`Callable`, built-in generics, `X | None`; no `typing.Optional`, no `from __future__ import annotations`.
+- Always repeat in the closing checklist: only real imports, `collections.abc` for `Mapping`/`Callable`, built-in generics, `X | None`; no `typing.Optional`, no `from __future__ import annotations`.
 - No step-number comments, no comments that restate the code.
 - Never assign attributes of a frozen dataclass; build it complete.
 - Read files through the given root path, never a path relative to the current directory.

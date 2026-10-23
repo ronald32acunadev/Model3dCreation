@@ -172,6 +172,16 @@ class SetupViewModel(QObject):
     def retry(self) -> None:
         self.install()
 
+    def retry_folder(self) -> None:
+        """After the user plugs the disk back in: resume there, or stay on the missing-folder page."""
+        if self.folder is None or not self.folder.is_dir():
+            self.changed.emit()
+            return
+        self.folder_check = self._folder_check(self.folder, 0)
+        self._auto_install = True
+        self._go(SetupPage.requirements)
+        self.recheck()
+
     def start_over(self) -> None:
         self.folder, self.folder_check = None, None
         self._go(SetupPage.welcome)
