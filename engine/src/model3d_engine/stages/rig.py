@@ -121,12 +121,25 @@ class RigRunner:
         try:
             return await asyncio.wait_for(self._follow(process, task, output, on_progress), self.task_timeout_s)
         except TimeoutError:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            await process.wait()
+            await self._kill(process)
             raise StageError("stage_timeout", f"rig did not finish within {self.task_timeout_s:.0f} s") from None
+        except StageError:
+            raise
+        except BaseException as error:
+            # Cancelled (the engine is stopping) or a broken protocol line: never leave UniRig
+            # running, since its own session does not receive the engine's signals.
+            await self._kill(process)
+            if isinstance(error, Exception):
+                raise StageError("rig_failed", f"Unexpected output from UniRig: {error}") from error
+            raise
+
+    @staticmethod
+    async def _kill(process) -> None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await asyncio.shield(process.wait())
 
     async def _follow(self, process, task: StageTask, output: Path, on_progress: ProgressCallback) -> StageResult:
         result: tuple[int, int] | None = None

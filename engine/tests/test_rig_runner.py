@@ -135,3 +135,30 @@ async def test_runner_ready_follows_availability(tmp_path):
     await runner.start()
     assert runner.ready is False
     assert runner.reason == "UniRig weights are missing from data/hf (see docs/setup.md)"
+
+
+async def test_cancelled_run_kills_unirig(tmp_path, monkeypatch):
+    """The engine stopping mid-rig must not leave UniRig holding GPU memory."""
+    import asyncio
+
+    monkeypatch.setenv("STUB_MODE", "sleep")
+    runner = make_runner(tmp_path)
+    task = asyncio.create_task(runner.run(make_task(tmp_path), lambda *_: None))
+    while runner.last_pid is None:
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    with pytest.raises(ProcessLookupError):
+        os.kill(runner.last_pid, 0)
+
+
+async def test_malformed_progress_line_kills_unirig_and_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("STUB_MODE", "badline")
+    runner = make_runner(tmp_path)
+    with pytest.raises(StageError) as raised:
+        await runner.run(make_task(tmp_path), lambda *_: None)
+    assert raised.value.code == "rig_failed"
+    with pytest.raises(ProcessLookupError):
+        os.kill(runner.last_pid, 0)

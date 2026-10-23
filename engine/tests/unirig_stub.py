@@ -21,6 +21,9 @@ if mode == "crash":
     sys.exit(3)
 if mode == "sleep":
     time.sleep(30)
+if mode == "badline":
+    print("PROGRESS not-a-number", flush=True)
+    time.sleep(30)
 if mode == "env":
     keys = ("CUDA_VISIBLE_DEVICES", "CUDA_DEVICE_ORDER", "HF_HOME", "HF_HUB_OFFLINE")
     with open(os.path.join(args.workdir, "env.json"), "w") as handle:
