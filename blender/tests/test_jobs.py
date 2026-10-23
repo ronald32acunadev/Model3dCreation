@@ -129,3 +129,41 @@ def test_status_snapshot_is_thread_safe():
     for thread in threads:
         thread.join()
     assert status.snapshot()["stage"] == "rig"
+
+
+class EngineRestarted(EngineClient):
+    """The desktop app restarted the engine: it no longer knows the job."""
+
+    def job(self, job_id):
+        from model3d.engine_client import EngineError
+
+        raise EngineError("job_not_found", f"No job {job_id}")
+
+
+def test_job_not_found_while_polling_counts_as_engine_lost(engine, image, tmp_path):
+    status = jobs.JobStatus()
+    jobs.run_generation(EngineRestarted(engine.url), tmp_path, image, OPTIONS, status, poll_s=0)
+    [entry] = entries(tmp_path)
+    assert entry["outcome"] == "failed" and entry["error"]["code"] == "engine_lost"
+    assert status.error == ("engine_lost", ENGINE_DOWN_MESSAGE)
+
+
+class BrokenAnswers(EngineClient):
+    def job(self, job_id):
+        raise ValueError("Expecting value: line 1 column 1")
+
+
+def test_unexpected_error_fails_entry_and_reports_it(engine, image, tmp_path):
+    status = jobs.JobStatus()
+    jobs.run_generation(BrokenAnswers(engine.url), tmp_path, image, OPTIONS, status, poll_s=0)
+    [entry] = entries(tmp_path)
+    assert entry["outcome"] == "failed" and entry["error"]["code"] == "internal_error"
+    assert status.error[0] == "internal_error" and "Expecting value" in status.error[1]
+    assert status.busy is False
+
+
+def test_unreadable_image_reports_an_error(engine, tmp_path):
+    status = jobs.JobStatus()
+    jobs.run_generation(EngineClient(engine.url), tmp_path, tmp_path / "missing.png", OPTIONS, status, poll_s=0)
+    assert status.error is not None and status.error[0] == "internal_error"
+    assert status.busy is False

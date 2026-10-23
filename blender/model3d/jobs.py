@@ -4,6 +4,7 @@ follow the job, and download the result. No bpy here, so it runs in plain Python
 The UI's timer reads JobStatus.snapshot() and imports `pending_import` on Blender's main thread.
 """
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -115,16 +116,33 @@ def _follow(client: EngineClient, root: Path, entry: dict, submit, status: JobSt
         _finish(root, entry, status, "failed", current.error or {"code": "internal_error", "message": "The job failed"})
 
 
+def _fail_unexpected(root: Path, entry_id: str | None, status: JobStatus, error: Exception) -> None:
+    """An error nothing above expected: fail the entry if it is still running, and say why."""
+    message = f"{type(error).__name__}: {error}"
+    if entry_id is not None:
+        try:
+            entry = json.loads((root / entry_id / library.ENTRY_FILE).read_text())
+            if entry.get("outcome") == "running":
+                library.update_entry(root, {**entry, "outcome": "failed",
+                                            "error": {"code": "internal_error", "message": message}})
+        except (OSError, ValueError):
+            pass
+    status.fail("internal_error", message)
+
+
 def run_generation(client: EngineClient, root: Path, image: Path, options: dict, status: JobStatus,
                    poll_s: float = 1.0) -> None:
     """Generate a model from an image into a new library entry (worker thread)."""
     status.update(busy=True, error=None, stage=None, progress=0.0, job_id=None, message="Checking the engine…")
+    entry = None
     try:
         if not _check_engine(client, status, bool(options.get("rig"))):
             return
         entry = library.create_entry(root, image, options)
         status.update(message="Sending the image…")
         _follow(client, root, entry, lambda: client.submit_image(image, options), status, poll_s)
+    except Exception as error:
+        _fail_unexpected(root, entry["entry_id"] if entry else None, status, error)
     finally:
         status.update(busy=False, cancel_requested=False)
 
@@ -133,6 +151,7 @@ def run_add_skeleton(client: EngineClient, root: Path, source: dict, status: Job
                      poll_s: float = 1.0) -> None:
     """Rig an existing entry's model into a new entry; the source entry is never written (worker thread)."""
     status.update(busy=True, error=None, stage=None, progress=0.0, job_id=None, message="Checking the engine…")
+    entry = None
     try:
         if not _check_engine(client, status, True):
             return
@@ -143,5 +162,7 @@ def run_add_skeleton(client: EngineClient, root: Path, source: dict, status: Job
         model = library.model_path(root, source["entry_id"])
         status.update(message="Sending the model…")
         _follow(client, root, entry, lambda: client.submit_rig(model), status, poll_s)
+    except Exception as error:
+        _fail_unexpected(root, entry["entry_id"] if entry else None, status, error)
     finally:
         status.update(busy=False, cancel_requested=False)

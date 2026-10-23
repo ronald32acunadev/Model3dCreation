@@ -55,6 +55,13 @@ def main() -> None:
     assert len(armatures) == 1, [obj.type for obj in imported]
     assert bpy.context.view_layer.objects.active == armatures[0]
     assert all(obj.select_get() for obj in imported), [(obj.name, obj.type, obj.select_get(), obj.hide_get(), obj.hide_select) for obj in imported]
+    # A broken result must not kill the timer: Blender drops a timer that raises.
+    with tempfile.TemporaryDirectory() as folder:
+        broken = Path(folder) / "broken.glb"
+        broken.write_bytes(b"glTF not really")
+        ui.STATUS.update(pending_import=broken)
+        assert ui._tick() == ui.TICK_S
+    assert ui.STATUS.snapshot()["error"][0] == "import_failed"
     model3d.unregister()
     assert not hasattr(bpy.types, "MODEL3D_OT_generate")
     assert not hasattr(bpy.types.Scene, "model3d")

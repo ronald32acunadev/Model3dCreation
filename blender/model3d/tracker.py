@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from .engine_client import EngineClient, EngineUnreachable
+from .engine_client import EngineClient, EngineError, EngineUnreachable
 
 ENGINE_DOWN_MESSAGE = "Open the Model3D desktop app"
 FINAL_STATES = ("succeeded", "failed", "cancelled")
@@ -38,6 +38,12 @@ class JobTracker:
             self._misses += 1
             if self._misses >= self.lost_after:
                 self._last = TrackerStatus(self._last.state, self._last.stage, self._last.progress, None, True)
+            return self._last
+        except EngineError as error:
+            if error.code != "job_not_found":
+                raise
+            # The engine was restarted (the desktop app reopened): the job is gone with it.
+            self._last = TrackerStatus(self._last.state, self._last.stage, self._last.progress, None, True)
             return self._last
         self._misses = 0
         self._last = TrackerStatus(job["state"], job.get("stage"), job.get("progress", 0.0), job.get("error"), False)

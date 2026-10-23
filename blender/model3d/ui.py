@@ -5,6 +5,7 @@ thread, reads the shared JobStatus, redraws the panel, and imports finished mode
 """
 
 import threading
+import traceback
 from pathlib import Path
 
 import bpy
@@ -270,17 +271,24 @@ class MODEL3D_PT_library(Panel):
 def _tick():
     """Main-thread timer: import finished models, reload the list when a job ends, redraw."""
     global _was_busy
-    path = STATUS.take_import()
-    if path is not None and path.is_file():
-        import_glb(path)
-    busy = STATUS.snapshot()["busy"]
-    if _was_busy and not busy:
-        reload_entries(bpy.context)
-    _was_busy = busy
-    for window in bpy.context.window_manager.windows:
-        for area in window.screen.areas:
-            if area.type == "VIEW_3D":
-                area.tag_redraw()
+    # Blender drops a timer that raises, which would stop imports and redraws for the session.
+    try:
+        path = STATUS.take_import()
+        if path is not None and path.is_file():
+            try:
+                import_glb(path)
+            except Exception as error:
+                STATUS.fail("import_failed", f"Could not import {path.name}: {error}")
+        busy = STATUS.snapshot()["busy"]
+        if _was_busy and not busy:
+            reload_entries(bpy.context)
+        _was_busy = busy
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == "VIEW_3D":
+                    area.tag_redraw()
+    except Exception:
+        traceback.print_exc()
     return TICK_S
 
 
