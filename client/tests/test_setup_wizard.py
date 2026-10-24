@@ -110,3 +110,14 @@ def test_wizard_retranslates_to_spanish(wizard, qapp):
     finally:
         apply_language(qapp, "en")
     assert view.next_button.text() == "Next"
+
+
+def test_wizard_explains_busy_gpus(wizard, tmp_path):
+    FakeRunner.fail_with = StepFailed("gpu_busy", "No GPU has enough free VRAM", "verify")
+    view = wizard()
+    for _ in range(3):
+        view.next_button.click()
+    view.vm.choose_folder(tmp_path / "m3d")
+    view.next_button.click()
+    assert "LM Studio" in view.error_label.text()
+    assert "Retry" in view.error_label.text()

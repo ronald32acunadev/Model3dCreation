@@ -7,7 +7,7 @@ from pathlib import Path
 
 from model3d_client.setup.actions import apply_patch, copy_tree, download, extract_tarball, patch_file
 from model3d_client.setup.checks import Toolchain
-from model3d_client.setup.runner import Command, Step, StepContext
+from model3d_client.setup.runner import Command, Step, StepContext, StepFailed
 
 HUNYUAN_COMMIT = "82920d643c0dc2f7bfd7255f45f62d386edfe60c"
 UNIRIG_COMMIT = "6793c6640ff01c8fb389f3993434124bb43d2933"
@@ -36,10 +36,20 @@ import rembg
 rembg.new_session("u2net")
 """
 UNIRIG_CHECKPOINTS = ("skeleton/articulation-xl_quantization_256/model.ckpt", "skin/articulation-xl/model.ckpt")
+# The skeleton model also reads facebook/opt-350m's config (AutoConfig) while the engine keeps the hub offline.
 UNIRIG_WEIGHTS_SCRIPT = f"""\
 from huggingface_hub import hf_hub_download as get
 for name in {UNIRIG_CHECKPOINTS!r}:
     get("VAST-AI/UniRig", name)
+get("facebook/opt-350m", "config.json")
+"""
+# Exits 1 when the engine would start in mode unsupported (no GPU with the free VRAM for any mode).
+MODE_SCRIPT = """\
+from model3d_engine.gpu.modes import ModeName, choose_mode
+from model3d_engine.gpu.probe import probe_gpus
+plan = choose_mode(probe_gpus())
+print("engine mode:", plan.name.value, "-", plan.reason)
+raise SystemExit(plan.name == ModeName.unsupported)
 """
 
 
@@ -101,6 +111,11 @@ def build_recipe(sources: Sources, install_dir: Path, toolchain: Toolchain, comp
 
     def verify(ctx: StepContext) -> None:
         ctx.run(Command([engine_python, str(f / "scripts/verify_gpus.py")], cwd=f, env=build_env))
+        # verify_gpus only warns about busy GPUs; the install must not pass on a check it could not run.
+        try:
+            ctx.run(Command([engine_python, "-c", MODE_SCRIPT], cwd=f, env=build_env))
+        except StepFailed as error:
+            raise StepFailed("gpu_busy", "No GPU has enough free VRAM for the engine right now", "") from error
         (f / "data/logs").mkdir(parents=True, exist_ok=True)
         (f / "data/logs/verify.ok").write_text("ok")
 
@@ -119,7 +134,9 @@ def build_recipe(sources: Sources, install_dir: Path, toolchain: Toolchain, comp
 
     def unirig_weights_done(folder: Path) -> bool:
         snapshots = folder / "data/hf/hub/models--VAST-AI--UniRig/snapshots"
-        return any(all((snapshot / name).is_file() for name in UNIRIG_CHECKPOINTS) for snapshot in snapshots.glob("*"))
+        checkpoints = any(all((snapshot / name).is_file() for name in UNIRIG_CHECKPOINTS)
+                          for snapshot in snapshots.glob("*"))
+        return checkpoints and _any(folder / "data/hf", "hub/models--facebook--opt-350m/snapshots/*/config.json")
 
     def uv_pip(*args: str, env: dict[str, str] | None = None) -> Command:
         return Command([uv, "pip", "install", "--python", ".venv", *args], cwd=unirig, env=env or uv_build_env)

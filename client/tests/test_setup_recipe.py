@@ -234,3 +234,45 @@ def test_patch_file_replaces_a_symlink_with_a_patched_copy(tmp_path):
     assert not link.is_symlink()
     assert link.read_text() == "hello cuda\n"
     assert blob.read_text() == "hello\n"  # the shared blob stays untouched
+
+
+def test_unirig_weights_fetch_the_opt_config_the_skeleton_model_loads(sources, tmp_path):
+    # UniRig's skeleton model calls AutoConfig.from_pretrained("facebook/opt-350m") with the hub offline.
+    folder = tmp_path / "install"
+    step = by_id(build_recipe(sources, folder, TOOLCHAIN, ["base", "skeletons"]))["unirig-weights"]
+    assert "facebook/opt-350m" in commands(step)[0].argv[-1]
+    for name in ("skeleton/articulation-xl_quantization_256/model.ckpt", "skin/articulation-xl/model.ckpt"):
+        path = folder / "data/hf/hub/models--VAST-AI--UniRig/snapshots/s" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x")
+    assert not step.done_check(folder)  # the checkpoints alone are not enough
+    config = folder / "data/hf/hub/models--facebook--opt-350m/snapshots/s/config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text("{}")
+    assert step.done_check(folder)
+
+
+def test_verify_fails_with_gpu_busy_when_no_mode_fits(sources, tmp_path):
+    from model3d_client.setup.runner import StepFailed
+
+    verify = by_id(build_recipe(sources, tmp_path, TOOLCHAIN, ["base"]))["verify"].actions[0]
+    ran = []
+
+    def run(command: Command) -> None:
+        ran.append(command.argv)
+        if command.argv[1] == "-c":  # the mode check: no GPU has enough free VRAM
+            raise StepFailed("command_failed", "python exited with 1", "")
+
+    ctx = StepContext(install_dir=tmp_path, log=lambda line: None, cancelled=lambda: False, run=run)
+    with pytest.raises(StepFailed) as failure:
+        verify(ctx)
+    assert failure.value.code == "gpu_busy"
+    assert not (tmp_path / "data/logs/verify.ok").exists()
+    assert ran[0][1].endswith("verify_gpus.py") and ran[1][1] == "-c"
+
+
+def test_verify_passes_when_a_mode_fits(sources, tmp_path):
+    verify = by_id(build_recipe(sources, tmp_path, TOOLCHAIN, ["base"]))["verify"].actions[0]
+    ctx = StepContext(install_dir=tmp_path, log=lambda line: None, cancelled=lambda: False, run=lambda command: None)
+    verify(ctx)
+    assert (tmp_path / "data/logs/verify.ok").is_file()

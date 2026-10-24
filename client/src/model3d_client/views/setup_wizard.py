@@ -209,6 +209,7 @@ class SetupWizard(QWidget):
             "no_space": self.tr("The disk is full. Free some space and press Retry."),
             "network": self.tr("A download failed. Check the internet connection and press Retry."),
             "cancelled": self.tr("Installation stopped. Press Retry to continue where it stopped."),
+            "gpu_busy": self.tr("The GPUs are busy. Close the apps that use them (LM Studio, Ollama, games) and press Retry."),
         }
         return messages.get(error.code) or self.tr("A step failed: %1. The log above has the details.").replace(
             "%1", error.message)

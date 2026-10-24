@@ -672,68 +672,73 @@
         <translation>La instalación se detuvo. Pulsa Reintentar para continuar donde quedó.</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="213"/>
+        <location filename="../views/setup_wizard.py" line="212"/>
+        <source>The GPUs are busy. Close the apps that use them (LM Studio, Ollama, games) and press Retry.</source>
+        <translation>Las GPUs están ocupadas. Cierra las apps que las usan (LM Studio, Ollama, juegos) y pulsa Reintentar.</translation>
+    </message>
+    <message>
+        <location filename="../views/setup_wizard.py" line="214"/>
         <source>A step failed: %1. The log above has the details.</source>
         <translation>Falló un paso: %1. El registro de arriba tiene los detalles.</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="220"/>
+        <location filename="../views/setup_wizard.py" line="221"/>
         <source>Welcome to Model3D</source>
         <translation>Bienvenido a Model3D</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="221"/>
+        <location filename="../views/setup_wizard.py" line="222"/>
         <source>Requirements</source>
         <translation>Requisitos</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="222"/>
+        <location filename="../views/setup_wizard.py" line="223"/>
         <source>Components</source>
         <translation>Componentes</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="223"/>
-        <location filename="../views/setup_wizard.py" line="253"/>
+        <location filename="../views/setup_wizard.py" line="224"/>
+        <location filename="../views/setup_wizard.py" line="254"/>
         <source>Install folder</source>
         <translation>Carpeta de instalación</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="224"/>
+        <location filename="../views/setup_wizard.py" line="225"/>
         <source>Installing</source>
         <translation>Instalando</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="225"/>
+        <location filename="../views/setup_wizard.py" line="226"/>
         <source>Done</source>
         <translation>Listo</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="226"/>
+        <location filename="../views/setup_wizard.py" line="227"/>
         <source>Install folder not found</source>
         <translation>No se encuentra la carpeta de instalación</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="232"/>
+        <location filename="../views/setup_wizard.py" line="233"/>
         <source>Install</source>
         <translation>Instalar</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="232"/>
+        <location filename="../views/setup_wizard.py" line="233"/>
         <source>Next</source>
         <translation>Siguiente</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="236"/>
+        <location filename="../views/setup_wizard.py" line="237"/>
         <source>Checking…</source>
         <translation>Verificando…</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="240"/>
+        <location filename="../views/setup_wizard.py" line="241"/>
         <source>Space needed: %1 GB</source>
         <translation>Espacio necesario: %1 GB</translation>
     </message>
     <message>
-        <location filename="../views/setup_wizard.py" line="249"/>
+        <location filename="../views/setup_wizard.py" line="250"/>
         <source>The install folder %1 cannot be found. If it is on a disk that is not connected, connect it and try again.</source>
         <translation>No se encuentra la carpeta de instalación %1. Si está en un disco que no está conectado, conéctalo e intenta de nuevo.</translation>
     </message>
