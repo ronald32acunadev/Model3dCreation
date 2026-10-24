@@ -45,6 +45,10 @@ def _pool(work: Callable[[], None]) -> None:
     QThreadPool.globalInstance().start(_Work(work))
 
 
+def _start_in_pool(work: Callable[[], None]) -> None:
+    _pool(work)  # looked up at call time, so tests can replace _pool
+
+
 def _ram_gib() -> float:
     return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30
 
@@ -72,13 +76,13 @@ class SetupViewModel(QObject):
         folder_check: Callable[[Path, int], FolderCheck] = check_folder,
         runner_factory: Callable[..., StepRunner] = StepRunner,
         recipe: Callable[..., list] = build_recipe,
-        background: Callable[[Callable[[], None]], None] = _pool,
+        background: Callable[[Callable[[], None]], None] | None = None,
         parent: QObject | None = None,
     ):
         super().__init__(parent)
         self._sources, self._env, self._check = sources, env, check
         self._folder_check, self._runner_factory, self._recipe = folder_check, runner_factory, recipe
-        self._background = background
+        self._background = background or _start_in_pool
         self.page = SetupPage.welcome
         self.requirements: list[Requirement] = []
         self.toolchain: Toolchain | None = None

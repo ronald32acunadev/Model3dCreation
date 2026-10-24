@@ -30,6 +30,14 @@ def isolated_config(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg")))
 
 
+@pytest.fixture(autouse=True)
+def no_real_background_work(monkeypatch):
+    """The wizard's default background runs real checks and real installs; tests inject their own."""
+    import model3d_client.viewmodels.setup as setup_vm
+
+    monkeypatch.setattr(setup_vm, "_pool", lambda work: None)
+
+
 @pytest.fixture
 def png(tmp_path):
     path = tmp_path / "inputs" / "penguin.png"

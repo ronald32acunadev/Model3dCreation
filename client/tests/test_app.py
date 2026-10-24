@@ -116,3 +116,14 @@ def test_build_setup_first_run_starts_on_welcome(qtbot, tmp_path):
     _app, wizard = build_setup([], {"XDG_CONFIG_HOME": str(tmp_path)}, "setup")
     qtbot.addWidget(wizard)
     assert wizard.vm.page == SetupPage.welcome
+
+
+def test_build_setup_never_runs_real_work_in_tests(qtbot, installed):
+    from model3d_client.app import build_setup
+
+    env, folder = installed
+    _app, wizard = build_setup([], env, "resume")
+    qtbot.addWidget(wizard)
+    qtbot.wait(200)
+    assert wizard.vm.requirements == []  # the real check never ran
+    assert not (folder / "python").exists()
