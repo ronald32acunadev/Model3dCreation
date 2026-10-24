@@ -87,3 +87,27 @@ def test_persist_writes_job_json(tmp_path):
     assert data["job_id"] == r.job_id
     assert data["links"]["result"] == f"/v1/jobs/{r.job_id}/result"
     assert data["created_at"].endswith("Z")
+
+
+def test_rigging_transitions(tmp_path):
+    store = make_store(tmp_path)
+    for path in ([JobState.shaping], [JobState.shaping, JobState.painting], []):
+        record = store.create(JobOptions(rig=True), b"png", ".png")
+        for state in path:
+            record.transition(state)
+        record.transition(JobState.rigging)
+        assert (record.state, record.stage, record.progress) == (JobState.rigging, "rig", 0.0)
+        record.transition(JobState.succeeded)
+        assert record.stage is None
+    record = store.create(JobOptions(rig=True), b"png", ".png")
+    record.transition(JobState.shaping)
+    record.transition(JobState.rigging)
+    with pytest.raises(InvalidTransition):
+        record.transition(JobState.painting)
+
+
+def test_create_rig_writes_input_and_options(tmp_path):
+    record = make_store(tmp_path).create_rig(b"glTF-bytes", textured=True)
+    assert (record.dir / "rig_input.glb").read_bytes() == b"glTF-bytes"
+    assert record.options == JobOptions(rig=True, texture=True)
+    assert record.state == JobState.queued

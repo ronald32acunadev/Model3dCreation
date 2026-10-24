@@ -6,43 +6,59 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-It started as a template holding agent rule files and is becoming the local AI 3D-generation engine described in `Fases/` (see "Project Context" in `AGENTS.md`). The verified design, which overrides `Fases/` where they differ, is `docs/architecture.md`; environment setup is `docs/setup.md`. Phase progress is tracked in `odd/tasks/`.
+Model3D: a local, GPU-only pipeline that turns an image into a textured (optionally rigged) GLB with Hunyuan3D 2.1 and UniRig, plus two clients for it. Target hardware is two RTX 5070 (12 GB) cards on Linux x86_64. The phase specs live in `Fases/` (Spanish).
+
+Four independent `uv` projects, each with its own `pyproject.toml`, lockfile and `.venv`:
+
+| Project | Role |
+|---|---|
+| `contracts/` | Pydantic models (`jobs`, `events`, `health`) shared by engine and desktop client. Editable path dependency of both. |
+| `engine/` | FastAPI server (`python -m model3d_engine`, default `127.0.0.1:8765`). Python 3.11 only, CUDA 13 torch, `bpy` wheel. |
+| `client/` | PySide6 desktop app (`python -m model3d_client`). |
+| `blender/` | Blender add-on `blender/model3d/` (stdlib `urllib` only, no contracts dependency); the uv project only runs its tests outside Blender. |
+
+`vendor/Hunyuan3D-2.1` and `vendor/UniRig` (with its own `.venv`) are not tracked; the engine path-depends on `vendor/Hunyuan3D-2.1/hy3dpaint/custom_rasterizer`, so `uv sync` in `engine/` needs that clone and `nvcc` (`CUDA_HOME`). `engine/patches/hunyuan3d-paint-device.patch` must be applied to the Hunyuan clone (it removes hardcoded `cuda:0`).
 
 ## Commands
 
-The engine is a uv project in `engine/` (Python 3.11, PyTorch 2.9.1+cu130). Hunyuan3D 2.1 is a git-ignored clone in `vendor/`, and weights live in the git-ignored `data/hf` (the engine's default `MODEL3D_HOME` is `data/`).
+Run each from its project directory (or use `uv run --project <dir>`):
 
 ```bash
-cd engine && uv run pytest                         # unit tests, no GPU
-cd engine && uv run pytest -m gpu                  # needs both GPUs and the compiled extensions
-cd engine && uv run pytest tests/test_verify_gpus.py::test_parse_nvcc_version   # single test
-uv run --project engine python scripts/verify_gpus.py   # full environment check, from the repo root
-uv run --project engine python -m model3d_engine        # serve the engine on 127.0.0.1:8765
-cd contracts && uv run pytest                           # shared job and event models
-cd client && uv run pytest                              # desktop app, offscreen widgets
-cd client && QT_QPA_PLATFORM=wayland uv run pytest -m webengine   # 3D viewer, needs a real display
-cd client && uv run pytest -m gpu                       # app + real engine end to end, GPUs free
-uv run --project client python -m model3d_client        # run the desktop app
-client/scripts/update_translations.sh                   # refresh the Spanish .ts and .qm
+uv sync                                   # per project
+uv run pytest                             # default: GPU/Blender/WebEngine tests excluded via addopts
+uv run pytest tests/test_scheduler.py::test_name   # single test
+uv run pytest -m gpu                      # engine/client: needs both GPUs + full engine env
+uv run pytest -m webengine                # client: needs a real display with GPU rendering
+uv run pytest -m blender                  # blender: needs `blender` on PATH
+uv run python -m model3d_engine           # start the engine (from engine/)
+uv run python -m model3d_client           # start the app (from client/)
+client/scripts/update_translations.sh     # refresh model3d_es.ts and recompile the committed .qm
+uv run --project engine python scripts/verify_gpus.py
+uv run --project engine python scripts/measure_stage_vram.py   # unload LM Studio/Ollama models first
 ```
 
-The desktop app (`client/`, PySide6) starts and stops the engine itself; see section 5b of `docs/architecture.md`. The API process never imports torch; each GPU stage runs in its own spawned worker process (`engine/src/model3d_engine/stages/process.py`). The API is documented in `docs/api.md`.
+No linter or formatter is configured.
 
-`uv sync` rebuilds `custom_rasterizer` from `vendor/`, so it needs `CUDA_HOME=/usr/local/cuda-13.1` (see `docs/setup.md`). Before GPU work, check that LM Studio or Ollama is not holding VRAM.
+## Engine architecture
 
-## Rule files and the sync invariant
+`__main__.build_engine` wires everything:
 
-- `AGENTS.md` is canonical and agent-neutral (Antigravity, Claude Code, Codex, Cursor, OpenCode). Claude-specific guidance belongs here.
-- `.agents/rules/AGENTS.md` is a byte-identical copy, and `README.md` summarizes the rules. Any rule change touches all three in the same commit. Verify with:
+1. **GPU placement** (`gpu/probe.py`, `gpu/modes.py`): detected GPUs pick a run mode — `dual_gpu`, `single_gpu_resident`, `single_gpu_swap`, `shape_only`, or `unsupported`. `unsupported` still starts the API; jobs then fail with the mode's error. Rigging runs on the paint card (shape card in `shape_only`).
+2. **Stage workers** (`stages/process.py`): each stage (`shape`, `paint`) is a `ProcessStageRunner` — a separate process created from a `module:factory` string (`stages/hunyuan.py:make_shape_stage` / `make_paint_stage`) that keeps its model resident on one device. It is killed on timeout, respawned with backoff after a crash, and can be `unload`ed/restarted to free VRAM (swap modes). Tests inject fake factories through those strings. `stages/rig.py` runs UniRig as a subprocess in UniRig's own venv.
+3. **Scheduler** (`jobs/scheduler.py`): pipelines jobs shape → paint → optional rig, one task per card at a time, parking/reloading workers in swap modes. Cancel is immediate when queued, otherwise at the next stage boundary. `JobStore` persists records under `$MODEL3D_HOME/jobs` (default `data/`); `EventBus` publishes progress/completed/failed/cancelled events.
+4. **API** (`api/app.py`): `/v1/health`, `POST /v1/jobs` (image), `POST /v1/rig-jobs` (GLB to rig only), `GET|DELETE /v1/jobs/{id}`, `/v1/jobs/{id}/result`, WebSocket `/v1/jobs/{id}/events`. Request errors answer `{"error": {"code", "message"}}`; a stage's `StageError(code, message)` becomes the failed job's `JobError`.
 
-```bash
-git diff --no-index AGENTS.md .agents/rules/AGENTS.md
-```
+Configuration is env-only (`config.load_settings`): `MODEL3D_HOME`, `MODEL3D_HUNYUAN_DIR`, `MODEL3D_UNIRIG_DIR`, `MODEL3D_HOST`, `MODEL3D_PORT`, `MODEL3D_MODE`, `MODEL3D_SHAPE_BUS` + `MODEL3D_PAINT_BUS` (both or neither, PCI bus ids), `MODEL3D_ALLOWED_ORIGINS`, `MODEL3D_STAGE_TIMEOUT_S`.
 
-No output means they are in sync.
+`engine/pyproject.toml` pins are deliberate and commented (numpy for `bpy`, trimesh 4.4.7 positional decimation, onnxruntime, setuptools<81). Read the comment before bumping any of them.
 
-- Do not hardcode model names in the rules: the dynamic model policy is deliberate (commit `efabf70`).
-- `Agents/readme-generator.md` is a template subagent. It lives outside `.claude/agents/`, so Claude Code does not load it from here.
+## Client architecture
+
+MVVM with Qt: `services/` (no widgets) → `viewmodels/` (state + signals) → `views/` (widgets only). `EngineApi` is fully async on `QNetworkAccessManager`; callbacks run on the UI thread and the instance must outlive its pending replies. `EngineSupervisor` starts `engine/.venv/bin/python -m model3d_engine` only when no engine answers, and stops it only if it started it. The 3D viewer is a QtWebEngine page (`viewer/index.html`, `viewer.js`, vendored libs in `viewer/vendor/` per `VENDOR.md`). Tests run a fake FastAPI engine (`client/tests/conftest.py`); UI strings go through Qt `tr()` and the Spanish catalog in `i18n/`.
+
+## Blender add-on
+
+`blender/model3d/` is an extension (`blender_manifest.toml`). `engine_client.py` talks to the same HTTP API with `urllib`, mapping errors to `EngineError` / `EngineUnreachable`; `jobs.py`/`tracker.py` poll jobs, `library.py` handles saved models, `ui.py` holds panels and operators. Unit tests use `tests/fake_engine.py`; `test_blender_smoke.py` runs `blender -b --factory-startup --python tests/blender_smoke.py`.
 
 ## Code delegation in Claude Code
 

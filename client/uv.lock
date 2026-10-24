@@ -97,7 +97,7 @@ wheels = [
 
 [[package]]
 name = "model3d-client"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "model3d-contracts" },
@@ -119,7 +119,7 @@ dev = [
 requires-dist = [
     { name = "model3d-contracts", editable = "../contracts" },
     { name = "pydantic", specifier = ">=2.10,<3" },
-    { name = "pyside6", specifier = "==6.12.0" },
+    { name = "pyside6", specifier = ">=6.10,<7" },
 ]
 
 [package.metadata.requires-dev]

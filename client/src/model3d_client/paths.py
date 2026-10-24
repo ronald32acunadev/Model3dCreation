@@ -5,6 +5,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from model3d_client.setup.state import read_pointer
+
+PACKAGE_DIR = Path(__file__).resolve().parent
 # client/src/model3d_client/paths.py -> repository root
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -40,11 +43,15 @@ class AppPaths:
 
     @property
     def viewer_dir(self) -> Path:
-        return self.repo / "client/src/model3d_client/viewer"
+        return PACKAGE_DIR / "viewer"
 
 
 def app_paths(env: Mapping[str, str] | None = None, repo: Path = REPO_ROOT) -> AppPaths:
-    """Paths for this run; MODEL3D_HOME moves the data folder, as it does for the engine."""
+    """Paths for this run: the installed folder when the setup pointer names one, else the repository.
+
+    MODEL3D_HOME moves the data folder, as it does for the engine.
+    """
     env = os.environ if env is None else env
+    repo = read_pointer(env) or repo
     home = env.get("MODEL3D_HOME")
     return AppPaths(repo=repo, data=Path(home).expanduser() if home else repo / "data")

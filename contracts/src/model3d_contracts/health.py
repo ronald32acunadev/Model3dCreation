@@ -31,3 +31,5 @@ class Health(BaseModel):
     mode: HealthMode
     gpus: list[HealthGpu]
     error: JobError | None
+    rig: bool = False  # whether jobs may ask for a skeleton
+    rig_reason: str | None = None  # why rigging is unavailable

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QSplitter, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QSplitter, QStackedWidget, QVBoxLayout, QWidget
 
 from model3d_client.viewmodels.main import CloseDecision, MainViewModel
 from model3d_client.views.diagnostics_panel import DiagnosticsPanel
@@ -53,6 +53,10 @@ class MainWindow(QMainWindow):
         self.library_panel.entry_selected.connect(vm.select)
         self.library_panel.rename_requested.connect(vm.rename)
         self.library_panel.delete_requested.connect(vm.delete)
+        self.library_panel.can_add_skeleton = vm.generation.can_add_skeleton
+        self.library_panel.rig_reason = lambda: vm.generation.rig_reason
+        self.library_panel.add_skeleton_requested.connect(vm.generation.add_skeleton)
+        QApplication.instance().applicationStateChanged.connect(self._on_app_state)
         self.diagnostics_panel.restart_requested.connect(vm.restart_engine)
         self.generation_panel.save_requested.connect(self._save)
         self.generation_panel.textured_toggled.connect(viewer.set_textured)
@@ -97,6 +101,10 @@ class MainWindow(QMainWindow):
         self._closing = True
         # Deferred: a close() from inside closeEvent (an engine that stops at once) is ignored by Qt.
         QTimer.singleShot(0, self.close)
+
+    def _on_app_state(self, state: Qt.ApplicationState) -> None:
+        if state == Qt.ApplicationState.ApplicationActive:
+            self.vm.refresh_entries()
 
     def _refresh_library(self) -> None:
         selected = self.vm.selected.entry_id if self.vm.selected is not None else None

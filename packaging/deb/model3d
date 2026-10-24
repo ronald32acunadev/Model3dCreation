@@ -1,0 +1,3 @@
+#!/bin/sh
+# Start the Model3D desktop app with the system Python and the app files the .deb installed.
+PYTHONPATH=/opt/model3d/lib exec /usr/bin/python3 -m model3d_client "$@"

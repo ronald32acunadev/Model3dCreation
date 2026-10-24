@@ -193,3 +193,79 @@ def test_rejects_unsupported_or_oversized_image(tmp_path, make_vm):
     assert vm.image_problem == "too_large" and not vm.can_generate
     vm.set_image(tmp_path / "gone.png")
     assert vm.image_problem == "missing" and not vm.can_generate
+
+
+def finished_entry(library, png, **options):
+    from model3d_contracts.jobs import JobOptions
+
+    entry = library.create(png, JobOptions(**options))
+    library.update(entry.model_copy(update={"outcome": Outcome.succeeded}))
+    library.model_path(entry.entry_id).write_bytes(b"glTF source model")
+    return library._read(entry.entry_id)
+
+
+def test_generate_sends_rig_option(qtbot, engine, make_vm, png):
+    engine.controller.push(completed(), CLOSE)
+    vm = make_vm()
+    assert vm.rig is False
+    vm.set_rig(True)
+    vm.set_image(png)
+    entry = run_to_end(qtbot, vm)
+    assert entry.options.rig is True
+    assert '"rig":true' in engine.controller.submissions[0]["options"].replace(" ", "")
+
+
+def test_rig_stage_maps_to_rigging_phase(qtbot, engine, make_vm, png):
+    engine.controller.push(progress("rig", 0.45, "Skeleton ready"))
+    vm = make_vm()
+    vm.set_rig(True)
+    vm.set_image(png)
+    vm.generate()
+    qtbot.waitUntil(lambda: vm.phase == Phase.rigging, timeout=10000)
+    assert (vm.progress, vm.message) == (0.45, "Skeleton ready")
+    assert vm.can_cancel
+    engine.controller.push(completed(), CLOSE)
+    qtbot.waitUntil(lambda: vm.phase == Phase.idle, timeout=10000)
+
+
+def test_add_skeleton_creates_new_entry_and_downloads_result(qtbot, engine, make_vm, library, png):
+    source = finished_entry(library, png)
+    source_json = (library.folder(source.entry_id) / "entry.json").read_bytes()
+    engine.controller.push(progress("rig", 0.5, "Skin weights"), completed(), CLOSE)
+    vm = make_vm()
+    assert vm.can_add_skeleton(source)
+    done = []
+    vm.finished.connect(done.append)
+    vm.add_skeleton(source.entry_id)
+    qtbot.waitUntil(lambda: bool(done), timeout=10000)
+    rigged = done[0]
+    assert rigged.outcome == Outcome.succeeded
+    assert rigged.source_entry_id == source.entry_id and rigged.options.rig is True
+    assert engine.controller.rig_submissions[0]["model"] == b"glTF source model"
+    assert engine.controller.submissions == []
+    assert library.model_path(rigged.entry_id).read_bytes() == b"glTF fake model"
+    assert (library.folder(source.entry_id) / "entry.json").read_bytes() == source_json
+    assert library.model_path(source.entry_id).read_bytes() == b"glTF source model"
+
+
+def test_rig_unavailable_disables_rig_and_add_skeleton(qtbot, engine, make_vm, library, png):
+    reason = "UniRig weights are missing from data/hf (see docs/setup.md)"
+    engine.controller.push(completed(), CLOSE)
+    vm = make_vm(supervisor=FakeSupervisor(rig=False, rig_reason=reason))
+    assert (vm.rig_available, vm.rig_reason) == (False, reason)
+    assert vm.can_add_skeleton(finished_entry(library, png)) is False
+    vm.set_rig(True)
+    vm.set_image(png)
+    entry = run_to_end(qtbot, vm)
+    assert entry.options.rig is False
+
+
+def test_add_skeleton_refused_for_rigged_or_failed_entry(make_vm, library, png):
+    vm = make_vm()
+    rigged = finished_entry(library, png, rig=True)
+    failed = library.create(png, __import__("model3d_contracts.jobs", fromlist=["JobOptions"]).JobOptions())
+    library.update(failed.model_copy(update={"outcome": Outcome.failed}))
+    assert vm.can_add_skeleton(rigged) is False
+    assert vm.can_add_skeleton(library._read(failed.entry_id)) is False
+    vm.add_skeleton(rigged.entry_id)
+    assert vm.phase == Phase.idle

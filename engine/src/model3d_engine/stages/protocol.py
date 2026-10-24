@@ -8,9 +8,13 @@ from typing import Protocol
 from model3d_contracts.jobs import JobOptions
 
 # File convention inside a job folder: the shape stage writes SHAPE_OUTPUT, the paint
-# stage reads it and writes MODEL_OUTPUT, which is the job's result.
+# stage reads it and writes MODEL_OUTPUT, which is the job's result. A job with a skeleton
+# moves its model to RIG_INPUT, and the rig stage writes MODEL_OUTPUT from it.
 SHAPE_OUTPUT = "shape.glb"
 MODEL_OUTPUT = "model.glb"
+RIG_INPUT = "rig_input.glb"
+# Rig jobs cap the mesh at this many faces (or target_faces), the size the rig stage was measured at.
+RIG_FACES = 150_000
 
 
 @dataclass(frozen=True)

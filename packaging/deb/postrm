@@ -1,0 +1,11 @@
+#!/bin/sh
+# The engine, models, and library live in the folder chosen at setup; removing the package keeps them.
+set -e
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    for config in /home/*/.config/model3d/config.json /root/.config/model3d/config.json; do
+        [ -f "$config" ] || continue
+        folder=$(sed -n 's/.*"install_dir": *"\([^"]*\)".*/\1/p' "$config")
+        [ -n "$folder" ] && echo "Model3D: the install folder $folder was kept; delete it by hand to free its space."
+    done
+fi
+exit 0

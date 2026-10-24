@@ -36,6 +36,7 @@ class Entry(BaseModel):
     error: JobError | None = None
     stats: ResultStats | None = None
     input_file: str
+    source_entry_id: str | None = None  # the entry this one added a skeleton to
 
 
 class Library:
@@ -87,6 +88,29 @@ class Library:
         )
         self.update(entry)
         return entry
+
+    def create_derived(self, source_id: str, suffix: str = " (rigged)") -> Entry:
+        """A new running entry that will hold the source's model with a skeleton; the source is untouched."""
+        source = self._read(source_id)
+        now = datetime.now(UTC)
+        entry_id = f"{now:%Y%m%dT%H%M%S}-{secrets.token_hex(3)}"
+        self.folder(entry_id).mkdir(parents=True)
+        shutil.copyfile(self.folder(source_id) / source.input_file, self.folder(entry_id) / source.input_file)
+        entry = Entry(
+            entry_id=entry_id,
+            name=source.name + suffix,
+            created_at=now,
+            options=source.options.model_copy(update={"rig": True}),
+            outcome=Outcome.running,
+            input_file=source.input_file,
+            source_entry_id=source_id,
+        )
+        self.update(entry)
+        return entry
+
+    @staticmethod
+    def has_skeleton(entry: Entry) -> bool:
+        return entry.options.rig
 
     def update(self, entry: Entry) -> None:
         path = self.folder(entry.entry_id) / ENTRY_FILE

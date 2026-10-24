@@ -2,7 +2,9 @@
 
 import asyncio
 import io
+import json
 import logging
+import struct
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
@@ -48,6 +50,29 @@ def _check_image(data: bytes) -> str:
     if fmt not in _SUFFIXES:
         raise ApiError(400, "invalid_image", "Upload a PNG or JPEG image")
     return _SUFFIXES[fmt]
+
+
+def _glb_json(data: bytes) -> dict:
+    """The JSON chunk of a complete GLB 2.0 file, or raise invalid_model."""
+    invalid = ApiError(400, "invalid_model", "Upload a binary glTF 2.0 (.glb) model")
+    if len(data) < 20 or data[:4] != b"glTF":
+        raise invalid
+    version, length = struct.unpack_from("<II", data, 4)
+    chunk_length, chunk_type = struct.unpack_from("<I4s", data, 12)
+    if version != 2 or length != len(data) or chunk_type != b"JSON" or 20 + chunk_length > len(data):
+        raise invalid
+    try:
+        document = json.loads(data[20 : 20 + chunk_length])
+    except ValueError as error:
+        raise invalid from error
+    if not isinstance(document, dict):
+        raise invalid
+    return document
+
+
+def glb_has_images(data: bytes) -> bool:
+    """Whether a GLB carries textures (a non-empty images array)."""
+    return bool(_glb_json(data).get("images"))
 
 
 def _parse_options(text: str) -> JobOptions:
@@ -110,11 +135,13 @@ def create_app(
     bus: EventBus,
     health: Callable[[], dict],
     texture_available: bool = True,
+    rig_reason: Callable[[], str | None] = lambda: None,
 ) -> FastAPI:
     """Build the API around an existing scheduler, store, and event bus.
 
     `health` returns the body of GET /v1/health without its `error`, which comes from the
-    scheduler; `texture_available` is false when the run mode has no paint stage.
+    scheduler; `texture_available` is false when the run mode has no paint stage; `rig_reason`
+    explains why rigging is unavailable.
     """
 
     @asynccontextmanager
@@ -158,13 +185,36 @@ def create_app(
         job_options = _parse_options(options or "{}")
         if job_options.texture and not texture_available:
             raise ApiError(400, "texture_unavailable", 'This engine runs without the paint stage: send "texture": false')
+        if job_options.rig:
+            _check_rig()
+        _check_ready()
+        record = store.create(job_options, data, suffix)
+        scheduler.submit(record)
+        return record.to_job(scheduler.queue_position(record.job_id))
+
+    @app.post("/v1/rig-jobs", status_code=202, response_model=Job)
+    async def submit_rig(model: UploadFile | None = File(None)) -> Job:
+        if model is None:
+            raise ApiError(400, "invalid_model", "Missing model file")
+        data = await model.read(settings.max_model_bytes + 1)
+        if len(data) > settings.max_model_bytes:
+            raise ApiError(413, "model_too_large", f"Models are limited to {settings.max_model_bytes} bytes")
+        textured = glb_has_images(data)
+        _check_rig()
+        _check_ready()
+        record = store.create_rig(data, textured)
+        scheduler.submit_rig(record)
+        return record.to_job(None)
+
+    def _check_rig() -> None:
+        if not scheduler.rig_available:
+            raise ApiError(400, "rig_unavailable", rig_reason() or "This engine cannot add skeletons")
+
+    def _check_ready() -> None:
         if scheduler.start_error is not None:
             raise ApiError(503, "engine_not_ready", f"The engine failed to start: {scheduler.start_error.message}")
         if not scheduler.ready:
             raise ApiError(503, "engine_not_ready", "The engine is still loading its models")
-        record = store.create(job_options, data, suffix)
-        scheduler.submit(record)
-        return record.to_job(scheduler.queue_position(record.job_id))
 
     @app.get("/v1/jobs/{job_id}", response_model=Job)
     async def get_job(job_id: str) -> Job:

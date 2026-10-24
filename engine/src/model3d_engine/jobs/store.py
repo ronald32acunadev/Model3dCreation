@@ -9,6 +9,8 @@ from pathlib import Path
 
 from model3d_contracts.jobs import FINAL_STATES, Job, JobError, JobLinks, JobOptions, JobState
 
+from model3d_engine.stages.protocol import RIG_INPUT
+
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
@@ -33,9 +35,13 @@ class InvalidTransition(Exception):
 
 
 _ALLOWED: dict[JobState, frozenset[JobState]] = {
-    JobState.queued: frozenset({JobState.shaping, JobState.failed, JobState.cancelled}),
-    JobState.shaping: frozenset({JobState.painting, JobState.succeeded, JobState.failed, JobState.cancelled}),
-    JobState.painting: frozenset({JobState.succeeded, JobState.failed, JobState.cancelled}),
+    # queued -> rigging is a rig-only job: an existing model that only gets a skeleton.
+    JobState.queued: frozenset({JobState.shaping, JobState.rigging, JobState.failed, JobState.cancelled}),
+    JobState.shaping: frozenset(
+        {JobState.painting, JobState.rigging, JobState.succeeded, JobState.failed, JobState.cancelled}
+    ),
+    JobState.painting: frozenset({JobState.rigging, JobState.succeeded, JobState.failed, JobState.cancelled}),
+    JobState.rigging: frozenset({JobState.succeeded, JobState.failed, JobState.cancelled}),
     JobState.succeeded: frozenset(),
     JobState.failed: frozenset(),
     JobState.cancelled: frozenset(),
@@ -67,6 +73,8 @@ class JobRecord:
             self.stage, self.progress = "shape", 0.0
         elif new == JobState.painting:
             self.stage, self.progress = "paint", 0.0
+        elif new == JobState.rigging:
+            self.stage, self.progress = "rig", 0.0
         elif new in FINAL_STATES:
             self.stage = None
             self.finished_at = datetime.now(UTC)
@@ -103,10 +111,17 @@ class JobStore:
 
     def create(self, options: JobOptions, image_bytes: bytes, image_suffix: str) -> JobRecord:
         """Register a new queued job and write its input image."""
+        return self._new(options, f"input{image_suffix}", image_bytes)
+
+    def create_rig(self, model_bytes: bytes, textured: bool) -> JobRecord:
+        """Register a rig-only job for an existing model (GLB bytes)."""
+        return self._new(JobOptions(rig=True, texture=textured), RIG_INPUT, model_bytes)
+
+    def _new(self, options: JobOptions, input_name: str, data: bytes) -> JobRecord:
         job_id = new_job_id()
         folder = self.jobs_dir / job_id
         folder.mkdir(parents=True)
-        (folder / f"input{image_suffix}").write_bytes(image_bytes)
+        (folder / input_name).write_bytes(data)
         seed = options.seed if options.seed is not None else secrets.randbelow(2**32)
         record = JobRecord(job_id=job_id, options=options, seed=seed, dir=folder, created_at=datetime.now(UTC))
         self._records[job_id] = record

@@ -8,6 +8,15 @@ supported-markers = [
     "platform_machine == 'x86_64' and sys_platform == 'linux'",
 ]
 
+[[manifest.dependency-metadata]]
+name = "basicsr"
+version = "1.4.2"
+requires-dist = ["addict", "future", "lmdb", "numpy", "opencv-python", "pillow", "pyyaml", "requests", "scikit-image", "scipy", "tb-nightly", "torch", "torchvision", "tqdm", "yapf"]
+
+[[manifest.dependency-metadata]]
+name = "custom-rasterizer"
+version = "0.1"
+
 [[package]]
 name = "absl-py"
 version = "2.5.1"

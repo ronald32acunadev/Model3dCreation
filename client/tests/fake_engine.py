@@ -28,7 +28,8 @@ def make_job(job_id: str = "J1", state: JobState = JobState.queued, seed: int = 
     return job.model_dump(mode="json")
 
 
-def make_health(ready: bool = True, texture: bool = True, error: dict | None = None) -> dict:
+def make_health(ready: bool = True, texture: bool = True, error: dict | None = None, rig: bool = True,
+                rig_reason: str | None = None) -> dict:
     return {
         "ready": ready,
         "mode": {"name": "dual_gpu" if texture else "shape_only", "texture": texture, "reason": "test"},
@@ -37,6 +38,8 @@ def make_health(ready: bool = True, texture: bool = True, error: dict | None = N
              "memory_total_mib": 12227, "memory_free_mib": 11000},
         ],
         "error": error,
+        "rig": rig,
+        "rig_reason": rig_reason,
     }
 
 
@@ -55,6 +58,7 @@ class Controller:
     result: bytes = b"glTF fake model"
     events: "queue.Queue" = field(default_factory=queue.Queue)
     submissions: list[dict] = field(default_factory=list)
+    rig_submissions: list[dict] = field(default_factory=list)
     cancels: list[str] = field(default_factory=list)
     origins: list[str | None] = field(default_factory=list)
 
@@ -80,6 +84,18 @@ def create_app(c: Controller) -> FastAPI:
             "options": form.get("options"),
             "filename": getattr(image, "filename", None),
             "image": await image.read() if image is not None else None,
+        })
+        status, body = c.submit
+        return JSONResponse(status_code=status, content=body)
+
+    @app.post("/v1/rig-jobs")
+    async def submit_rig(request: Request):
+        form = await request.form()
+        model = form.get("model")
+        c.rig_submissions.append({
+            "filename": getattr(model, "filename", None),
+            "content_type": getattr(model, "content_type", None),
+            "model": await model.read() if model is not None else None,
         })
         status, body = c.submit
         return JSONResponse(status_code=status, content=body)
