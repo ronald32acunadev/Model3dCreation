@@ -46,7 +46,7 @@ def finish_install(folder: Path, components: list[str], version: str) -> None:
                  "vendor/Hunyuan3D-2.1/hy3dpaint/ckpt/RealESRGAN_x4plus.pth",
                  "vendor/Hunyuan3D-2.1/hy3dpaint/DifferentiableRenderer/mesh_inpaint_processor.cpython-311.so",
                  "data/hf/hub/models--facebook--dinov2-giant/snapshots/s/model.safetensors",
-                 "data/u2net/u2net.onnx", "data/logs/verify.ok"):
+                 "data/u2net/birefnet-general.onnx", "data/logs/verify.ok"):
         (folder / path).write_text("x")
     record = StepRecord(fingerprint="f", finished_at=datetime.now(UTC))
     save_state(folder, InstallState(app_version=version, components=components,

@@ -252,6 +252,22 @@ def test_unirig_weights_fetch_the_opt_config_the_skeleton_model_loads(sources, t
     assert step.done_check(folder)
 
 
+def test_weights_fetch_the_birefnet_background_model(sources, tmp_path):
+    # The shape stage removes backgrounds with BiRefNet; the engine cannot download it later.
+    folder = tmp_path / "install"
+    step = by_id(build_recipe(sources, folder, TOOLCHAIN, ["base"]))["weights"]
+    assert 'new_session("birefnet-general")' in commands(step)[0].argv[-1]
+    for path in ("data/hf/hub/models--tencent--Hunyuan3D-2.1/snapshots/s/hunyuan3d-dit-v2-1",
+                 "data/hf/hub/models--facebook--dinov2-giant/snapshots/s"):
+        (folder / path).mkdir(parents=True)
+    (folder / "data/hf/hub/models--facebook--dinov2-giant/snapshots/s/model.safetensors").write_text("x")
+    (folder / "data/u2net").mkdir(parents=True)
+    (folder / "data/u2net/u2net.onnx").write_text("x")
+    assert not step.done_check(folder)  # the old u2net model is not enough
+    (folder / "data/u2net/birefnet-general.onnx").write_text("x")
+    assert step.done_check(folder)
+
+
 def test_verify_fails_with_gpu_busy_when_no_mode_fits(sources, tmp_path):
     from model3d_client.setup.runner import StepFailed
 

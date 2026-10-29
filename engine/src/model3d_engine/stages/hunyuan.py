@@ -24,6 +24,7 @@ from model3d_engine.stages.protocol import (
 )
 
 HUNYUAN_MODEL = "tencent/Hunyuan3D-2.1"
+BACKGROUND_MODEL = "birefnet-general"  # rembg session; the setup wizard downloads it into U2NET_HOME
 # Quality preset -> (num_inference_steps, octree_resolution). "final" is upstream's default
 # (measured 77 s on GPU0); "draft" is this project's choice.
 QUALITY_PRESETS = {"final": (50, 384), "draft": (25, 256), "high": (50, 384)}
@@ -106,24 +107,27 @@ class ShapeStage:
 
         _add_paths(hunyuan_dir, f"{hunyuan_dir}/hy3dshape")
         from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
-        from hy3dshape.rembg import BackgroundRemover
+        from rembg import new_session
 
         self.torch = torch
         self.device = device
         # Hunyuan creates some tensors on plain "cuda", which means the current device.
         torch.cuda.set_device(device)
         self.pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(HUNYUAN_MODEL, device=device)
-        self.rembg = BackgroundRemover()
+        # Upstream's remover uses u2net, which turns thin props (weapons, poles) semi-transparent.
+        self.rembg_session = new_session(BACKGROUND_MODEL)
 
     def run(self, task: StageTask, progress: ProgressCallback) -> StageResult:
         """Generate SHAPE_OUTPUT in the job folder."""
         from PIL import Image
+        from rembg import remove
 
         torch = self.torch
         torch.cuda.set_device(self.device)
         image = Image.open(_input_image(task.job_dir)).convert("RGBA")
         if task.options.remove_background and not _has_transparency(image):
-            image = self.rembg(image.convert("RGB"))
+            progress(0.0, "Removing the background")
+            image = remove(image.convert("RGB"), session=self.rembg_session, bgcolor=[255, 255, 255, 0])
         steps, octree = QUALITY_PRESETS[task.options.quality.value]
 
         def on_step(step_idx, _t, _outputs):

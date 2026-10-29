@@ -33,7 +33,7 @@ from huggingface_hub import snapshot_download as get
 get("tencent/Hunyuan3D-2.1", allow_patterns=["hunyuan3d-dit-v2-1/*", "hunyuan3d-paintpbr-v2-1/*"])
 get("facebook/dinov2-giant", allow_patterns=["*.json", "model.safetensors"])
 import rembg
-rembg.new_session("u2net")
+rembg.new_session("birefnet-general")
 """
 UNIRIG_CHECKPOINTS = ("skeleton/articulation-xl_quantization_256/model.ckpt", "skin/articulation-xl/model.ckpt")
 # The skeleton model also reads facebook/opt-350m's config (AutoConfig) while the engine keeps the hub offline.
@@ -165,12 +165,12 @@ def build_recipe(sources: Sources, install_dir: Path, toolchain: Toolchain, comp
              lambda folder: _any(folder / "vendor/Hunyuan3D-2.1/hy3dpaint/DifferentiableRenderer",
                                  "mesh_inpaint_processor*.so")),
         Step("weights", "Model weights", "base", COMPONENT_SIZES["base"],
-             _fingerprint("weights", HUNYUAN_COMMIT, patch_bytes),
+             _fingerprint("weights", HUNYUAN_COMMIT, patch_bytes, "birefnet-general"),
              [Command([engine_python, "-c", WEIGHTS_SCRIPT], env={"HF_HOME": str(hf), "U2NET_HOME": str(f / "data/u2net")}),
               patch_snapshot],
              lambda folder: _any(folder / "data/hf", "hub/models--tencent--Hunyuan3D-2.1/snapshots/*/hunyuan3d-dit-v2-1")
              and _any(folder / "data/hf", "hub/models--facebook--dinov2-giant/snapshots/*/model.safetensors")
-             and (folder / "data/u2net/u2net.onnx").is_file()),
+             and (folder / "data/u2net/birefnet-general.onnx").is_file()),
         Step("verify", "Check the GPUs", "base", 0,
              _fingerprint("verify", sources.app_version, lock, toolchain.arch_list),
              [verify], lambda folder: (folder / "data/logs/verify.ok").is_file()),
