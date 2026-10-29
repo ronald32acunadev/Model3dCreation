@@ -4,8 +4,19 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QSplitter, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QInputDialog,
+    QMainWindow,
+    QMessageBox,
+    QSplitter,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
+from model3d_client.services.converter import FORMATS
 from model3d_client.viewmodels.main import CloseDecision, MainViewModel
 from model3d_client.views.diagnostics_panel import DiagnosticsPanel
 from model3d_client.views.generation_panel import GenerationPanel
@@ -56,12 +67,21 @@ class MainWindow(QMainWindow):
         self.library_panel.can_add_skeleton = vm.generation.can_add_skeleton
         self.library_panel.rig_reason = lambda: vm.generation.rig_reason
         self.library_panel.add_skeleton_requested.connect(vm.generation.add_skeleton)
+        self.library_panel.can_add_walk = vm.can_add_walk
+        self.library_panel.add_walk_requested.connect(vm.detect_body)
+        vm.body_detected.connect(self._on_body_detected)
+        vm.walk_added.connect(self._on_walk_added)
+        vm.walk_failed.connect(self._on_walk_failed)
+        vm.animation_state_changed.connect(self._on_animation_state)
         QApplication.instance().applicationStateChanged.connect(self._on_app_state)
         self.diagnostics_panel.restart_requested.connect(vm.restart_engine)
         self.generation_panel.save_requested.connect(self._save)
         self.generation_panel.textured_toggled.connect(viewer.set_textured)
         self.generation_panel.reset_camera_requested.connect(viewer.reset_camera)
         viewer.load_failed.connect(self._on_viewer_error)
+        vm.export_state_changed.connect(self._on_export_state)
+        vm.export_finished.connect(self._on_export_finished)
+        vm.export_failed.connect(self._on_export_failed)
         self._refresh_library()
         self.retranslate()
 
@@ -117,7 +137,7 @@ class MainWindow(QMainWindow):
             self.viewer.clear()
         else:
             self.viewer.show_model(model)
-        self.generation_panel.save_button.setEnabled(model is not None)
+        self._update_save_button()
 
     def _on_diagnostics(self) -> None:
         self.diagnostics_panel.set_checks(self.vm.diagnostics)
@@ -128,15 +148,100 @@ class MainWindow(QMainWindow):
             message = self.tr("The 3D viewer could not start WebGL on this system.")
         self.statusBar().showMessage(message, 10000)
 
+    def ask_export_path(self, start: str) -> tuple[str, str]:
+        filters = ";;".join([
+            self.tr("glTF binary (*.glb)"),
+            self.tr("FBX (*.fbx)"),
+            self.tr("Wavefront OBJ (*.obj)"),
+            self.tr("STL (*.stl)"),
+            self.tr("USDZ (*.usdz)"),
+        ])
+        return QFileDialog.getSaveFileName(self, self.tr("Export model"), start, filters)
+
+    def warn_format_drops(self, drops: set[str]) -> None:
+        lines = []
+        if "skeleton" in drops:
+            lines.append(self.tr("This format does not keep the skeleton."))
+        if "texture" in drops:
+            lines.append(self.tr("This format does not keep the texture."))
+        QMessageBox.information(self, self.tr("Export model"), "\n".join(lines))
+
     def _save(self) -> None:
         selected = self.vm.selected
         if selected is None:
             return
         start = str(Path(self.vm.settings.export_dir) / f"{selected.name}.glb")
-        path, _ = QFileDialog.getSaveFileName(self, self.tr("Save GLB"), start, self.tr("glTF binary (*.glb)"))
+        path, selected_filter = self.ask_export_path(start)
         if not path:
             return
+        target = Path(path)
+        if target.suffix.lower() not in FORMATS:
+            target = Path(path + _filter_extension(selected_filter))
+        drops = self.vm.export_drops(target.suffix)
+        if drops:
+            self.warn_format_drops(drops)
         try:
-            self.vm.export(Path(path))
-        except OSError as error:
-            QMessageBox.warning(self, self.tr("Save GLB"), self.tr("Could not save the file: %1").replace("%1", str(error)))
+            self.vm.export(target)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, self.tr("Export model"), self.tr("Could not export the model: %1").replace("%1", str(error)))
+
+    def _on_export_state(self) -> None:
+        if self.vm.exporting:
+            self.statusBar().showMessage(self.tr("Exporting the model…"))
+        self._update_save_button()
+
+    def _update_save_button(self) -> None:
+        enabled = self.vm.selected_model() is not None and not self.vm.exporting and not self.vm.animating
+        self.generation_panel.save_button.setEnabled(enabled)
+
+    def ask_body_type(self, detected: str) -> str | None:
+        """The body type to animate as, or None when the user cancels."""
+        biped, quadruped = self.tr("Biped (two legs)"), self.tr("Quadruped (four legs)")
+        items = [biped, quadruped]
+        if detected == "biped":
+            label = self.tr("Detected body type: %1. Animate it as:").replace("%1", self.tr("Biped"))
+            current = 0
+        elif detected == "quadruped":
+            label = self.tr("Detected body type: %1. Animate it as:").replace("%1", self.tr("Quadruped"))
+            current = 1
+        else:
+            label = self.tr("Body type not detected. Animate it as:")
+            current = 0
+        choice, ok = QInputDialog.getItem(self, self.tr("Add walk animation"), label, items, current, False)
+        if not ok:
+            return None
+        return "biped" if items.index(choice) == 0 else "quadruped"
+
+    def _on_body_detected(self, entry_id: str, result: dict) -> None:
+        body = self.ask_body_type(result.get("body", "unknown"))
+        if body is not None:
+            self.vm.add_walk(entry_id, body)
+
+    def _on_animation_state(self) -> None:
+        if self.vm.animating:
+            self.statusBar().showMessage(self.tr("Adding the walk animation…"))
+        else:
+            self.statusBar().clearMessage()
+        self._update_save_button()
+
+    def _on_walk_added(self, entry) -> None:
+        self.statusBar().showMessage(self.tr("Added %1").replace("%1", entry.name), 10000)
+
+    def _on_walk_failed(self, reason: str) -> None:
+        self.statusBar().clearMessage()
+        QMessageBox.warning(self, self.tr("Add walk animation"),
+                            self.tr("Could not add the walk animation: %1").replace("%1", reason))
+
+    def _on_export_finished(self, path: Path) -> None:
+        self.statusBar().showMessage(self.tr("Exported %1").replace("%1", str(path)), 10000)
+
+    def _on_export_failed(self, reason: str) -> None:
+        self.statusBar().clearMessage()
+        QMessageBox.warning(self, self.tr("Export model"), self.tr("Could not export the model: %1").replace("%1", reason))
+
+
+def _filter_extension(selected_filter: str) -> str:
+    """The extension named in a filter such as "FBX (*.fbx)"; empty when there is none."""
+    if "(*" not in selected_filter:
+        return ""
+    return selected_filter.split("(*", 1)[1].split(")", 1)[0]

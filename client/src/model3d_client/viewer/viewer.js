@@ -33,6 +33,11 @@ const grey = new THREE.MeshStandardMaterial({ color: 0xb0b0b0, roughness: 0.8, m
 let model = null;
 let originals = new Map();  // mesh -> material it was loaded with
 let textured = true;
+let mixer = null;          // AnimationMixer for the current model, null when it has no animations
+let action = null;         // the first clip, looping
+let animationNames = [];   // clip names of the current model
+let playing = true;
+const clock = new THREE.Clock();
 
 function frame() {
   if (!model) {
@@ -59,7 +64,27 @@ function applyMaterials() {
   }
 }
 
+function updateToggle() {
+  const toggle = document.getElementById('animation-toggle');
+  toggle.hidden = animationNames.length === 0;
+  // Symbols, not words: the page has no translation catalog.
+  toggle.textContent = playing ? '⏸' : '▶';
+}
+
+function stopAnimation() {
+  if (mixer) {
+    mixer.stopAllAction();
+    if (model) mixer.uncacheRoot(model);
+  }
+  mixer = null;
+  action = null;
+  animationNames = [];
+  playing = true;
+  updateToggle();
+}
+
 function clear() {
+  stopAnimation();
   if (model) {
     scene.remove(model);
     model.traverse((node) => node.geometry && node.geometry.dispose());
@@ -72,6 +97,12 @@ function clear() {
 
 window.viewer = {
   loaded: false,
+  get animations() {
+    return animationNames.slice();
+  },
+  get playing() {
+    return playing;
+  },
   load(url) {
     clear();
     return loader.loadAsync(url).then((gltf) => {
@@ -79,6 +110,14 @@ window.viewer = {
       model.traverse((node) => { if (node.isMesh) originals.set(node, node.material); });
       applyMaterials();
       scene.add(model);
+      if (gltf.animations.length > 0) {
+        mixer = new THREE.AnimationMixer(model);
+        action = mixer.clipAction(gltf.animations[0]);
+        action.setLoop(THREE.LoopRepeat, Infinity);
+        action.play();
+        animationNames = gltf.animations.map((clip) => clip.name);
+      }
+      updateToggle();
       frame();
       window.viewer.loaded = true;
     }).catch((error) => {
@@ -91,7 +130,20 @@ window.viewer = {
     applyMaterials();
   },
   resetCamera: frame,
+  setPlaying(value) {
+    playing = Boolean(value);
+    if (action) action.paused = !playing;
+    updateToggle();
+  },
+  animationTime() {
+    return action ? action.time : 0;
+  },
 };
+
+document.getElementById('animation-toggle').addEventListener('click', () => {
+  window.viewer.setPlaying(!playing);
+});
+updateToggle();
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -100,6 +152,8 @@ window.addEventListener('resize', () => {
 });
 
 renderer.setAnimationLoop(() => {
+  const delta = clock.getDelta();
+  if (mixer) mixer.update(delta);
   controls.update();
   renderer.render(scene, camera);
 });

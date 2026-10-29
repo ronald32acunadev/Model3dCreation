@@ -118,8 +118,8 @@
     </message>
     <message>
         <location filename="../views/generation_panel.py" line="136"/>
-        <source>Save GLB…</source>
-        <translation>Guardar GLB…</translation>
+        <source>Export…</source>
+        <translation>Exportar…</translation>
     </message>
     <message>
         <location filename="../views/generation_panel.py" line="137"/>
@@ -291,72 +291,77 @@
 <context>
     <name>LibraryPanel</name>
     <message>
-        <location filename="../views/library_panel.py" line="56"/>
+        <location filename="../views/library_panel.py" line="58"/>
         <source>Library</source>
         <translation>Biblioteca</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="67"/>
+        <location filename="../views/library_panel.py" line="69"/>
         <source>generating</source>
         <translation>generando</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="68"/>
+        <location filename="../views/library_panel.py" line="70"/>
         <source>ready</source>
         <translation>listo</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="69"/>
+        <location filename="../views/library_panel.py" line="71"/>
         <source>failed</source>
         <translation>falló</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="70"/>
+        <location filename="../views/library_panel.py" line="72"/>
         <source>cancelled</source>
         <translation>cancelado</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="71"/>
+        <location filename="../views/library_panel.py" line="73"/>
         <source>interrupted</source>
         <translation>interrumpido</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="78"/>
+        <location filename="../views/library_panel.py" line="80"/>
         <source>skeleton</source>
         <translation>esqueleto</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="85"/>
+        <location filename="../views/library_panel.py" line="87"/>
         <source>Rename…</source>
         <translation>Renombrar…</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="86"/>
+        <location filename="../views/library_panel.py" line="88"/>
         <source>Delete…</source>
         <translation>Eliminar…</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="87"/>
+        <location filename="../views/library_panel.py" line="89"/>
         <source>Add skeleton</source>
         <translation>Agregar esqueleto</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="118"/>
+        <location filename="../views/library_panel.py" line="94"/>
+        <source>Add walk animation</source>
+        <translation>Agregar animación de caminar</translation>
+    </message>
+    <message>
+        <location filename="../views/library_panel.py" line="125"/>
         <source>Rename</source>
         <translation>Renombrar</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="118"/>
+        <location filename="../views/library_panel.py" line="125"/>
         <source>Name:</source>
         <translation>Nombre:</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="123"/>
+        <location filename="../views/library_panel.py" line="130"/>
         <source>Delete</source>
         <translation>Eliminar</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="123"/>
+        <location filename="../views/library_panel.py" line="130"/>
         <source>Delete &quot;%1&quot; and its files?</source>
         <translation>¿Eliminar «%1» y sus archivos?</translation>
     </message>
@@ -364,40 +369,135 @@
 <context>
     <name>MainWindow</name>
     <message>
-        <location filename="../views/main_window.py" line="74"/>
+        <location filename="../views/main_window.py" line="94"/>
         <source>Close Model3D</source>
         <translation>Cerrar Model3D</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="75"/>
+        <location filename="../views/main_window.py" line="95"/>
         <source>A model is being generated. Close anyway?</source>
         <translation>Se está generando un modelo. ¿Cerrar de todos modos?</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="97"/>
+        <location filename="../views/main_window.py" line="117"/>
         <source>Stopping the engine…</source>
         <translation>Deteniendo el motor…</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="128"/>
+        <location filename="../views/main_window.py" line="148"/>
         <source>The 3D viewer could not start WebGL on this system.</source>
         <translation>El visor 3D no pudo iniciar WebGL en este sistema.</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="136"/>
-        <location filename="../views/main_window.py" line="142"/>
-        <source>Save GLB</source>
-        <translation>Guardar GLB</translation>
+        <location filename="../views/main_window.py" line="154"/>
+        <source>FBX (*.fbx)</source>
+        <translation>FBX (*.fbx)</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="136"/>
+        <location filename="../views/main_window.py" line="155"/>
+        <source>Wavefront OBJ (*.obj)</source>
+        <translation>Wavefront OBJ (*.obj)</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="156"/>
+        <source>STL (*.stl)</source>
+        <translation>STL (*.stl)</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="157"/>
+        <source>USDZ (*.usdz)</source>
+        <translation>USDZ (*.usdz)</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="159"/>
+        <location filename="../views/main_window.py" line="167"/>
+        <location filename="../views/main_window.py" line="186"/>
+        <location filename="../views/main_window.py" line="240"/>
+        <source>Export model</source>
+        <translation>Exportar modelo</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="164"/>
+        <source>This format does not keep the skeleton.</source>
+        <translation>Este formato no conserva el esqueleto.</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="166"/>
+        <source>This format does not keep the texture.</source>
+        <translation>Este formato no conserva la textura.</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="186"/>
+        <location filename="../views/main_window.py" line="240"/>
+        <source>Could not export the model: %1</source>
+        <translation>No se pudo exportar el modelo: %1</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="190"/>
+        <source>Exporting the model…</source>
+        <translation>Exportando el modelo…</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="199"/>
+        <source>Biped (two legs)</source>
+        <translation>Bípedo (dos piernas)</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="199"/>
+        <source>Quadruped (four legs)</source>
+        <translation>Cuadrúpedo (cuatro patas)</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="202"/>
+        <location filename="../views/main_window.py" line="205"/>
+        <source>Detected body type: %1. Animate it as:</source>
+        <translation>Tipo de cuerpo detectado: %1. Animarlo como:</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="202"/>
+        <source>Biped</source>
+        <translation>Bípedo</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="205"/>
+        <source>Quadruped</source>
+        <translation>Cuadrúpedo</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="208"/>
+        <source>Body type not detected. Animate it as:</source>
+        <translation>No se detectó el tipo de cuerpo. Animarlo como:</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="210"/>
+        <location filename="../views/main_window.py" line="232"/>
+        <source>Add walk animation</source>
+        <translation>Agregar animación de caminar</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="222"/>
+        <source>Adding the walk animation…</source>
+        <translation>Agregando la animación de caminar…</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="228"/>
+        <source>Added %1</source>
+        <translation>Agregado: %1</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="233"/>
+        <source>Could not add the walk animation: %1</source>
+        <translation>No se pudo agregar la animación de caminar: %1</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="236"/>
+        <source>Exported %1</source>
+        <translation>Exportado: %1</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="153"/>
         <source>glTF binary (*.glb)</source>
         <translation>glTF binario (*.glb)</translation>
-    </message>
-    <message>
-        <location filename="../views/main_window.py" line="142"/>
-        <source>Could not save the file: %1</source>
-        <translation>No se pudo guardar el archivo: %1</translation>
     </message>
 </context>
 <context>

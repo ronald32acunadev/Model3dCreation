@@ -160,6 +160,20 @@ Start the desktop client (which automatically starts and supervises the local en
 uv run --project client python -m model3d_client
 ```
 
+**Export formats.** **Export…** saves the selected library model as GLB (a plain copy) or converts it with the engine's `bpy` in a separate process (no GPU or running engine needed). The dialog warns when the chosen format drops the skeleton or the texture.
+
+| Format | Texture | Skeleton | Files written |
+| :--- | :--- | :--- | :--- |
+| GLB | Yes | Yes | 1 |
+| FBX | Yes (embedded) | Yes | 1 |
+| OBJ + MTL | Yes | No | `.obj`, `.mtl`, texture images |
+| STL | No | No | 1 |
+| USDZ | Yes (packaged) | Viewer-dependent | 1 |
+
+Exports keep a model's animation in GLB and FBX.
+
+**Walk animation.** For a model with a skeleton, the library's context menu offers **Add walk animation**. The app detects the body type from the skeleton (2 legs: biped, 4: quadruped; otherwise you choose), lets you confirm or change it, and saves the result as a new `<name> (walk)` entry with a looping one-second `Walk` clip. The viewer plays it, with a play/pause button. The walk is procedural: UniRig's bones have no semantic names, so legs and arms are found by their position and hierarchy. It is a way to test the rig, not production animation, and skinning flaws from UniRig show up when the model moves.
+
 ### Local Inference Engine
 
 Run the FastAPI engine standalone (listens on `127.0.0.1:8765` by default):

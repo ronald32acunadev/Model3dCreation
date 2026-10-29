@@ -21,6 +21,7 @@ class LibraryPanel(QWidget):
     rename_requested = Signal(str, str)  # entry id, new name
     delete_requested = Signal(str)
     add_skeleton_requested = Signal(str)  # entry id
+    add_walk_requested = Signal(str)  # entry id
 
     def __init__(self, library: Library, parent: QWidget | None = None):
         super().__init__(parent)
@@ -28,6 +29,7 @@ class LibraryPanel(QWidget):
         self._entries: list[Entry] = []
         self._icons: dict[str, QIcon] = {}  # thumbnails, made once per entry
         self.can_add_skeleton: Callable[[Entry], bool] = lambda _entry: False  # set by the window
+        self.can_add_walk: Callable[[Entry], bool] = lambda _entry: False  # set by the window
         self.rig_reason: Callable[[], str | None] = lambda: None  # why the engine cannot rig, if it cannot
         self.title = QLabel()
         self.list = QListWidget()
@@ -79,7 +81,7 @@ class LibraryPanel(QWidget):
         return f"{entry.name}\n{' · '.join(parts)}"
 
     def build_menu(self, entry: Entry) -> QMenu:
-        """The entry's context menu: rename, delete, and add skeleton (when the engine can)."""
+        """The entry's context menu: rename, delete, add skeleton and add walk (when they apply)."""
         menu = QMenu(self)
         menu.setToolTipsVisible(True)
         menu.addAction(self.tr("Rename…")).setObjectName("rename")
@@ -89,6 +91,9 @@ class LibraryPanel(QWidget):
         add_skeleton.setEnabled(self.can_add_skeleton(entry))
         if not add_skeleton.isEnabled() and self.rig_reason():
             add_skeleton.setToolTip(self.rig_reason())
+        add_walk = menu.addAction(self.tr("Add walk animation"))
+        add_walk.setObjectName("add_walk")
+        add_walk.setEnabled(self.can_add_walk(entry))
         return menu
 
     def _icon(self, entry: Entry) -> QIcon:
@@ -110,10 +115,12 @@ class LibraryPanel(QWidget):
         entry_id = item.data(Qt.ItemDataRole.UserRole)
         entry = next(e for e in self._entries if e.entry_id == entry_id)
         menu = self.build_menu(entry)
-        rename, delete, add_skeleton = menu.actions()
+        rename, delete, add_skeleton, add_walk = menu.actions()
         chosen = menu.exec(self.list.mapToGlobal(pos))
         if chosen is add_skeleton:
             self.add_skeleton_requested.emit(entry_id)
+        elif chosen is add_walk:
+            self.add_walk_requested.emit(entry_id)
         elif chosen is rename:
             name, ok = QInputDialog.getText(self, self.tr("Rename"), self.tr("Name:"), text=entry.name)
             if ok and name.strip():

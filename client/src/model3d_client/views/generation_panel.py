@@ -1,4 +1,4 @@
-"""The generation panel: input image, options, Generate/Cancel, progress, Save GLB, viewer controls."""
+"""The generation panel: input image, options, Generate/Cancel, progress, Export, viewer controls."""
 
 from pathlib import Path
 
@@ -133,7 +133,7 @@ class GenerationPanel(QWidget):
             2, self.tr("Sharper texture (768 px views: logos, eyes, small details) and more geometry. About 1.5 minutes more per model."),
             Qt.ItemDataRole.ToolTipRole,
         )
-        self.save_button.setText(self.tr("Save GLB…"))
+        self.save_button.setText(self.tr("Export…"))
         self.show_texture_check.setText(self.tr("Show texture"))
         self.reset_camera_button.setText(self.tr("Reset camera"))
         self.render()

@@ -2,9 +2,12 @@ import pytest
 from model3d_contracts.events import ResultStats
 from model3d_contracts.jobs import JobError, JobOptions, Quality
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMessageBox
 
 from fakes import FakeSupervisor, StubViewer
 from model3d_client.paths import AppPaths
+from model3d_client.services.animator import RigAnimator
+from model3d_client.services.converter import ModelConverter
 from model3d_client.services.diagnostics import Check, CheckId
 from model3d_client.services.library import Library, Outcome
 from model3d_client.services.settings import Settings
@@ -271,3 +274,140 @@ def test_rig_hint_hidden_before_the_engine_answers(window):
     window.vm.supervisor.health = None
     window.vm.generation.changed.emit()
     assert window.generation_panel.rig_hint.isHidden()
+
+
+def make_window(qtbot, tmp_path, make_api, body: str) -> MainWindow:
+    """A window whose export runs a fake engine Python that executes `body` as a shell script."""
+    python = tmp_path / "python"
+    python.write_text("#!/bin/sh\n" + body)
+    python.chmod(0o755)
+    paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
+    library = Library(paths.library)
+    supervisor = FakeSupervisor(state=EngineState.loading)
+    api = make_api("http://127.0.0.1:9")
+    generation = GenerationViewModel(api, library, supervisor, Settings())
+    checks = lambda _paths: []
+    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(), checks=checks,
+                       converter=ModelConverter(python))
+    win = MainWindow(vm, viewer=StubViewer())
+    win.ask_close_anyway = lambda: True
+    qtbot.addWidget(win)
+    return win
+
+
+def add_rigged(library, png, name="robot"):
+    entry = library.create(png, JobOptions(rig=True))
+    library.model_path(entry.entry_id).write_bytes(b"glTF")
+    stats = ResultStats(vertices=1, faces=2, textured=True, duration_s=1.0)
+    entry = entry.model_copy(update={"outcome": Outcome.succeeded, "stats": stats, "name": name})
+    library.update(entry)
+    return entry
+
+
+def test_export_fbx_writes_file_and_reports(qtbot, tmp_path, make_api, png):
+    win = make_window(qtbot, tmp_path, make_api, 'printf data > "$3"\nexit 0\n')
+    entry = add_succeeded(win.vm.library, png)
+    win.vm.select(entry.entry_id)
+    win.ask_export_path = lambda start: (str(tmp_path / "robot"), "FBX (*.fbx)")
+    win.generation_panel.save_button.click()
+    assert not win.generation_panel.save_button.isEnabled()
+    assert "Exporting" in win.statusBar().currentMessage()
+    with qtbot.waitSignal(win.vm.export_finished, timeout=5000):
+        pass
+    assert (tmp_path / "robot.fbx").read_bytes() == b"data"
+    assert "Exported" in win.statusBar().currentMessage()
+    assert win.generation_panel.save_button.isEnabled()
+
+
+def test_failed_export_shows_warning(qtbot, tmp_path, make_api, png, monkeypatch):
+    win = make_window(qtbot, tmp_path, make_api, "echo nope >&2\nexit 1\n")
+    entry = add_succeeded(win.vm.library, png)
+    win.vm.select(entry.entry_id)
+    win.ask_export_path = lambda start: (str(tmp_path / "robot"), "STL (*.stl)")
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+    win.warn_format_drops = lambda found: None  # STL drops the texture: no modal dialog in tests
+    with qtbot.waitSignal(win.vm.export_failed, timeout=5000):
+        win.generation_panel.save_button.click()
+    assert len(warnings) == 1
+    assert "Could not export the model" in warnings[0][2] and "nope" in warnings[0][2]
+    assert win.generation_panel.save_button.isEnabled()
+
+
+def test_obj_export_of_rigged_model_warns_about_skeleton(qtbot, tmp_path, make_api, png):
+    win = make_window(qtbot, tmp_path, make_api, 'printf data > "$3"\nexit 0\n')
+    entry = add_rigged(win.vm.library, png)
+    win.vm.select(entry.entry_id)
+    win.ask_export_path = lambda start: (str(tmp_path / "robot"), "Wavefront OBJ (*.obj)")
+    drops = []
+    win.warn_format_drops = lambda found: drops.append(set(found))
+    with qtbot.waitSignal(win.vm.export_finished, timeout=5000):
+        win.generation_panel.save_button.click()
+    assert drops == [{"skeleton"}]
+    assert (tmp_path / "robot.obj").exists()
+
+
+DETECT_BIPED = 'echo \'MODEL3D_RESULT {"body": "biped", "legs": [], "arms": [], "up": 1}\'\nexit 0\n'
+DETECT_FAIL = "echo broken >&2\nexit 1\n"
+
+
+def animating_window(qtbot, tmp_path, make_api, body: str) -> MainWindow:
+    """A window whose body detection runs a fake engine Python that executes `body` as a shell script."""
+    python = tmp_path / "python"
+    python.write_text("#!/bin/sh\n" + body)
+    python.chmod(0o755)
+    paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
+    library = Library(paths.library)
+    supervisor = FakeSupervisor(state=EngineState.loading)
+    api = make_api("http://127.0.0.1:9")
+    generation = GenerationViewModel(api, library, supervisor, Settings())
+    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(), checks=lambda _paths: [],
+                       animator=RigAnimator(python))
+    win = MainWindow(vm, viewer=StubViewer())
+    win.ask_close_anyway = lambda: True
+    qtbot.addWidget(win)
+    return win
+
+
+def test_add_walk_asks_with_the_detected_body(qtbot, tmp_path, make_api, png):
+    win = animating_window(qtbot, tmp_path, make_api, DETECT_BIPED)
+    entry = add_rigged(win.vm.library, png)
+    asked = []
+    win.ask_body_type = lambda detected: asked.append(detected)  # cancel: no walk
+    with qtbot.waitSignal(win.vm.body_detected, timeout=5000):
+        win.library_panel.add_walk_requested.emit(entry.entry_id)
+    assert asked == ["biped"]
+
+
+def test_chosen_body_starts_the_walk(qtbot, tmp_path, make_api, png):
+    win = animating_window(qtbot, tmp_path, make_api, DETECT_BIPED)
+    entry = add_rigged(win.vm.library, png)
+    win.ask_body_type = lambda detected: "quadruped"
+    walks = []
+    win.vm.add_walk = lambda entry_id, body: walks.append((entry_id, body))
+    with qtbot.waitSignal(win.vm.body_detected, timeout=5000):
+        win.library_panel.add_walk_requested.emit(entry.entry_id)
+    assert walks == [(entry.entry_id, "quadruped")]
+
+
+def test_cancelled_dialog_starts_no_walk(qtbot, tmp_path, make_api, png):
+    win = animating_window(qtbot, tmp_path, make_api, DETECT_BIPED)
+    entry = add_rigged(win.vm.library, png)
+    win.ask_body_type = lambda detected: None
+    walks = []
+    win.vm.add_walk = lambda entry_id, body: walks.append((entry_id, body))
+    with qtbot.waitSignal(win.vm.body_detected, timeout=5000):
+        win.library_panel.add_walk_requested.emit(entry.entry_id)
+    assert walks == []
+
+
+def test_failed_detection_shows_warning(qtbot, tmp_path, make_api, png, monkeypatch):
+    win = animating_window(qtbot, tmp_path, make_api, DETECT_FAIL)
+    entry = add_rigged(win.vm.library, png)
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+    with qtbot.waitSignal(win.vm.walk_failed, timeout=5000):
+        win.library_panel.add_walk_requested.emit(entry.entry_id)
+    assert len(warnings) == 1
+    assert "Could not add the walk animation" in warnings[0][2] and "broken" in warnings[0][2]
+    assert win.vm.library.entries() and len(win.vm.library.entries()) == 1
