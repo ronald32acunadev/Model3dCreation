@@ -19,8 +19,9 @@ About 16,000 tokens of answer is a file of roughly 600-800 lines; aim for half t
 
 ## One request, one unit
 
+- Start only after the user approves the complete backlog and chooses all stories or one at a time. Include the current story ID and acceptance criteria in each request; a story may require several bounded requests.
 - One file per request, or one function or class when the file is large. Two files at once is where small models start dropping requirements.
-- Send the tests first, then ask for the implementation that passes them. Tests are the most precise spec a small model can follow.
+- For implementation requests, send the existing tests and their criterion or regression-risk references first. For test-generation requests, send approved criteria, scenarios, and required observable assertions; preexisting test code is not required.
 - Ask for the full file when it is under about 300 lines; above that, ask for an exact replacement block with the lines before and after it.
 
 ## Structure of every request
@@ -41,10 +42,16 @@ USER
   - Existing usage: <verbatim call site>
 
 ## Task
+<approved story ID, acceptance criteria, dependencies, and execution mode>
 <names, signatures, exact values, behavior per input, error cases>
 
-## Tests it must pass
-<test names and assertions, verbatim>
+## Verification contract
+<story-scoped criterion IDs such as US-01 / AC-01>
+<preconditions, inputs, action, expected outputs/errors and applicable state effects>
+<change-related regression risks; verification level and existing runner>
+<implementation request: existing test names and assertions, verbatim>
+<test-generation request: approved scenarios and required assertions; map each test to a criterion or change-related risk>
+<relevant success, negative, and boundary cases; no invented requirements or fixed scenario quotas>
 
 ## Final checklist before you answer
 1. <the rule this task most needs>
@@ -59,10 +66,11 @@ Put the three rules the task most needs at the very end: small models weigh the 
 
 ## Review and the rules file
 
-1. Run the tests. Read the diff for invented imports, real-filesystem calls where values are injected, swallowed exceptions, and dropped requirements.
-2. A small defect: fix it yourself. A wrong approach: send one follow-up naming the defect and the correct API, then fix by hand if it is still wrong. Never loop more than once.
+1. Check each new or changed test against its approved criterion or change-related regression risk. Assert observable behavior, including applicable rejection and unchanged state, not merely mock calls. Run applicable checks using the existing runner with deterministic isolated state; follow the test-first policy in `AGENTS.md` when meaningful runnable tests exist. Read the diff for invented imports, real-filesystem calls where values are injected, swallowed exceptions, and dropped requirements.
+2. Send one focused correction request naming the defect and the correct API. If still incorrect, report the blocker. Do not silently make the planning model the code writer; use the routing and explicit authorization rules in `AGENTS.md`.
 3. Every defect that could repeat becomes one line in `.agents/local-llm-prompt-rules.md`: the rule only, no history, imperative, under 25 words. Keep the file under 300 words; merge or drop rules that never fire.
-4. Note in the commit or task log when the host model rewrote the answer, so the rules file can be judged by its rejection rate.
+4. Record the implementer and criterion-to-check mapping in the existing story file, with actual test file/name or reproducible manual steps and observed results. Missing, failed, skipped, or blocked required proof prevents completion; document manual-only verification honestly. No separate tracker or retroactive labeling of unrelated historical tests or helpers is required. Approved scope revisions update affected checks and preserve still-valid evidence. Corrections improve future prompts; they do not retrain model weights automatically.
+5. In one-at-a-time mode, show the story's changes and checks, then wait for explicit approval before starting the next story. In all-stories mode, continue within the approved backlog unless blocked.
 
 ## Choosing and calling the model
 
@@ -84,6 +92,8 @@ Measured on 2026-10-23 with one real request (a 180-line Python module, scored b
 
 1. LM Studio (`pumbastudio`, port 1234): whatever model is loaded; check `GET /v1/models`.
 2. Ollama (`pumbalama`, port 11434): the model in `GET /api/ps`.
-3. The host model, when neither answers, noting that local models were unavailable.
+3. An available lightweight hosted implementer when neither local provider works or the user explicitly bypasses local execution. Keep the reasoning-capable planner responsible for context and review, not default code generation.
+
+Resolve hosted model choices through the current client's supported capabilities, without hardcoded names. If switching or delegation is unavailable, ask the user to select a lightweight model or explicitly authorize the current model. Do not claim a model switch happened without evidence. Documentation, configuration, and mechanical edits remain orchestrator-owned under `AGENTS.md`.
 
 Unload the local model before work that needs the GPU.

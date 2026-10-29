@@ -1,305 +1,276 @@
 # Model3D
 
-[English](README.md) · [Español](README.es.md)
+![Platform](https://img.shields.io/badge/platform-Linux%20x86__64-blue)
+![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
+![CUDA](https://img.shields.io/badge/CUDA-13.0%2B%20(sm__120)-76B900)
+![Version](https://img.shields.io/badge/version-0.1.1-informational)
 
-[![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.9.1%20cu130-EE4C2C.svg)](https://pytorch.org/)
-[![PySide6](https://img.shields.io/badge/PySide6-6.12.0-41CD52.svg)](https://wiki.qt.io/Qt_for_Python)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com/)
-[![Blender](https://img.shields.io/badge/Blender-4.2%2B-F5792A.svg)](https://www.blender.org/)
-[![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](blender/model3d/blender_manifest.toml)
+**Model3D** is a local, GPU-only pipeline that turns a single PNG or JPEG image into a textured (and optionally rigged) binary glTF 2.0 (`.glb`) 3D model using **Hunyuan3D 2.1** and **UniRig**. It ships with a FastAPI/WebSocket inference engine, a PySide6 desktop application with an embedded 3D viewer and first-run setup wizard, a native Blender 4.2+ extension, and a Debian (`.deb`) package builder.
 
-**Model3D** is a local, dual-GPU pipeline that turns single 2D images into textured, rigged 3D models (`.glb`) using **Hunyuan3D 2.1** and **UniRig**. The project is built for dual NVIDIA RTX 5070 workstations on Linux x86_64, featuring a decoupled asynchronous compute engine, a desktop GUI application (PySide6), and an integrated Blender 4.2+ extension add-on.
+Designed for Linux `x86_64` workstations with NVIDIA GPUs (targeting dual RTX 5070 12 GB cards and adaptable to single-GPU setups), Model3D isolates the `shape`, `paint`, and `rig` stages in dedicated worker processes and automatically selects the optimal GPU placement and memory management strategy based on available VRAM.
 
 ---
 
 ## Table of Contents
 
 - [Key Features](#key-features)
-- [System Architecture](#system-architecture)
-- [Repository Structure](#repository-structure)
-- [Hardware Target & GPU Modes](#hardware-target--gpu-modes)
-- [Prerequisites & Toolchain](#prerequisites--toolchain)
-- [Vendor Dependencies & Patches](#vendor-dependencies--patches)
-- [Installation & Quick Start](#installation--quick-start)
-  - [1. Setting Up Subprojects](#1-setting-up-subprojects)
-  - [2. Running the Engine](#2-running-the-engine)
-  - [3. Running the Desktop Application](#3-running-the-desktop-application)
-  - [4. Installing the Blender Add-on](#4-installing-the-blender-add-on)
-- [Configuration Reference](#configuration-reference)
-- [REST & WebSocket API Reference](#rest--websocket-api-reference)
-- [Diagnostics & Benchmarking Scripts](#diagnostics--benchmarking-scripts)
-- [Testing & Quality Assurance](#testing--quality-assurance)
+- [How It Works & GPU Run Modes](#how-it-works--gpu-run-modes)
+- [Architecture & Repository Layout](#architecture--repository-layout)
+- [Prerequisites & Installation](#prerequisites--installation)
+- [Usage](#usage)
+  - [Desktop Application](#desktop-application)
+  - [Local Inference Engine](#local-inference-engine)
+  - [Blender Add-on](#blender-add-on)
+  - [REST & WebSocket API Reference](#rest--websocket-api-reference)
+  - [Environment Variables](#environment-variables)
+  - [Diagnostic & Packaging Scripts](#diagnostic--packaging-scripts)
+- [Development & Testing](#development--testing)
+- [Troubleshooting & Platform Notes](#troubleshooting--platform-notes)
 - [License](#license)
 
 ---
 
 ## Key Features
 
-- **Decoupled Engine-Client Architecture**: Heavy GPU PyTorch inference runs in an independent background process (`model3d_engine`), keeping the UI thread responsive.
-- **Dual-GPU Pipeline Acceleration**: Automatically allocates shape generation (Hunyuan3D Stage 1) to the resident GPU card and texture synthesis (Hunyuan3D Stage 2) plus skeletal rigging (UniRig) to the secondary card.
-- **Automatic Fallback Modes**: Intelligently adapts to available hardware (`dual_gpu`, `single_gpu_resident`, `single_gpu_swap`, `shape_only`, `unsupported`).
-- **Interactive Desktop Client**: Modern PySide6 application with MVVM architecture, automatic engine supervisor, Spanish/English localization, and an integrated QtWebEngine 3D viewport.
-- **Native Blender 4.2+ Add-on**: Integrated extension for Blender allowing direct generation, job tracking, library browsing, and auto-rigging directly into scenes with zero external dependencies (standard-library `urllib`).
+- **100% Local Image-to-3D Pipeline**: Converts 2D images (`PNG`/`JPEG` up to 20 MB) into 3D meshes (`shape`), generates PBR textures (`paint`), and optionally rigs skeletons (`rig`) into `.glb` assets without cloud dependencies.
+- **Standalone Skeletal Rigging**: Accepts existing `.glb` models (up to 200 MB) via `/v1/rig-jobs` to generate armatures and skinning weights using UniRig.
+- **Automatic Multi-GPU & Single-GPU Placement**: Probes NVIDIA GPUs and PCIe link bandwidth at startup, assigning stages across two GPUs or dynamically swapping stage workers on a single GPU.
+- **Fault-Tolerant Process Workers**: Runs `shape` and `paint` inside isolated `ProcessStageRunner` subprocesses with configurable task timeouts, crash backoff, and explicit VRAM unloading.
+- **PySide6 Desktop Client & Setup Wizard**: Provides an interactive first-run installer (probing drivers, `nvcc`, compilers, and downloading ~31 GB base + ~8 GB skeleton weights with resumable step fingerprints), real-time job progress over WebSockets, a local model library, and an embedded QtWebEngine 3D viewer (`English` and `Español`).
+- **Zero-Dependency Blender Extension**: Connects Blender (`>= 4.2.0`) directly to the local engine and shared model library using Python's standard library (`urllib`).
 
 ---
 
-## System Architecture
+## How It Works & GPU Run Modes
+
+When `model3d_engine` starts, `model3d_engine.gpu.probe` and `model3d_engine.gpu.modes` inspect all visible NVIDIA GPUs and select one of five execution modes (using a `512 MiB` free-VRAM safety margin above measured peak usage: `8957 MiB` for `shape` and `10168 MiB` for `paint`):
+
+| Run Mode | Minimum Free VRAM | Behavior |
+| :--- | :--- | :--- |
+| `dual_gpu` | Two GPUs (`>= 10.4 GiB` on paint card, `>= 9.2 GiB` on shape card) | Keeps `shape` resident on one GPU and `paint` resident on the GPU with the most free VRAM (tie-broken by PCIe link bandwidth). `rig` shares the paint GPU. |
+| `single_gpu_resident` | One GPU (`>= 17.5 GiB` free) | Keeps both `shape` and `paint` workers loaded simultaneously on the same GPU. |
+| `single_gpu_swap` | One GPU (`>= 10.4 GiB` free) | Runs `shape` and `paint` sequentially on the same GPU, unloading each worker process between stages to free VRAM. |
+| `shape_only` | One GPU (`>= 9.2 GiB` free) | Runs untextured mesh generation (`"texture": false`) and optional rigging on a single GPU when VRAM is insufficient for `paint`. |
+| `unsupported` | Below `9.2 GiB` free or no supported GPU | Starts the HTTP API so `/v1/health` can report the hardware diagnostic reason; job submissions return `503 engine_not_ready`. |
+
+### Generation Quality Presets
+
+| Preset (`quality`) | Description |
+| :--- | :--- |
+| `draft` | Fast preview generation with reduced diffusion steps. |
+| `final` | Default balanced production quality (`Quality.final`). |
+| `high` | Maximum detail generation. |
+
+---
+
+## Architecture & Repository Layout
+
+The repository is organized as five independent [`uv`](https://docs.astral.sh/uv/) projects, each with its own `pyproject.toml` and test suite:
+
+| Subproject | Package Name & Version | Python Requirement | Role |
+| :--- | :--- | :--- | :--- |
+| [`contracts/`](./contracts) | `model3d-contracts@0.1.0` | `>=3.11` | Shared Pydantic v2 schemas (`jobs`, `events`, `health`). Editable dependency of `engine` and `client`. |
+| [`engine/`](./engine) | `model3d-engine@0.1.0` | `==3.11.*` | FastAPI inference server (`python -m model3d_engine`), GPU probe, stage process runner, job scheduler, and store. |
+| [`client/`](./client) | `model3d-client@0.1.1` | `>=3.11` | PySide6 MVVM desktop application (`python -m model3d_client`), first-run setup wizard, engine supervisor, and 3D viewer. |
+| [`blender/`](./blender) | `model3d-blender@0.1.0` | `>=3.11` | Blender 4.2+ extension in [`blender/model3d/`](./blender/model3d) (`urllib` client, job tracker, library browser, UI panels). |
+| [`packaging/`](./packaging) | `model3d-packaging@0.1.0` | `>=3.11` | `.deb` package builder ([`packaging/deb/build.sh`](./packaging/deb/build.sh)) and package verification tests. |
 
 ```text
-+-----------------------------------------------------------------------------------+
-|                                  CLIENT LAYER                                     |
-|                                                                                   |
-|  +-------------------------------------+   +-----------------------------------+  |
-|  |     PySide6 Desktop Client          |   |       Blender 4.2+ Add-on         |  |
-|  |   - MVVM (Views/ViewModels)        |   |   - Native Extension (urllib)     |  |
-|  |   - EngineSupervisor               |   |   - Scene Viewport Importer       |  |
-|  |   - QtWebEngine 3D Preview          |   |   - Rig & Texture Controls        |  |
-|  +-------------------------------------+   +-----------------------------------+  |
-+---------------------------|----------------------------------|--------------------+
-                            | HTTP (REST) & WebSockets         | HTTP (REST)
-                            v                                  v
-+-----------------------------------------------------------------------------------+
-|                         LOCAL INFERENCE ENGINE (FastAPI)                          |
-|                                                                                   |
-|  +--------------------+   +-----------------------+   +------------------------+  |
-|  |  LoopbackGuard &   |   |  JobStore & EventBus  |   |    Multi-Stage         |  |
-|  |  API Endpoints     |-->|  - File-backed jobs   |-->|    Pipelined           |  |
-|  |  (/v1/jobs, etc.)  |   |  - Live status stream |   |    Scheduler           |  |
-|  +--------------------+   +-----------------------+   +------------------------+  |
-|                                                                   |               |
-|         +---------------------------------------------------------+               |
-|         |                                                         |               |
-|         v (GPU Placement)                                         v               |
-|  +------------------------------------+   +------------------------------------+  |
-|  |       GPU A (Primary Link)         |   |       GPU B (Secondary Link)       |  |
-|  |   Shape Worker (Hunyuan3D S1)      |   |   Paint Worker (Hunyuan3D S2)      |  |
-|  |   Geometry & Mesh Generation       |   |   PBR Textures & UniRig Rigging    |  |
-|  +------------------------------------+   +------------------------------------+  |
-+-----------------------------------------------------------------------------------+
+Model3dCreation/
+├── contracts/               # Shared Pydantic models (model3d_contracts)
+├── engine/                  # FastAPI GPU server (model3d_engine) & Hunyuan3D patch
+│   ├── patches/             # hunyuan3d-paint-device.patch (removes hardcoded cuda:0)
+│   └── src/model3d_engine/  # api/, gpu/, jobs/, stages/, config.py, __main__.py
+├── client/                  # PySide6 desktop app (model3d_client)
+│   ├── launch.sh            # Launches the desktop client via uv from any directory
+│   ├── scripts/             # update_translations.sh, test_system_python.sh
+│   └── src/model3d_client/  # services/, setup/, viewmodels/, views/, viewer/, i18n/
+├── blender/                 # Blender 4.2+ add-on (blender/model3d/) and test suite
+├── packaging/               # Debian package build scripts (packaging/deb/build.sh)
+├── scripts/                 # GPU verification (verify_gpus.py) & VRAM benchmark (measure_stage_vram.py)
+└── Fases/                   # Architectural phase specifications (Spanish)
 ```
 
----
+### Runtime & Configuration Paths
 
-## Repository Structure
-
-The workspace is structured into independent `uv` projects with explicit boundaries:
-
-| Directory | Role | Description |
-| :--- | :--- | :--- |
-| [`contracts/`](contracts/) | Shared Models | Pydantic v2 schemas (`Job`, `JobOptions`, `JobState`, `Health`, `JobError`) shared by engine and client. |
-| [`engine/`](engine/) | Inference Backend | FastAPI server (`python -m model3d_engine`), running on Python 3.11, CUDA 13.0 PyTorch, and `bpy` wheels. |
-| [`client/`](client/) | Desktop Application | PySide6 desktop GUI (`python -m model3d_client`), QtWebEngine viewer, and background engine supervisor. |
-| [`blender/`](blender/) | Blender Add-on | Blender 4.2+ extension in `blender/model3d/` with Python test harness. |
-| [`scripts/`](scripts/) | Tooling & Diagnostics | Hardware verification (`verify_gpus.py`) and stage VRAM benchmarking (`measure_stage_vram.py`). |
-| [`Fases/`](Fases/) | Architecture Specs | Phased architectural and technical design specifications (Spanish). |
+| Path | Purpose |
+| :--- | :--- |
+| `$XDG_CONFIG_HOME/model3d/config.json` (fallback `~/.config/model3d/config.json`) | Pointer file written by the setup wizard naming the active installation directory. |
+| `<install_or_repo>/install.json` | Fingerprinted step state recorded by the setup wizard for resume/repair. |
+| `$MODEL3D_HOME` (default `<install_or_repo>/data`) | Root runtime data directory shared by the engine and desktop client. |
+| `$MODEL3D_HOME/jobs/` | Persistent job records, input files, and generated `model.glb` outputs. |
+| `$MODEL3D_HOME/library/` | Saved 3D models managed by the desktop app and browsable from Blender. |
+| `$MODEL3D_HOME/hf/` | Local Hugging Face cache (`tencent/Hunyuan3D-2.1`, `facebook/dinov2-giant`, `VAST-AI/UniRig`, `facebook/opt-350m`). |
+| `$MODEL3D_HOME/logs/engine.log` | Engine log written when managed by the desktop client's `EngineSupervisor`. |
 
 ---
 
-## Hardware Target & GPU Modes
+## Prerequisites & Installation
 
-The pipeline is tuned for dual **NVIDIA RTX 5070 (12 GB VRAM each)** running on Linux x86_64.
+### Hardware & System Requirements
 
-At startup, the engine queries `nvidia-smi` and link topology, selecting one of five execution modes:
+- **OS**: Linux `x86_64` (Ubuntu 26.04 target for `.deb` system packages).
+- **GPU**: NVIDIA GPU(s) with compute capability `sm_120` (e.g., GeForce RTX 5070 12 GB) and NVIDIA driver supporting CUDA 13.
+- **Build Toolchain**: CUDA Toolkit 13 (`nvcc`), `build-essential` (`c++`), and `patch` (required to compile `custom_rasterizer`, `mesh_inpaint_processor`, and `flash-attn`).
+- **Disk Space**: ~31 GB for the base installation (Hunyuan3D 2.1 + DINOv2 + RealESRGAN + BiRefNet weights) plus ~8 GB for optional skeletal rigging (UniRig).
 
-| Mode | Description | GPU Requirement |
-| :--- | :--- | :--- |
-| `dual_gpu` | Shape stays resident on one card; Paint and UniRig run on the other. Zero swapping overhead. | 2 usable NVIDIA GPUs with >= 10 GiB free VRAM each. |
-| `single_gpu_resident` | Both shape and paint models remain loaded in memory concurrently. | 1 GPU with >= 22 GiB free VRAM. |
-| `single_gpu_swap` | Shape and paint workers cycle on a single device, unloading weights between stages. | 1 GPU with 10–21 GiB free VRAM. |
-| `shape_only` | Geometry generation only; texture painting is disabled. | 1 GPU with 10–12 GiB free VRAM. |
-| `unsupported` | Engine boots into error state; API reports failure reasons via `/v1/health`. | Insufficient VRAM (< 10 GiB) or no CUDA GPUs detected. |
+### Option 1: Build and Install the `.deb` Package
 
----
-
-## Prerequisites & Toolchain
-
-- **Operating System**: Linux x86_64 (e.g., Ubuntu 24.04 / 26.04 LTS)
-- **NVIDIA Driver**: 570+ (supporting CUDA 12.8 / 13.0+)
-- **Python**: Python 3.11 (strictly required by `engine/` due to `bpy==4.5.*` cp311 wheels)
-- **Package Manager**: [`uv`](https://docs.astral.sh/uv/) (>= 0.5.0)
-- **Compilers**: `gcc`, `g++`, `ninja`, and `nvcc` matching `CUDA_HOME` for compiled rasterizers.
-
----
-
-## Vendor Dependencies & Patches
-
-Two upstream subprojects are vendored in `vendor/` (untracked in git):
-
-1. **Hunyuan3D 2.1**:
-   ```bash
-   git clone https://github.com/Tencent/Hunyuan3D-2.1 vendor/Hunyuan3D-2.1
-   # Apply patch to remove hardcoded cuda:0 devices:
-   git -C vendor/Hunyuan3D-2.1 apply ../../engine/patches/hunyuan3d-paint-device.patch
-   ```
-2. **UniRig**:
-   ```bash
-   git clone https://github.com/VAST-AI-Research/UniRig vendor/UniRig
-   # Configure UniRig's dedicated virtual environment inside its vendor folder
-   ```
-
----
-
-## Installation & Quick Start
-
-### 1. Setting Up Subprojects
-
-Synchronize dependencies for each workspace component using `uv`:
+Build the `.deb` package from the repository root:
 
 ```bash
-# Shared contracts
-cd contracts && uv sync && cd ..
-
-# Client desktop application
-cd client && uv sync && cd ..
-
-# Blender add-on test environment
-cd blender && uv sync && cd ..
-
-# Engine (requires CUDA_HOME and Hunyuan3D-2.1 clone for custom_rasterizer)
-cd engine && uv sync && cd ..
+packaging/deb/build.sh
+sudo apt install ./dist/model3d_0.1.1_amd64.deb
 ```
 
-### 2. Running the Engine
+Launch `model3d` from your application menu or terminal. On first run, the **Setup Wizard** verifies your NVIDIA driver, GPUs, and `nvcc`, then downloads and builds the engine environment and model weights inside your chosen installation directory.
 
-Start the local API engine directly:
+### Option 2: Development Setup from Source
+
+1. **Install `uv`** and ensure Python 3.11 and CUDA 13 (`nvcc`) are available.
+2. **Clone external vendor repositories** (not tracked in git) when setting up the engine manually without the desktop wizard:
+   - Clone `Tencent-Hunyuan/Hunyuan3D-2.1` into `vendor/Hunyuan3D-2.1` and apply the device placement patch:
+     ```bash
+     git apply --directory=vendor/Hunyuan3D-2.1 engine/patches/hunyuan3d-paint-device.patch
+     ```
+   - Download `RealESRGAN_x4plus.pth` to `vendor/Hunyuan3D-2.1/hy3dpaint/ckpt/RealESRGAN_x4plus.pth`.
+   - Build `mesh_inpaint_processor` inside `vendor/Hunyuan3D-2.1/hy3dpaint/DifferentiableRenderer`.
+   - *(Optional for rigging)* Set up `VAST-AI-Research/UniRig` in `vendor/UniRig` with its own `.venv`.
+   - Alternatively, launch the desktop client and let the **Setup Wizard** perform all downloads, patches, native builds, and weight fetches automatically.
+3. **Sync subproject environments**:
+   ```bash
+   (cd contracts && uv sync)
+   (cd client && uv sync)
+   (cd engine && uv sync)
+   ```
+
+---
+
+## Usage
+
+### Desktop Application
+
+Start the desktop client (which automatically starts and supervises the local engine if it is not already running):
+
+```bash
+# Using the launcher script from anywhere
+./client/launch.sh
+
+# Or directly via uv from the repository root
+uv run --project client python -m model3d_client
+```
+
+### Local Inference Engine
+
+Run the FastAPI engine standalone (listens on `127.0.0.1:8765` by default):
 
 ```bash
 uv run --project engine python -m model3d_engine
 ```
 
-The engine initializes on `http://127.0.0.1:8765`. On startup, it inspects GPU topology and loads weights in the background while `/v1/health` reports status.
+### Blender Add-on
 
-### 3. Running the Desktop Application
+The Blender extension is located in [`blender/model3d/`](./blender/model3d) (or packaged at `/opt/model3d/blender/model3d.zip` when installed via `.deb`).
+- Requires **Blender 4.2.0 or newer**.
+- Install `model3d.zip` in Blender under **Edit → Preferences → Add-ons → Install from Disk**, then use the **Model3D** sidebar panel to generate textured/rigged meshes from images, rig existing objects, or import models from the local Model3D library.
 
-Launch the desktop UI using `uv` or the standalone wrapper script:
+### REST & WebSocket API Reference
 
-```bash
-# Direct run via uv
-uv run --project client python -m model3d_client
+The engine binds strictly to loopback addresses and rejects non-loopback `Host` headers (`LoopbackGuard`).
 
-# Or via launch script (used by .desktop launcher)
-./client/launch.sh
-```
+| Method & Path | Description | Key Parameters / Payload |
+| :--- | :--- | :--- |
+| `GET /v1/health` | Returns engine readiness, active run mode, per-GPU VRAM usage, and rigging availability. | None |
+| `POST /v1/jobs` | Submits a `PNG` or `JPEG` image (max 20 MB) for 3D generation. Returns `202 Accepted` with a `Job` object. | `multipart/form-data`: `image` (file), `options` (JSON string matching `JobOptions`) |
+| `POST /v1/rig-jobs` | Submits an existing `.glb` file (max 200 MB) for standalone UniRig skeletal rigging. Returns `202 Accepted`. | `multipart/form-data`: `model` (`.glb` file) |
+| `GET /v1/jobs/{job_id}` | Returns current job state (`queued`, `shaping`, `painting`, `rigging`, `succeeded`, `failed`, `cancelled`), progress (`0.0`–`1.0`), and resource links. | Path param: `job_id` |
+| `GET /v1/jobs/{job_id}/result` | Downloads the completed `model.glb` (`model/gltf-binary`). Returns `409 job_not_finished` if still running. | Path param: `job_id` |
+| `DELETE /v1/jobs/{job_id}` | Cancels a queued or running job. Returns `202 Accepted`. | Path param: `job_id` |
+| `WS /v1/jobs/{job_id}/events` | Streams real-time JSON `JobEvent` updates until the job reaches a terminal state. | Path param: `job_id` |
 
-> **Note**: If the engine is not already running, the client's `EngineSupervisor` will automatically spawn `engine/.venv/bin/python -m model3d_engine` and terminate it upon application exit.
-
-### 4. Installing the Blender Add-on
-
-`blender/model3d` is a native Blender 4.2+ extension:
-
-1. Open Blender 4.2 or newer.
-2. Go to **Edit** > **Preferences** > **Add-ons / Extensions**.
-3. Install from disk or symlink `blender/model3d` into your Blender extensions directory:
-   ```bash
-   ln -s "$(pwd)/blender/model3d" "$HOME/.config/blender/4.2/extensions/user_default/model3d"
-   ```
-4. Enable the **Model3D** add-on in the 3D Viewport sidebar (`N`-panel under `Model3D`).
-
----
-
-## Configuration Reference
-
-The engine is configured strictly through environment variables:
-
-| Variable | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `MODEL3D_HOME` | Path | `data/` | Base directory for job storage (`$MODEL3D_HOME/jobs`) and HuggingFace cache (`$MODEL3D_HOME/hf`). |
-| `MODEL3D_HUNYUAN_DIR` | Path | `vendor/Hunyuan3D-2.1` | Root path to the Hunyuan3D 2.1 repository clone. |
-| `MODEL3D_UNIRIG_DIR` | Path | `vendor/UniRig` | Root path to the UniRig repository clone. |
-| `MODEL3D_HOST` | String | `127.0.0.1` | Engine HTTP and WebSocket binding address. |
-| `MODEL3D_PORT` | Integer | `8765` | Engine port. |
-| `MODEL3D_MODE` | String | `None` (auto) | Forced execution mode: `dual_gpu`, `single_gpu_resident`, `single_gpu_swap`, or `shape_only`. |
-| `MODEL3D_SHAPE_BUS` | String | `None` (auto) | PCI bus ID for shape worker (e.g., `0000:29:00.0`). Set with `MODEL3D_PAINT_BUS`. |
-| `MODEL3D_PAINT_BUS` | String | `None` (auto) | PCI bus ID for paint/rig worker (e.g., `0000:01:00.0`). Set with `MODEL3D_SHAPE_BUS`. |
-| `MODEL3D_ALLOWED_ORIGINS`| String | `""` | Comma-separated list of allowed browser origins for CORS/CSRF protection. |
-| `MODEL3D_STAGE_TIMEOUT_S`| Float | `900.0` | Timeout in seconds for an individual stage before killing the worker process. |
-
----
-
-## REST & WebSocket API Reference
-
-The engine provides an HTTP + WebSocket API with loopback and DNS-rebinding protection (`LoopbackGuard`):
-
-### Endpoints
-
-| Method | Endpoint | Description | Status Codes |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/v1/health` | Engine readiness, chosen GPU mode, and device memory status. | `200 OK` |
-| `POST` | `/v1/jobs` | Submit a new image-to-3D generation job (`multipart/form-data`: `image`, `options`). | `202 Accepted`, `400`, `413`, `503` |
-| `POST` | `/v1/rig-jobs` | Submit an existing `.glb` model for automatic skeletal rigging (`multipart/form-data`: `model`). | `202 Accepted`, `400`, `413`, `503` |
-| `GET` | `/v1/jobs/{job_id}` | Retrieve current state, progress, and stage details of a job. | `200 OK`, `404 Not Found` |
-| `GET` | `/v1/jobs/{job_id}/result`| Download the generated or rigged binary `model.glb`. | `200 OK`, `404`, `409 Conflict` |
-| `DELETE` | `/v1/jobs/{job_id}` | Cancel a queued or running job. | `202 Accepted`, `404`, `409` |
-| `WS` | `/v1/jobs/{job_id}/events` | Real-time WebSocket stream of progress, state transitions, and errors. | Connection upgrade |
-
-### Job Options (`options` JSON in `POST /v1/jobs`)
+#### `JobOptions` JSON Schema (`POST /v1/jobs`)
 
 ```json
 {
   "texture": true,
   "quality": "final",
-  "seed": 42,
+  "seed": 1234,
   "remove_background": true,
-  "target_faces": 40000,
+  "target_faces": 50000,
   "rig": false
 }
 ```
 
-- **`quality`**: `"draft"`, `"final"`, or `"high"`.
-- **`target_faces`**: Integer >= 1000 (optional decimation target).
-- **`rig`**: Boolean flag to automatically attach a skeletal rig via UniRig after texturing.
+- `quality`: `"draft"` | `"final"` | `"high"` (default: `"final"`).
+- `seed`: Integer in `[0, 2^32 - 1]` or `null` for random seed.
+- `target_faces`: Integer `>= 1000` or `null` for default face count.
+
+### Environment Variables
+
+All engine and client path overrides are configured via environment variables (`model3d_engine.config.load_settings` and `model3d_client.paths.app_paths`):
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `MODEL3D_HOME` | `<repo_or_install>/data` | Data directory storing `jobs/`, `library/`, `hf/`, `logs/`, and `settings.json`. |
+| `MODEL3D_HUNYUAN_DIR` | `<repo_or_install>/vendor/Hunyuan3D-2.1` | Path to the patched Hunyuan3D 2.1 checkout. |
+| `MODEL3D_UNIRIG_DIR` | `<repo_or_install>/vendor/UniRig` | Path to the UniRig checkout containing its `.venv`. |
+| `MODEL3D_HOST` | `127.0.0.1` | Loopback address to bind (`127.0.0.1`, `::1`, or `localhost`). Non-loopback hosts exit with code `2`. |
+| `MODEL3D_PORT` | `8765` | TCP port for the FastAPI server. |
+| `MODEL3D_MODE` | *(auto-detected)* | Force a run mode: `dual_gpu`, `single_gpu_resident`, `single_gpu_swap`, or `shape_only`. |
+| `MODEL3D_SHAPE_BUS` | *(auto-detected)* | Explicit PCI bus ID (e.g., `0000:01:00.0`) for the `shape` worker. Must be set together with `MODEL3D_PAINT_BUS`. |
+| `MODEL3D_PAINT_BUS` | *(auto-detected)* | Explicit PCI bus ID (e.g., `0000:29:00.0`) for the `paint` worker. Must be set together with `MODEL3D_SHAPE_BUS`. |
+| `MODEL3D_ALLOWED_ORIGINS` | `""` (empty) | Comma-separated list of browser `Origin` URLs permitted to send `POST` or `DELETE` requests. |
+| `MODEL3D_STAGE_TIMEOUT_S` | `900` | Maximum seconds a single stage task may run before its worker process is killed and respawned. |
+
+### Diagnostic & Packaging Scripts
+
+| Command | Arguments / Env | Description |
+| :--- | :--- | :--- |
+| `uv run --project engine python scripts/verify_gpus.py` | None | Validates PyTorch CUDA 13 build, `sm_120` kernel support, GPU count/VRAM, `nvidia-smi` PCI bus ordering, `nvcc` version match, `custom_rasterizer`, and `mesh_inpaint_processor`. |
+| `uv run --project engine python scripts/measure_stage_vram.py` | `[--bus 0000:29:00.0]` | Benchmarks idle, loaded, and peak VRAM (MiB) and runtime across `final` and `draft` presets on a target GPU. |
+| `packaging/deb/build.sh` | `[--out DIR]`, `UV_BINARY=/path/to/uv` | Builds `model3d_<version>_amd64.deb` (defaults to `dist/`). |
+| `client/scripts/update_translations.sh` | None | Extracts UI strings with `pyside6-lupdate` into `model3d_es.ts` and compiles `model3d_es.qm` with `pyside6-lrelease`. |
+| `client/scripts/test_system_python.sh` | `[pytest args...]` | Runs the `client` test suite against `/usr/bin/python3` and apt-installed `PySide6`/`pydantic`, matching the `.deb` runtime environment. |
 
 ---
 
-## Diagnostics & Benchmarking Scripts
+## Development & Testing
 
-Specialized diagnostic routines live in [`scripts/`](scripts/):
+By default, each subproject's `pytest` configuration excludes hardware-dependent tests (`gpu`, `webengine`, `blender`) so unit and integration tests run fast and deterministically on any machine:
 
 ```bash
-# 1. Verify dual-GPU topology, PCIe bandwidth, and CUDA runtime environment
-uv run --project engine python scripts/verify_gpus.py
-
-# 2. Benchmark stage-by-stage VRAM usage under synthetic workload
-# (Note: Unload LM Studio and Ollama models before measuring)
-uv run --project engine python scripts/measure_stage_vram.py
+# Run unit & fast integration tests per project
+uv run --project contracts pytest
+uv run --project engine pytest
+uv run --project client pytest
+uv run --project blender pytest
+uv run --project packaging pytest
 ```
 
-To update client internationalization (extracting strings to `model3d_es.ts` and compiling `model3d_es.qm`):
+### Running Hardware & Integration Marker Suites
 
 ```bash
-client/scripts/update_translations.sh
+# Engine & Client GPU acceptance tests (requires NVIDIA GPUs + full engine environment)
+uv run --project engine pytest -m gpu
+uv run --project client pytest -m gpu
+
+# Client QtWebEngine viewer tests (requires an active display with GPU rendering)
+uv run --project client pytest -m webengine
+
+# Blender smoke tests (requires `blender` executable on PATH)
+uv run --project blender pytest -m blender
 ```
 
 ---
 
-## Testing & Quality Assurance
+## Troubleshooting & Platform Notes
 
-Each subproject maintains dedicated test suites executed via `pytest`:
-
-```bash
-# 1. Contracts models tests (17 passed)
-(cd contracts && uv run pytest)
-
-# 2. Client MVVM, views, and supervisor unit tests (111 passed)
-(cd client && uv run pytest)
-
-# 3. Blender add-on client and tracker tests (25 passed)
-(cd blender && uv run pytest)
-
-# 4. Engine API, GPU scheduler, and store tests (when vendor dependencies are installed)
-(cd engine && uv run pytest)
-```
-
-### Pytest Custom Markers
-
-- **`-m gpu`**: Tests requiring real dual RTX 5070 cards and resident weights (excluded by default in CI).
-- **`-m webengine`**: Tests requiring QtWebEngine with hardware OpenGL rendering context.
-- **`-m blender`**: Tests executing headless Blender CLI (`blender -b`).
+- **`gpu_busy` / Insufficient Free VRAM**: Close or unload local LLM servers (such as LM Studio or Ollama) before starting the engine, running the setup wizard verification step, or executing `scripts/measure_stage_vram.py`.
+- **`CUDA_DEVICE_ORDER` Mismatch**: The engine sets `CUDA_DEVICE_ORDER=PCI_BUS_ID` so PyTorch device indices match `nvidia-smi` PCI bus ordering.
+- **Pinned Engine Dependencies**: `engine/pyproject.toml` pins specific versions required by upstream native modules (`Python ==3.11.*` for `bpy==4.5.*` wheels, `numpy==1.26.4`, `trimesh==4.4.7` for positional quadric decimation, `onnxruntime>=1.20` for `glibc >= 2.41` non-executable stack compatibility, and `setuptools<81` for `pkg_resources`). Check the inline comments in [`engine/pyproject.toml`](./engine/pyproject.toml) before modifying dependency versions.
 
 ---
 
 ## License
 
-- The Blender add-on (`blender/model3d/`) is licensed under **GPL-3.0-or-later** as declared in [`blender/model3d/blender_manifest.toml`](blender/model3d/blender_manifest.toml).
-- Third-party web libraries in `client/src/model3d_client/views/viewer/vendor/` follow their respective open source licenses as documented in `VENDOR.md`.
+The Blender add-on ([`blender/model3d/blender_manifest.toml`](./blender/model3d/blender_manifest.toml)) is licensed under `SPDX:GPL-3.0-or-later`.
