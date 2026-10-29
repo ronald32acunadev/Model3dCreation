@@ -46,7 +46,7 @@ def test_dual_gpu_paint_follows_free_vram_not_the_link():
 
 
 def test_thresholds_match_the_measurement():
-    assert (SHAPE_NEED_MIB, SHAPE_HELD_MIB, PAINT_NEED_MIB, PAINT_HELD_MIB, MARGIN_MIB) == (8957, 7216, 10168, 4938, 512)
+    assert (SHAPE_NEED_MIB, SHAPE_HELD_MIB, PAINT_NEED_MIB, PAINT_HELD_MIB, MARGIN_MIB) == (10111, 7216, 10168, 4938, 512)
 
 
 def test_one_big_card_is_resident():

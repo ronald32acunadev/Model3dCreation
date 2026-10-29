@@ -1,6 +1,6 @@
 # Face detail
 
-Status: pending approval.
+Status: complete.
 
 ## Context
 
@@ -33,6 +33,18 @@ Acceptance criteria:
 
 Dependencies: none. Verification: script output and the user's side-by-side review.
 
+Results (2026-10-29, bus 0000:29:00.0, 11 758 MiB free at idle, seed 1234, `high` preset, `marine` close portrait and `wolf` full body):
+
+| Octree | Shape peak MiB | Shape run s | Raw shape faces (marine / wolf) | Paint peak MiB | Paint run s |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 384 | 8 957 | 90 | 971 244 / 442 812 | 7 678 | 150-158 |
+| 512 | 10 111 | 150-154 | 1 731 346 / 787 700 | 7 679-7 697 | 163 |
+
+- 512 fits one card with about 1.6 GiB to spare and adds about 60 s to the shape stage.
+- Head close-ups (bpy Workbench renders) show 512 removes the stair-step voxel artifacts on cheeks, forehead, and neck, but adds no new facial features: eyes, mouth, and nose keep the same shape. The textured models look nearly identical.
+- The paint stage still decimates every mesh to 150 000 faces (`PAINT_FACES["high"]`), so much of the extra geometry does not reach the final GLB.
+- Conclusion: octree is not the main limit on facial detail; the shape model itself is. User verdict: keep 512 for the smoother surface.
+
 ## US-02: Use octree 512 for the high preset
 
 As a user, I want the `high` quality to produce finer geometry, so that faces show more shape detail.
@@ -45,6 +57,8 @@ Acceptance criteria:
 
 Dependencies: US-01 shows it fits and the user prefers the result. Verification: unit test on the preset mapping plus the engine test suite.
 
+Result (2026-10-29): the user chose to keep octree 512 for `high` ("Sí, dejalo en 512"). Because the shape peak rose to 10 111 MiB, `SHAPE_NEED_MIB` in `gpu/modes.py` now uses that worst case, so the run-mode planner never places shape on a card where a `high` job runs out of memory. On the 12 GB target cards this changes no mode; a card with 9.5 to 10.6 GiB free no longer qualifies for shape.
+
 ## US-03: Measure more paint views for high (optional)
 
 As a developer, I want to know whether more than 6 paint views fit and help, so that the face texture gets more coverage.
@@ -56,15 +70,18 @@ Acceptance criteria:
 
 Dependencies: US-01. Verification: script output and side-by-side review.
 
+Results (2026-10-29, `marine`, octree 512, seed 1234): 8 views raise the paint peak from 7 679 to 8 437 MiB and the run from 163 to 210 s. The face texture is visually unchanged, since upstream only adds low-weight views at ±20° elevation beyond the first six. The default stays at 6 views; the trial change was reverted.
+
 ## Verification mapping
 
 | Story / criterion | Check | Observed result |
 | --- | --- | --- |
-| US-01 / AC-01 | `measure_stage_vram.py` at octree 512 | Pending |
-| US-01 / AC-02 | Side-by-side GLBs, same seed | Pending |
-| US-01 / AC-03 | Results recorded here | Pending |
-| US-02 / AC-01 | Unit test on `high` preset octree | Pending |
-| US-02 / AC-02 | `uv run pytest` in `engine/` | Pending |
-| US-02 / AC-03 | Comment review | Pending |
-| US-03 / AC-01 | VRAM script, 8 views | Pending |
-| US-03 / AC-02 | Side-by-side textures | Pending |
+| US-01 / AC-01 | `measure_stage_vram.py` at octree 512 | Passed: peak 10 111 MiB, 150-154 s |
+| US-01 / AC-02 | Side-by-side GLBs, same seed | Passed: head renders for marine and wolf |
+| US-01 / AC-03 | Results recorded here | Passed |
+| US-02 / AC-01 | `test_quality_presets.py::test_every_quality_has_shape_settings` | Passed: failed at 384, passed at 512 |
+| US-02 / AC-02 | `engine/.venv/bin/python -m pytest` | Passed: 166 passed, 7 deselected |
+| US-02 / AC-03 | Comment review | Passed |
+| US-03 / AC-01 | VRAM script, 8 views | Passed: peak 8 437 MiB, 210 s |
+| US-03 / AC-02 | Side-by-side textures | Passed: no visible gain, default unchanged |
+| Regression: mode planner shape threshold | `test_modes.py::test_thresholds_match_the_measurement` | Passed: failed at 8957, passed at 10111 |

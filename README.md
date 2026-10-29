@@ -43,7 +43,7 @@ Designed for Linux `x86_64` workstations with NVIDIA GPUs (targeting dual RTX 50
 
 ## How It Works & GPU Run Modes
 
-When `model3d_engine` starts, `model3d_engine.gpu.probe` and `model3d_engine.gpu.modes` inspect all visible NVIDIA GPUs and select one of five execution modes (using a `512 MiB` free-VRAM safety margin above measured peak usage: `8957 MiB` for `shape` and `10168 MiB` for `paint`):
+When `model3d_engine` starts, `model3d_engine.gpu.probe` and `model3d_engine.gpu.modes` inspect all visible NVIDIA GPUs and select one of five execution modes (using a `512 MiB` free-VRAM safety margin above measured peak usage: `10111 MiB` for `shape` (a `high` job) and `10168 MiB` for `paint`):
 
 | Run Mode | Minimum Free VRAM | Behavior |
 | :--- | :--- | :--- |

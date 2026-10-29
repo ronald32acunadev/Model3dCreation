@@ -26,8 +26,10 @@ from model3d_engine.stages.protocol import (
 HUNYUAN_MODEL = "tencent/Hunyuan3D-2.1"
 BACKGROUND_MODEL = "birefnet-general"  # rembg session; the setup wizard downloads it into U2NET_HOME
 # Quality preset -> (num_inference_steps, octree_resolution). "final" is upstream's default
-# (measured 77 s on GPU0); "draft" is this project's choice.
-QUALITY_PRESETS = {"final": (50, 384), "draft": (25, 256), "high": (50, 384)}
+# (measured 77 s on GPU0); "draft" is this project's choice. "high" uses octree 512: shape peak
+# 9.9 GiB against 8.7 GiB at 384 and about +60 s on one RTX 5070, measured 2026-10-29
+# (docs/userstories/face-detail/). It smooths voxel steps but adds no new facial features.
+QUALITY_PRESETS = {"final": (50, 384), "draft": (25, 256), "high": (50, 512)}
 # Faces the paint stage keeps (it decimates the shape before unwrapping and baking). Upstream
 # always cuts to 40000; "high" keeps 150000: +24 s paint and +0.6 GiB VRAM, measured 2026-10-22.
 PAINT_FACES = {"draft": 40_000, "final": 40_000, "high": 150_000}

@@ -8,8 +8,9 @@ from model3d_engine.gpu.topology import Placement
 
 # nvidia-smi MiB above idle, measured with scripts/measure_stage_vram.py (docs/architecture.md,
 # section 2). They include each worker's CUDA context. "Need" is the peak while running a
-# `final` job; "held" is what a loaded, idle worker keeps.
-SHAPE_NEED_MIB = 8957
+# `final` job, except shape, whose peak is the `high` job's (octree 512; 8957 at 384, measured
+# 2026-10-29); "held" is what a loaded, idle worker keeps.
+SHAPE_NEED_MIB = 10111
 SHAPE_HELD_MIB = 7216
 PAINT_NEED_MIB = 10168
 PAINT_HELD_MIB = 4938

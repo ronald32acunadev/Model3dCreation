@@ -8,7 +8,9 @@ from model3d_engine.stages.hunyuan import QUALITY_PRESETS, paint_face_target, pa
 
 def test_every_quality_has_shape_settings():
     assert set(QUALITY_PRESETS) == {q.value for q in Quality}
-    assert QUALITY_PRESETS["high"] == QUALITY_PRESETS["final"]  # shape is already at its best in final
+    assert QUALITY_PRESETS["draft"] == (25, 256)
+    assert QUALITY_PRESETS["final"] == (50, 384)
+    assert QUALITY_PRESETS["high"] == (50, 512)
 
 
 @pytest.mark.parametrize(
