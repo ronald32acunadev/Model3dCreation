@@ -3,11 +3,11 @@
 Run from the repository root with the engine environment, with LM Studio and Ollama
 models unloaded:
 
-    uv run --project engine python scripts/measure_stage_vram.py [--bus 0000:29:00.0]
+    uv run --project engine python scripts/measure_stage_vram.py [--bus 0000:29:00.0] [--image PATH] [--qualities final,draft] [--no-resident]
 
-It prints each GPU's idle free VRAM, then, for each quality preset, the VRAM the shape
-and paint workers hold after loading and at their peak while running the demo image on
-one card, and finally whether both workers fit on that card at once. Memory is read from
+It prints each GPU's idle free VRAM, then, for each requested quality preset, the VRAM the
+shape and paint workers hold after loading and at their peak while running the input image
+on one card, and finally whether both workers fit on that card at once. Memory is read from
 nvidia-smi, so it includes each worker's CUDA context.
 """
 
@@ -75,9 +75,9 @@ def make_runner(stage: str, device: str, env: dict[str, str], hunyuan_dir: str) 
     return ProcessStageRunner(PAINT_FACTORY, kwargs, env, name="paint")
 
 
-def new_job(root: Path, quality: Quality) -> StageTask:
+def new_job(root: Path, quality: Quality, image: Path) -> StageTask:
     job_dir = Path(tempfile.mkdtemp(dir=root))
-    (job_dir / "input.png").write_bytes(PENGUIN.read_bytes())
+    (job_dir / f"input{image.suffix.lower()}").write_bytes(image.read_bytes())
     return StageTask(job_id=job_dir.name, job_dir=job_dir, options=JobOptions(quality=quality), seed=1234)
 
 
@@ -126,6 +126,9 @@ async def measure_resident(task: StageTask, bus: str, device: str, env, hunyuan_
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--bus", default="0000:29:00.0", help="PCI bus id of the card to measure on")
+    parser.add_argument("--image", type=Path, default=PENGUIN, help="input image for every job")
+    parser.add_argument("--qualities", default="final,draft", help="comma-separated quality presets to measure, in order")
+    parser.add_argument("--no-resident", action="store_true", help="skip the both-workers-resident check")
     args = parser.parse_args()
     bus = normalize_bus_id(args.bus)
 
@@ -139,6 +142,14 @@ async def main() -> int:
     if memory[bus][1] < MIN_FREE_MIB:
         print(f"{bus} has {memory[bus][1]} MiB free; unload LM Studio/Ollama models first")
         return 1
+    if not args.image.is_file():
+        print(f"Image not found: {args.image}")
+        return 1
+    try:
+        qualities = [Quality(name.strip()) for name in args.qualities.split(",") if name.strip()]
+    except ValueError:
+        print(f"Unknown quality in --qualities: {args.qualities}")
+        return 1
 
     settings = load_settings()
     env = stage_env(settings)
@@ -146,18 +157,19 @@ async def main() -> int:
     device = f"cuda:{sorted(memory).index(bus)}"  # CUDA_DEVICE_ORDER=PCI_BUS_ID in env
     root = Path(tempfile.mkdtemp(prefix="model3d-vram-"))
 
-    print("\n| Stage | Quality | Held after load MiB | Peak MiB | Load s | Run s |\n| :--- | :--- | ---: | ---: | ---: | ---: |")
-    for quality in (Quality.final, Quality.draft):
-        task = new_job(root, quality)
+    print("\n| Stage | Quality | Held after load MiB | Peak MiB | Load s | Run s | Job folder |\n| :--- | :--- | ---: | ---: | ---: | ---: | :--- |")
+    for quality in qualities:
+        task = new_job(root, quality, args.image)
         for stage in ("shape", "paint"):
             row = await measure_stage(stage, task, bus, device, env, hunyuan_dir)
             print(
                 f"| {stage} | {quality.value} | {row['loaded_mib']} | {row['peak_mib']} "
-                f"| {row['load_s']:.1f} | {row['run_s']:.1f} |",
+                f"| {row['load_s']:.1f} | {row['run_s']:.1f} | {task.job_dir.name} |",
                 flush=True,
             )
 
-    print("\nBoth workers resident on", bus, "(final):", await measure_resident(new_job(root, Quality.final), bus, device, env, hunyuan_dir))
+    if not args.no_resident:
+        print("\nBoth workers resident on", bus, "(final):", await measure_resident(new_job(root, Quality.final, args.image), bus, device, env, hunyuan_dir))
     print("Job folders:", root)
     return 0
 

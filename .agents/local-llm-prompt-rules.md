@@ -20,3 +20,4 @@ Paste this list into the system message of every code request to a local model. 
 - Ask for one file per request and end the request with a 3-line checklist of the rules it most needs.
 - Tests: pytest functions with `tmp_path`; never write to `/tmp`; never patch a whole module; import every name used.
 - Tests: keep each requested test's name, inputs, and assertions exactly; assert exact values.
+- Never run `uv run --project engine` or `uv sync` in `engine/` for checks: it rebuilds native CUDA extensions; use `engine/.venv/bin/python` directly.
