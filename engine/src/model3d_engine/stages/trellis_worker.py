@@ -184,7 +184,7 @@ def bake_glb(mesh, message: dict) -> dict:
             voxel_size=mesh.voxel_size,
             aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
             decimation_target=message["faces"],
-            texture_size=4096,
+            texture_size=message.get("texture_size", 4096),
             remesh=remesh,
             remesh_band=1,
             remesh_project=0,
