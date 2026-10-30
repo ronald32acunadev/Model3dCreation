@@ -67,7 +67,11 @@ def _receive(conn, process, timeout: float | None):
 
 
 class ProcessStageRunner:
-    """StageRunner that hosts its stage in a worker process and restarts it after a crash."""
+    """StageRunner that hosts its stage in a worker process.
+
+    `start` loads the worker. A crash leaves it not ready: the next `start`, which the scheduler
+    calls before a task that needs the stage, loads it again.
+    """
 
     def __init__(
         self,
@@ -76,7 +80,6 @@ class ProcessStageRunner:
         env: dict[str, str],
         name: str,
         start_timeout_s: float = 600.0,
-        restart_delays: tuple[float, ...] = (0.0, 5.0, 30.0, 120.0),
         task_timeout_s: float = 900.0,
     ):
         self.factory = factory
@@ -84,14 +87,11 @@ class ProcessStageRunner:
         self.env = env
         self.name = name
         self.start_timeout_s = start_timeout_s
-        self.restart_delays = restart_delays
         self.task_timeout_s = task_timeout_s
         self.ready = False
         self._process = None
         self._conn = None
         self._lock: asyncio.Lock | None = None
-        self._restart: asyncio.Task | None = None
-        self._stopping = False
 
     async def start(self) -> None:
         """Spawn the worker and wait until its model is loaded."""
@@ -132,25 +132,19 @@ class ProcessStageRunner:
     async def run(self, task: StageTask, on_progress: ProgressCallback) -> StageResult:
         """Run one task in the worker, forwarding its progress.
 
-        A worker that crashed, during a task or while idle, is restarted and the task waits for it.
-        A task that outlasts task_timeout_s is failed and its stuck worker killed and restarted.
+        A task that outlasts task_timeout_s is failed and its stuck worker killed.
         """
         async with self._lock:
-            if self._restart is not None and not self._restart.done():
-                await self._restart
             if self.ready and not self._process.is_alive():
-                # The worker died between jobs (kernel OOM kill, driver fault): restart it now.
+                # The worker died between jobs (kernel OOM kill, driver fault): load it again now.
                 self.ready = False
-                self._restart = asyncio.create_task(self._respawn())
-                await self._restart
+                await self._spawn()
             if not self.ready:
                 raise StageError("worker_unavailable", f"{self.name} worker could not be restarted")
             try:
                 self._conn.send(("run", task))
             except OSError:
                 self.ready = False
-                if not self._stopping:
-                    self._restart = asyncio.create_task(self._respawn())
                 raise StageError("worker_crashed", f"{self.name} worker was gone before the task started") from None
             loop = asyncio.get_running_loop()
             deadline = time.monotonic() + self.task_timeout_s
@@ -165,8 +159,6 @@ class ProcessStageRunner:
                     ) from None
                 except _WorkerDied as died:
                     self.ready = False
-                    if not self._stopping:
-                        self._restart = asyncio.create_task(self._respawn())
                     raise StageError(
                         "worker_crashed", f"{self.name} worker exited with code {died.exitcode}"
                     ) from None
@@ -178,46 +170,20 @@ class ProcessStageRunner:
                     raise StageError(message[1], message[2])
 
     async def _kill_stuck_worker(self) -> None:
-        """Kill a worker that stopped answering mid-task, then restart it like a crash."""
+        """Kill a worker that stopped answering mid-task; the next start loads it again."""
         self.ready = False
         self._process.kill()
         await asyncio.get_running_loop().run_in_executor(None, self._process.join, 5)
-        if not self._stopping:
-            self._restart = asyncio.create_task(self._respawn())
-
-    async def _respawn(self) -> None:
-        for delay in self.restart_delays:
-            await asyncio.sleep(delay)
-            if self._stopping:
-                return
-            try:
-                await self._spawn()
-                return
-            except StageError as error:
-                logger.error("%s worker failed to restart: %s", self.name, error.message)
-        logger.error("%s worker gave up after %d restart attempts", self.name, len(self.restart_delays))
 
     async def unload(self) -> None:
         """Stop the worker to free its GPU, after any running task; start() loads it again."""
         self._lock = self._lock or asyncio.Lock()
         async with self._lock:
-            await self._cancel_restart()
             await self._stop_process()
 
     async def stop(self) -> None:
         """Stop the worker for good, killing it if it does not exit within 5 s."""
-        self._stopping = True
-        await self._cancel_restart()
         await self._stop_process()
-
-    async def _cancel_restart(self) -> None:
-        if self._restart is not None:
-            self._restart.cancel()
-            try:
-                await self._restart
-            except (asyncio.CancelledError, StageError):
-                pass
-            self._restart = None
 
     async def _stop_process(self) -> None:
         self.ready = False

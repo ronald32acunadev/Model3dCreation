@@ -70,8 +70,8 @@ def test_build_engine_dual_gpu_health(tmp_path):
             "ready": True,
             "mode": {"name": "dual_gpu", "texture": True, "reason": "Two GPUs: shape on 0000:29:00.0, paint on 0000:25:00.0"},
             "gpus": [
-                {"bus_id": "0000:25:00.0", "stage": "paint", "ready": True, "memory_used_mib": 100, "memory_total_mib": 12227, "memory_free_mib": 11761},
-                {"bus_id": "0000:29:00.0", "stage": "shape", "ready": True, "memory_used_mib": 200, "memory_total_mib": 12227, "memory_free_mib": 11173},
+                {"bus_id": "0000:25:00.0", "stage": "paint", "ready": False, "memory_used_mib": 100, "memory_total_mib": 12227, "memory_free_mib": 11761},
+                {"bus_id": "0000:29:00.0", "stage": "shape", "ready": False, "memory_used_mib": 200, "memory_total_mib": 12227, "memory_free_mib": 11173},
             ],
             "error": None,
             "rig": False,
@@ -80,6 +80,24 @@ def test_build_engine_dual_gpu_health(tmp_path):
         job_id = run_job(client, {"texture": False})
         assert client.get(f"/v1/jobs/{job_id}/result").content[:4] == b"glTF"
     assert (tmp_path / "jobs" / job_id / "model.glb").exists()
+
+
+def test_idle_engine_reports_ready_with_nothing_loaded(tmp_path):
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", unirig_dir=tmp_path / "UniRig")
+    app = build_engine(settings, inventory=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=dict)
+    with TestClient(app, base_url=BASE_URL) as client:
+        health = wait_ready(client)
+        assert health["ready"] is True
+        assert [gpu["ready"] for gpu in health["gpus"]] == [False, False]
+
+
+def test_idle_engine_accepts_a_job(tmp_path):
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", unirig_dir=tmp_path / "UniRig")
+    app = build_engine(settings, inventory=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=dict)
+    with TestClient(app, base_url=BASE_URL) as client:
+        wait_ready(client)
+        job_id = run_job(client, {"texture": False})
+        assert client.get(f"/v1/jobs/{job_id}/result").content[:4] == b"glTF"
 
 
 def test_build_engine_swap_mode_runs_a_textured_job(tmp_path):
@@ -175,7 +193,6 @@ def test_build_engine_wires_rig_on_paint_card(tmp_path):
     app = build_engine(settings, inventory=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=lambda: memory)
     rig = app.state.rig
     assert rig.device == "cuda:0"  # paint sits on 0000:25:00.0, the card with the most free VRAM
-    assert rig.free_mib() == 12227 - 4000
     with TestClient(app, base_url=BASE_URL) as client:
         health = wait_ready(client)
         assert health["rig"] is False
@@ -236,3 +253,19 @@ def test_build_engine_hunyuan_ignores_generator_factory(tmp_path):
     )
     with TestClient(app, base_url=BASE_URL) as client:
         assert wait_ready(client)["mode"]["name"] == "dual_gpu"
+
+
+def test_single_gpu_resident_uses_the_swap_loop(tmp_path, monkeypatch):
+    """Without it, shape and paint evict each other per task on the one card."""
+    seen = {}
+    real = entry.Scheduler
+
+    def spy(*args, **kwargs):
+        seen["swap"] = kwargs["swap"]
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(entry, "Scheduler", spy)
+    roomy = Inventory((GpuInfo(0, "0000:29:00.0", RTX, 24576, 20000, (12, 0), True, 15.76),), None)
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", mode="single_gpu_resident")
+    build_engine(settings, inventory=roomy, shape_factory=STUB, paint_factory=STUB, memory_reader=dict)
+    assert seen["swap"] is True

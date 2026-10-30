@@ -12,6 +12,8 @@ from .fakes import FakeRunner
 
 pytestmark = pytest.mark.anyio
 
+SHAPE, PAINT = "shape.glb", "model.glb"
+
 
 async def wait_final(record, timeout: float = 5.0) -> None:
     async def poll():
@@ -28,6 +30,29 @@ async def make(tmp_path, shape=None, paint=None):
     scheduler = Scheduler(store, bus, shape, paint)
     await scheduler.start()
     return scheduler, store, bus, shape, paint
+
+
+def log_runs(runner, log: list[tuple[str, str]]) -> None:
+    """Record each run of `runner` in `log`, between the loads and unloads around it."""
+    run = runner.run
+
+    async def logged(task, on_progress):
+        log.append(("run", runner.output_name))
+        return await run(task, on_progress)
+
+    runner.run = logged
+
+
+async def make_logged(tmp_path, swap=False, cards=None):
+    """Dual or swap scheduler whose runners share one log of loads, runs, and unloads."""
+    log: list[tuple[str, str]] = []
+    shape, paint = FakeRunner(SHAPE, log=log), FakeRunner(PAINT, log=log)
+    log_runs(shape, log)
+    log_runs(paint, log)
+    store, bus = JobStore(tmp_path), EventBus()
+    scheduler = Scheduler(store, bus, shape, paint, swap=swap, cards=cards)
+    await scheduler.start()
+    return scheduler, store, bus, shape, paint, log
 
 
 async def submit(scheduler, store, bus, options=None):
@@ -162,16 +187,126 @@ async def test_cancel_finished_job_returns_false(tmp_path):
     await scheduler.stop()
 
 
-async def test_ready_follows_runners(tmp_path):
-    store, bus = JobStore(tmp_path), EventBus()
-    scheduler = Scheduler(store, bus, FakeRunner("shape.glb"), FakeRunner("model.glb"))
-    assert scheduler.ready is False
-    await scheduler.start()
+@pytest.mark.parametrize("swap", [False, True], ids=["dual", "swap"])
+async def test_start_loads_no_model(tmp_path, swap):
+    scheduler, _, _, shape, paint, log = await make_logged(tmp_path, swap=swap)
     assert scheduler.ready is True
+    assert log == []
+    assert shape.ready is False and paint.ready is False
     await scheduler.stop()
 
 
-SHAPE, PAINT = "shape.glb", "model.glb"
+async def test_textured_job_loads_and_releases_each_stage(tmp_path):
+    scheduler, store, bus, shape, paint, log = await make_logged(tmp_path)
+    record, _ = await submit(scheduler, store, bus)
+    await wait_final(record)
+    await scheduler.stop()
+
+    assert record.state == JobState.succeeded
+    assert log == [
+        ("load", SHAPE), ("run", SHAPE), ("unload", SHAPE),
+        ("load", PAINT), ("run", PAINT), ("unload", PAINT),
+    ]
+    assert shape.ready is False and paint.ready is False
+
+
+@pytest.mark.parametrize("swap", [False, True], ids=["dual", "swap"])
+async def test_jobs_in_a_row_share_one_load(tmp_path, swap):
+    scheduler, store, _, _, _, log = await make_logged(tmp_path, swap=swap)
+    first = store.create(JobOptions(texture=False), b"png", ".png")
+    second = store.create(JobOptions(texture=False), b"png", ".png")
+    scheduler.submit(first)
+    scheduler.submit(second)
+    await wait_final(first)
+    await wait_final(second)
+    await scheduler.stop()
+
+    assert [first.state, second.state] == [JobState.succeeded] * 2
+    assert log == [("load", SHAPE), ("run", SHAPE), ("run", SHAPE), ("unload", SHAPE)]
+
+
+@pytest.mark.parametrize("swap", [False, True], ids=["dual", "swap"])
+async def test_job_progress_says_the_model_is_loading(tmp_path, swap):
+    scheduler, store, bus, _, _, _ = await make_logged(tmp_path, swap=swap)
+    record, events = await submit(scheduler, store, bus, JobOptions(texture=False))
+    await wait_final(record)
+    received = await drain(events)
+    await scheduler.stop()
+
+    messages = [(event.stage, event.message) for event in received if event.type == "progress"]
+    assert messages.index(("shape", "Loading shape model")) < messages.index(("shape", "halfway"))
+
+
+@pytest.mark.parametrize("swap", [False, True], ids=["dual", "swap"])
+async def test_failed_load_fails_the_job_and_the_engine_goes_on(tmp_path, swap):
+    scheduler, store, bus, shape, _, _ = await make_logged(tmp_path, swap=swap)
+    shape.start_error = StageError("worker_start_failed", "no weights")
+    failed, _ = await submit(scheduler, store, bus, JobOptions(texture=False))
+    await wait_final(failed)
+    assert (failed.state, failed.error.code, failed.error.message) == (
+        JobState.failed,
+        "worker_start_failed",
+        "no weights",
+    )
+    assert scheduler.ready is True
+
+    shape.start_error = None
+    retried, _ = await submit(scheduler, store, bus, JobOptions(texture=False))
+    await wait_final(retried)
+    await scheduler.stop()
+    assert retried.state == JobState.succeeded
+
+
+async def test_cancel_while_loading_ends_cancelled_and_releases(tmp_path):
+    scheduler, store, bus, shape, _, log = await make_logged(tmp_path)
+    entered, gate = asyncio.Event(), asyncio.Event()
+    load = shape.start
+
+    async def gated_start():
+        entered.set()
+        await gate.wait()
+        await load()
+
+    shape.start = gated_start
+    record, events = await submit(scheduler, store, bus, JobOptions(texture=False))
+    await asyncio.wait_for(entered.wait(), 5)
+    assert scheduler.cancel(record.job_id) is True
+    gate.set()
+    await wait_final(record)
+    received = await drain(events)
+    await scheduler.stop()
+
+    assert record.state == JobState.cancelled
+    assert received[-1].type == "cancelled"
+    assert ("run", SHAPE) not in log
+    assert shape.ready is False
+
+
+class FlakyUnload(FakeRunner):
+    """Its first `unload_failures` unloads raise, as a busy driver would."""
+
+    def __init__(self, *args, unload_failures: int, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.unload_failures = unload_failures
+
+    async def unload(self) -> None:
+        if self.unload_failures:
+            self.unload_failures -= 1
+            raise RuntimeError("driver busy")
+        await super().unload()
+
+
+async def test_failed_unload_does_not_stop_the_loop(tmp_path):
+    shape = FlakyUnload(SHAPE, unload_failures=1)
+    scheduler, store, bus, _, _ = await make(tmp_path, shape=shape)
+    first, _ = await submit(scheduler, store, bus, JobOptions(texture=False))
+    await wait_final(first)
+    second, _ = await submit(scheduler, store, bus, JobOptions(texture=False))
+    await wait_final(second)
+    await scheduler.stop()
+
+    assert [first.state, second.state] == [JobState.succeeded] * 2
+    assert len(shape.runs) == 2
 
 
 async def make_swap(tmp_path, shape_delay=0.05, paint_delay=0.05, paint_start_error=None):
@@ -188,6 +323,8 @@ async def make_swap(tmp_path, shape_delay=0.05, paint_delay=0.05, paint_start_er
 def never_both_loaded(log) -> bool:
     loaded = set()
     for action, name in log:
+        if action == "run":
+            continue
         if action == "load":
             loaded.add(name)
             if len(loaded) > 1:
@@ -205,7 +342,21 @@ async def test_swap_batches_by_stage(tmp_path):
         await wait_final(record)
     await scheduler.stop()
     assert [record.state for record in records] == [JobState.succeeded] * 3
-    assert log == [("load", SHAPE), ("unload", SHAPE), ("load", PAINT)]
+    assert log == [("load", SHAPE), ("unload", SHAPE), ("load", PAINT), ("unload", PAINT)]
+    assert never_both_loaded(log)
+
+
+async def test_swap_textured_job_loads_and_releases_each_stage(tmp_path):
+    scheduler, store, bus, _, _, log = await make_logged(tmp_path, swap=True)
+    record, _ = await submit(scheduler, store, bus)
+    await wait_final(record)
+    await scheduler.stop()
+
+    assert record.state == JobState.succeeded
+    assert log == [
+        ("load", SHAPE), ("run", SHAPE), ("unload", SHAPE),
+        ("load", PAINT), ("run", PAINT), ("unload", PAINT),
+    ]
     assert never_both_loaded(log)
 
 
@@ -226,7 +377,7 @@ async def test_swap_back_when_new_shape_work_arrives(tmp_path):
     assert second_shape_start >= first_paint_end  # it waited for the paint batch
     assert log == [
         ("load", SHAPE), ("unload", SHAPE), ("load", PAINT), ("unload", PAINT),
-        ("load", SHAPE), ("unload", SHAPE), ("load", PAINT),
+        ("load", SHAPE), ("unload", SHAPE), ("load", PAINT), ("unload", PAINT),
     ]
     assert never_both_loaded(log)
 
@@ -238,7 +389,7 @@ async def test_swap_untextured_jobs_never_load_paint(tmp_path):
         await wait_final(record)
     await scheduler.stop()
     assert [record.state for record in records] == [JobState.succeeded] * 2
-    assert log == [("load", SHAPE)]
+    assert log == [("load", SHAPE), ("unload", SHAPE)]
 
 
 async def test_swap_cancel_while_waiting_for_paint(tmp_path):
@@ -254,7 +405,7 @@ async def test_swap_cancel_while_waiting_for_paint(tmp_path):
     assert ("load", PAINT) not in log
 
 
-async def test_swap_paint_load_failure_fails_waiting_jobs(tmp_path):
+async def test_swap_paint_load_failure_fails_the_textured_job(tmp_path):
     error = StageError("worker_start_failed", "paint worker exited with code 1 while loading")
     scheduler, store, bus, log = await make_swap(tmp_path, paint_start_error=error)
     textured, _ = await submit(scheduler, store, bus)
@@ -263,30 +414,12 @@ async def test_swap_paint_load_failure_fails_waiting_jobs(tmp_path):
     await wait_final(untextured)
     await scheduler.stop()
     assert textured.state == JobState.failed
-    assert textured.error.code == "worker_unavailable"
+    assert (textured.error.code, textured.error.message) == (
+        "worker_start_failed",
+        "paint worker exited with code 1 while loading",
+    )
     assert untextured.state == JobState.succeeded
-    assert log == [("load", SHAPE), ("unload", SHAPE), ("load", SHAPE)]
-
-
-async def test_swap_double_load_failure_reports_and_fails_jobs(tmp_path):
-    """Final review #1: when the stage and the recovery both fail to load, the engine says why
-    instead of staying not-ready with no error, and no queued job is left hanging."""
-    scheduler, store, bus, log = await make_swap(tmp_path, shape_delay=0.2)
-    shape, paint = scheduler.runners
-    textured, _ = await submit(scheduler, store, bus)
-    waiting, _ = await submit(scheduler, store, bus)
-    while textured.state != JobState.shaping:
-        await asyncio.sleep(0.01)
-    paint.start_error = StageError("worker_start_failed", "paint out of memory while loading")
-    shape.start_error = StageError("worker_start_failed", "shape out of memory while loading")
-    await wait_final(textured)
-    await wait_final(waiting)
-    await scheduler.stop()
-    assert textured.error.code == "worker_unavailable"
-    assert waiting.state == JobState.failed
-    assert scheduler.ready is False
-    assert scheduler.start_error.code == "worker_unavailable"
-    assert scheduler.start_error.message == "Neither the shape nor the paint worker could be loaded; see the engine log"
+    assert log == [("load", SHAPE), ("unload", SHAPE), ("load", SHAPE), ("unload", SHAPE)]
 
 
 async def test_swap_unexpected_load_error_does_not_stop_the_loop(tmp_path):
@@ -325,11 +458,11 @@ RIG = "rigged.glb"
 DUAL_CARDS = {"shape": "cuda:0", "paint": "cuda:1", "rig": "cuda:1"}
 
 
-async def make_rig(tmp_path, swap=False, cards=DUAL_CARDS, rig_fits=True, delay=0.0, rig_error=None):
+async def make_rig(tmp_path, swap=False, cards=DUAL_CARDS, delay=0.0, rig_error=None):
     log: list[tuple[str, str]] = []
     shape = FakeRunner(SHAPE, delay=delay, log=log)
     paint = FakeRunner(PAINT, delay=delay, log=log)
-    rig = FakeRunner(RIG, delay=delay, log=log, fits_result=rig_fits, fail_with=rig_error)
+    rig = FakeRunner(RIG, delay=delay, log=log, fail_with=rig_error)
     store, bus = JobStore(tmp_path), EventBus()
     scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=cards)
     await scheduler.start()
@@ -388,42 +521,30 @@ async def test_rig_never_overlaps_paint_on_shared_card(tmp_path):
     await scheduler.stop()
 
 
-async def test_rig_parks_paint_when_card_is_full_and_ready_stays_true(tmp_path):
-    scheduler, store, bus, shape, paint, rig, log = await make_rig(tmp_path, rig_fits=False)
-    ready_during_rig = []
-    original = rig.run
+@pytest.mark.parametrize("swap", [False, True], ids=["dual", "swap"])
+async def test_rig_runs_with_no_worker_on_its_card(tmp_path, swap):
+    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path, swap=swap)
+    readiness = []
+    run = rig.run
 
-    async def run(task, on_progress):
-        ready_during_rig.append(scheduler.ready)
-        return await original(task, on_progress)
+    async def rig_run(task, on_progress):
+        readiness.append((scheduler.ready, shape.ready, paint.ready))
+        return await run(task, on_progress)
 
-    rig.run = run
-    first, _ = await submit(scheduler, store, bus, JobOptions(rig=True))
-    await wait_final(first)
-    assert ("unload", PAINT) in log
-    assert ready_during_rig == [True]
-    assert scheduler.ready is True
-    second, _ = await submit(scheduler, store, bus, JobOptions())
-    await wait_final(second)
-    assert second.state == JobState.succeeded
-    assert log[-1] == ("load", PAINT)
-    assert ("unload", SHAPE) not in log  # shape sits on the other card
+    rig.run = rig_run
+    rigged, _ = await submit(scheduler, store, bus, JobOptions(rig=True))
+    waiting, _ = await submit(scheduler, store, bus, JobOptions())
+    await wait_final(rigged)
+    await wait_final(waiting)
     await scheduler.stop()
 
-
-async def test_swap_mode_rig_unloads_loaded_worker_when_it_does_not_fit(tmp_path):
-    one_card = {"shape": "cuda:0", "paint": "cuda:0", "rig": "cuda:0"}
-    scheduler, store, bus, shape, paint, rig, log = await make_rig(tmp_path, swap=True, cards=one_card, rig_fits=False)
-    record, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
-    await wait_final(record)
-    assert record.state == JobState.succeeded
-    workers = [entry for entry in log if entry[1] != RIG]  # the rig fake logs its no-op start
-    assert workers == [("load", SHAPE), ("unload", SHAPE)]
-    following, _ = await submit(scheduler, store, bus, JobOptions(texture=False))
-    await wait_final(following)
-    assert following.state == JobState.succeeded
-    assert log[-1] == ("load", SHAPE)
-    await scheduler.stop()
+    assert [rigged.state, waiting.state] == [JobState.succeeded] * 2
+    assert len(readiness) == 1
+    engine_ready, shape_ready, paint_ready = readiness[0]
+    assert engine_ready is True
+    assert paint_ready is False  # paint shares the rig card in dual mode
+    if swap:
+        assert shape_ready is False
 
 
 async def test_rig_failure_fails_job_with_its_code(tmp_path):
@@ -449,7 +570,7 @@ async def test_cancel_while_painting_skips_rig(tmp_path):
 
 
 async def test_jobs_without_rig_never_touch_rig_runner(tmp_path):
-    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path, rig_fits=False)
+    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path)
     for options in (JobOptions(), JobOptions(texture=False)):
         record, _ = await submit(scheduler, store, bus, options)
         await wait_final(record)
@@ -474,93 +595,61 @@ async def test_cancel_queued_rig_only_job(tmp_path):
     await scheduler.stop()
 
 
-async def test_swap_mode_stays_ready_after_rig_parks_the_loaded_worker(tmp_path):
-    one_card = {"shape": "cuda:0", "paint": "cuda:0", "rig": "cuda:0"}
-    scheduler, store, bus, shape, paint, rig, log = await make_rig(tmp_path, swap=True, cards=one_card, rig_fits=False)
-    ready_during_rig = []
-    original = rig.run
+class UnloadFailsTwice(FakeRunner):
+    """Its first two unloads raise, as a busy driver would."""
 
-    async def run(task, on_progress):
-        ready_during_rig.append(scheduler.ready)
-        return await original(task, on_progress)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.unload_failures = 2
 
-    rig.run = run
-    record, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
-    await wait_final(record)
-    assert ready_during_rig == [True]
-    assert scheduler.ready is True  # the API's gate: new jobs must not get 503 engine_not_ready
-    await scheduler.stop()
-
-
-class FailingUnload(FakeRunner):
     async def unload(self) -> None:
-        raise RuntimeError("driver busy")
+        if self.unload_failures:
+            self.unload_failures -= 1
+            raise RuntimeError("driver busy")
+        await super().unload()
 
 
 async def test_failed_unload_fails_the_rig_job_and_keeps_the_rig_loop(tmp_path):
     log: list[tuple[str, str]] = []
-    shape, paint = FakeRunner(SHAPE, log=log), FailingUnload(PAINT, log=log)
-    rig = FakeRunner(RIG, log=log, fits_result=False)
+    shape, paint = FakeRunner(SHAPE, log=log), UnloadFailsTwice(PAINT, log=log)
+    rig = FakeRunner(RIG, log=log)
     store, bus = JobStore(tmp_path), EventBus()
     scheduler = Scheduler(store, bus, shape, paint, rig=rig, cards=DUAL_CARDS)
     await scheduler.start()
-    first, events = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    first, events = await submit(scheduler, store, bus, JobOptions(rig=True))
     await wait_final(first)
     assert first.state == JobState.failed
     assert (await drain(events))[-1].error.code == "worker_unavailable"
-    rig.fits_result = True
     second, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
     await wait_final(second)
     assert second.state == JobState.succeeded
     await scheduler.stop()
 
 
-class FailsOnce(FakeRunner):
+class MissingOutputOnce(FakeRunner):
+    """Its first result names a file that was never written, so the engine fails that job itself."""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.starts = 0
+        self.broken = True
 
-    async def start(self) -> None:
-        self.starts += 1
-        if self.starts == 2:  # the reload right after rigging
-            raise StageError("worker_start_failed", "VRAM not released yet")
-        await super().start()
-
-
-async def test_failed_reload_after_parking_keeps_engine_ready_and_retries(tmp_path):
-    log: list[tuple[str, str]] = []
-    shape, paint = FakeRunner(SHAPE, log=log), FailsOnce(PAINT, log=log)
-    rig = FakeRunner(RIG, log=log, fits_result=False)
-    store, bus = JobStore(tmp_path), EventBus()
-    scheduler = Scheduler(store, bus, shape, paint, rig=rig, cards=DUAL_CARDS)
-    await scheduler.start()
-    rigged, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
-    await wait_final(rigged)
-    failed, _ = await submit(scheduler, store, bus, JobOptions())
-    await wait_final(failed)
-    assert failed.state == JobState.failed and failed.error.code == "worker_unavailable"
-    assert scheduler.ready is True
-    retried, _ = await submit(scheduler, store, bus, JobOptions())
-    await wait_final(retried)
-    assert retried.state == JobState.succeeded
-    await scheduler.stop()
+    async def run(self, task: StageTask, on_progress: ProgressCallback) -> StageResult:
+        if self.broken:
+            self.broken = False
+            return StageResult(output=task.job_dir / "missing.glb", vertices=1, faces=1)
+        return await super().run(task, on_progress)
 
 
 async def test_unexpected_error_in_a_job_does_not_end_its_stage_loop(tmp_path):
-    scheduler, store, bus, shape, paint, rig, _log = await make_rig(tmp_path)
-
-    async def boom():
-        raise RuntimeError("unexpected")
-
-    rig.fits = boom
-    first, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    scheduler, store, bus, _, _ = await make(tmp_path, shape=MissingOutputOnce("shape.glb"))
+    first, _ = await submit(scheduler, store, bus, JobOptions(texture=False))
     await wait_final(first)
     assert first.state == JobState.failed
-    del rig.fits
-    second, _ = await submit(scheduler, store, bus, JobOptions(texture=False, rig=True))
+    assert first.error.code == "internal_error"
+    second, _ = await submit(scheduler, store, bus, JobOptions(texture=False))
     await wait_final(second)
-    assert second.state == JobState.succeeded
     await scheduler.stop()
+    assert second.state == JobState.succeeded
 
 
 class TexturedRunner(FakeRunner):

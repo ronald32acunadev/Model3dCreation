@@ -35,7 +35,7 @@ Designed for Linux `x86_64` workstations with NVIDIA GPUs (targeting dual RTX 50
 - **100% Local Image-to-3D Pipeline**: Converts 2D images (`PNG`/`JPEG` up to 20 MB) into 3D meshes (`shape`), generates PBR textures (`paint`), and optionally rigs skeletons (`rig`) into `.glb` assets without cloud dependencies.
 - **Standalone Skeletal Rigging**: Accepts existing `.glb` models (up to 200 MB) via `/v1/rig-jobs` to generate armatures and skinning weights using UniRig.
 - **Automatic Multi-GPU & Single-GPU Placement**: Probes NVIDIA GPUs and PCIe link bandwidth at startup, assigning stages across two GPUs or dynamically swapping stage workers on a single GPU.
-- **Fault-Tolerant Process Workers**: Runs `shape` and `paint` inside isolated `ProcessStageRunner` subprocesses with configurable task timeouts, crash backoff, and explicit VRAM unloading.
+- **Fault-Tolerant Process Workers**: Runs `shape` and `paint` inside isolated `ProcessStageRunner` subprocesses with configurable task timeouts. Each worker loads its model for its task and unloads when no task waits for it, so an idle engine holds no VRAM.
 - **PySide6 Desktop Client & Setup Wizard**: Provides an interactive first-run installer (probing drivers, `nvcc`, compilers, and downloading ~31 GB base + ~8 GB skeleton weights with resumable step fingerprints), real-time job progress over WebSockets, a local model library, and an embedded QtWebEngine 3D viewer (`English` and `Español`).
 - **Zero-Dependency Blender Extension**: Connects Blender (`>= 4.2.0`) directly to the local engine and shared model library using Python's standard library (`urllib`).
 
@@ -47,8 +47,8 @@ When `model3d_engine` starts, `model3d_engine.gpu.probe` and `model3d_engine.gpu
 
 | Run Mode | Minimum Free VRAM | Behavior |
 | :--- | :--- | :--- |
-| `dual_gpu` | Two GPUs (`>= 10.4 GiB` on paint card, `>= 9.2 GiB` on shape card) | Keeps `shape` resident on one GPU and `paint` resident on the GPU with the most free VRAM (tie-broken by PCIe link bandwidth). `rig` shares the paint GPU. |
-| `single_gpu_resident` | One GPU (`>= 17.5 GiB` free) | Keeps both `shape` and `paint` workers loaded simultaneously on the same GPU. |
+| `dual_gpu` | Two GPUs (`>= 10.4 GiB` on paint card, `>= 9.2 GiB` on shape card) | Runs `shape` on one GPU and `paint` on the GPU with the most free VRAM (tie-broken by PCIe link bandwidth). `rig` shares the paint GPU. |
+| `single_gpu_resident` | One GPU (`>= 17.5 GiB` free) | `shape` and `paint` take turns on the same GPU, one loaded at a time. |
 | `single_gpu_swap` | One GPU (`>= 10.4 GiB` free) | Runs `shape` and `paint` sequentially on the same GPU, unloading each worker process between stages to free VRAM. |
 | `shape_only` | One GPU (`>= 9.2 GiB` free) | Runs untextured mesh generation (`"texture": false`) and optional rigging on a single GPU when VRAM is insufficient for `paint`. |
 | `unsupported` | Below `9.2 GiB` free or no supported GPU | Starts the HTTP API so `/v1/health` can report the hardware diagnostic reason; job submissions return `503 engine_not_ready`. |
@@ -249,7 +249,7 @@ All engine and client path overrides are configured via environment variables (`
 | `MODEL3D_ALLOWED_ORIGINS` | `""` (empty) | Comma-separated list of browser `Origin` URLs permitted to send `POST` or `DELETE` requests. |
 | `MODEL3D_GENERATOR` | `hunyuan` | Generation pipeline: `hunyuan` (Hunyuan3D shape + paint) or `trellis2` (TRELLIS.2, see above). Other values exit at startup. |
 | `MODEL3D_TRELLIS_DIR` | `<repo_or_install>/vendor/TRELLIS.2` | Path to the TRELLIS.2 checkout containing its `.venv`. |
-| `MODEL3D_STAGE_TIMEOUT_S` | `900` | Maximum seconds a single stage task may run before its worker process is killed and respawned. |
+| `MODEL3D_STAGE_TIMEOUT_S` | `900` | Maximum seconds a single stage task may run before its worker process is killed; the next task loads it again. |
 
 ### Diagnostic & Packaging Scripts
 

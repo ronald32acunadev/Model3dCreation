@@ -7,7 +7,7 @@ import pytest
 
 from model3d_contracts.jobs import JobOptions
 from model3d_engine.stages.protocol import RIG_INPUT, StageError, StageTask
-from model3d_engine.stages.rig import RIG_REQUIRED_MIB, RigRunner, rig_availability
+from model3d_engine.stages.rig import RigRunner, rig_availability
 
 pytestmark = pytest.mark.anyio
 STUB = Path(__file__).with_name("unirig_stub.py")
@@ -39,10 +39,10 @@ def make_task(tmp_path: Path) -> StageTask:
     return StageTask(job_id="j1", job_dir=job_dir, options=JobOptions(rig=True), seed=1)
 
 
-def make_runner(tmp_path: Path, device="cuda:1", free=lambda: None, **kwargs) -> RigRunner:
+def make_runner(tmp_path: Path, device="cuda:1", **kwargs) -> RigRunner:
     unirig, hf_home = unirig_tree(tmp_path)
     env = {"CUDA_DEVICE_ORDER": "PCI_BUS_ID", "HF_HOME": str(hf_home), "HF_HUB_OFFLINE": "1"}
-    return RigRunner(unirig, hf_home, device, free, env=env, script=STUB, **kwargs)
+    return RigRunner(unirig, hf_home, device, env=env, script=STUB, **kwargs)
 
 
 async def test_rig_runner_forwards_progress_and_returns_result(tmp_path):
@@ -106,13 +106,6 @@ async def test_rig_runner_maps_index_through_visible_devices(tmp_path, monkeypat
     assert json.loads(next(task.job_dir.rglob("env.json")).read_text())["CUDA_VISIBLE_DEVICES"] == "GPU-bbb"
 
 
-async def test_fits_compares_free_vram(tmp_path):
-    assert RIG_REQUIRED_MIB == 6100
-    assert await make_runner(tmp_path / "a", free=lambda: 6099).fits() is False
-    assert await make_runner(tmp_path / "b", free=lambda: 6100).fits() is True
-    assert await make_runner(tmp_path / "c", free=lambda: None).fits() is True
-
-
 def test_rig_availability_reports_each_missing_piece(tmp_path):
     assert rig_availability(*unirig_tree(tmp_path / "ok")) == (True, None)
     assert rig_availability(*unirig_tree(tmp_path / "noclone", clone=False)) == (
@@ -131,7 +124,7 @@ def test_rig_availability_reports_each_missing_piece(tmp_path):
 
 async def test_runner_ready_follows_availability(tmp_path):
     unirig, hf_home = unirig_tree(tmp_path, weights=False)
-    runner = RigRunner(unirig, hf_home, "cuda:0", lambda: None)
+    runner = RigRunner(unirig, hf_home, "cuda:0")
     await runner.start()
     assert runner.ready is False
     assert runner.reason == "UniRig weights are missing from data/hf (see docs/setup.md)"

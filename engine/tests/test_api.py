@@ -17,11 +17,6 @@ from model3d_engine.stages.protocol import StageError
 from .fakes import FakeRunner
 
 
-class NeverReady(FakeRunner):
-    async def start(self) -> None:
-        self.ready = False
-
-
 class FailingStart(FakeRunner):
     async def start(self) -> None:
         raise StageError("worker_start_failed", "shape worker exited with code 1 while loading")
@@ -165,21 +160,25 @@ def test_rejects_bad_options(tmp_path):
         assert_error(client.post("/v1/jobs", files={"image": ("a.png", image_bytes())}, data={"options": "{oops"}), 400, "invalid_options")
 
 
-def test_not_ready_returns_503(tmp_path):
-    with make_client(tmp_path, shape=NeverReady("shape.glb"), wait_ready=False) as client:
-        assert_error(post_job(client), 503, "engine_not_ready")
+def test_model_load_failure_fails_the_job_and_health_stays_ready(tmp_path):
+    with make_client(tmp_path, shape=FailingStart("shape.glb")) as client:
+        health = client.get("/v1/health").json()
+        assert (health["ready"], health["error"]) == (True, None)
+        job_id = post_job(client, options={"texture": False}).json()["job_id"]
+        body = wait_state(client, job_id, "failed")
+        assert body["error"] == {
+            "code": "worker_start_failed",
+            "message": "shape worker exited with code 1 while loading",
+        }
+        assert client.get("/v1/health").json()["ready"] is True
 
 
-def test_api_answers_while_models_load(tmp_path):
-    """Review finding 2: the port answers during startup, with health not ready and 503 on submit."""
-    with make_client(tmp_path, shape=SlowStart("shape.glb"), wait_ready=False) as client:
-        assert client.get("/v1/health").json()["ready"] is False
-        assert_error(post_job(client), 503, "engine_not_ready")
-        deadline = time.monotonic() + 5
-        while not client.get("/v1/health").json()["ready"]:
-            assert time.monotonic() < deadline
-            time.sleep(0.02)
-        assert post_job(client).status_code == 202
+def test_api_answers_while_a_model_loads(tmp_path):
+    """A slow model load delays the job that needs it, not the port or the submissions."""
+    with make_client(tmp_path, shape=SlowStart("shape.glb")) as client:
+        assert client.get("/v1/health").json()["ready"] is True
+        job_id = post_job(client, options={"texture": False}).json()["job_id"]
+        wait_state(client, job_id, "succeeded", timeout=10.0)
 
 
 def test_result_before_finish_is_409_then_glb_after(tmp_path):
@@ -235,22 +234,6 @@ def test_shape_only_refuses_texture(tmp_path):
         assert error["message"] == "This engine runs without the paint stage: send \"texture\": false"
         assert_error(post_job(client, b"not an image"), 400, "invalid_image")  # input checks come first
         assert post_job(client, options={"texture": False}).status_code == 202
-
-
-def test_startup_failure_is_reported_in_health(tmp_path):
-    """Review advisory: a failed initial load shows in health instead of ready: false forever."""
-    with make_client(tmp_path, shape=FailingStart("shape.glb"), wait_ready=False) as client:
-        deadline = time.monotonic() + 5
-        while (health := client.get("/v1/health").json())["error"] is None:
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
-        assert health["ready"] is False
-        assert health["error"] == {
-            "code": "worker_start_failed",
-            "message": "shape worker exited with code 1 while loading",
-        }
-        error = assert_error(post_job(client), 503, "engine_not_ready")
-        assert "shape worker exited with code 1 while loading" in error["message"]
 
 
 def test_cross_origin_post_and_delete_are_forbidden(tmp_path):

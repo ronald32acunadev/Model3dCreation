@@ -106,19 +106,10 @@ def build_engine(
     rig = rig_runner
     rig_gpu = (plan.paint if plan.texture else plan.shape) if plan.name != ModeName.unsupported else None
     if rig is None and rig_gpu is not None:
-
-        def rig_free_mib() -> int | None:
-            try:
-                used, total = memory_reader()[rig_gpu.bus_id]
-            except Exception:
-                return None
-            return total - used
-
         rig = RigRunner(
             settings.unirig_dir,
             settings.hf_home,
             devices.paint if plan.texture else devices.shape,
-            rig_free_mib,
             env=env,
             task_timeout_s=settings.stage_timeout_s,
         )
@@ -128,7 +119,7 @@ def build_engine(
     else:
         cards = {"shape": devices.shape, "paint": devices.paint, "rig": devices.paint if plan.texture else devices.shape}
     store, bus = JobStore(settings.jobs_dir), EventBus()
-    swap = plan.name in (ModeName.single_gpu_swap, ModeName.shape_only)
+    swap = plan.name in (ModeName.single_gpu_swap, ModeName.single_gpu_resident, ModeName.shape_only)
     scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=cards)
     if plan.name == ModeName.unsupported:
         scheduler.start_error = JobError(code=ModeUnavailable.code, message=plan.reason)

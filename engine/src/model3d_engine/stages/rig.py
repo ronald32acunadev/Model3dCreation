@@ -8,7 +8,6 @@ import asyncio
 import collections
 import os
 import signal
-from collections.abc import Callable
 from pathlib import Path
 
 from model3d_engine.stages.protocol import (
@@ -21,8 +20,6 @@ from model3d_engine.stages.protocol import (
     StageTask,
 )
 
-# Measured peak of one task on an RTX 5070 (5514 MiB, 2026-10-22) plus the engine's 512 MiB margin.
-RIG_REQUIRED_MIB = 6100
 UNIRIG_SCRIPT = Path(__file__).with_name("unirig_job.py")
 UNIRIG_CHECKPOINTS = ("skeleton/articulation-xl_quantization_256/model.ckpt", "skin/articulation-xl/model.ckpt")
 
@@ -59,7 +56,6 @@ class RigRunner:
         unirig_dir: Path,
         hf_home: Path,
         device: str,
-        free_mib: Callable[[], int | None],
         env: dict[str, str] | None = None,
         python: Path | None = None,
         script: Path | None = None,
@@ -68,7 +64,6 @@ class RigRunner:
         self.unirig_dir = unirig_dir
         self.hf_home = hf_home
         self.device = device
-        self.free_mib = free_mib
         self.env = env or {}
         self.python = python or unirig_dir / ".venv/bin/python"
         self.script = script or UNIRIG_SCRIPT
@@ -84,11 +79,6 @@ class RigRunner:
 
     async def stop(self) -> None:
         pass
-
-    async def fits(self) -> bool:
-        """Whether the rig card has room for one task now (unknown counts as room)."""
-        free = await asyncio.get_running_loop().run_in_executor(None, self.free_mib)
-        return free is None or free >= RIG_REQUIRED_MIB
 
     def _child_env(self) -> dict[str, str]:
         env = {**os.environ, **self.env}

@@ -146,9 +146,8 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Load the workers in the background so the port answers at once: health reports
-        # "ready": false and submissions get 503 engine_not_ready until both are loaded.
-        # A start error set before startup (no usable GPU) means there is nothing to load.
+        # The scheduler loads no model at start, so starting only starts its loops. A start error
+        # set before startup (no usable GPU) means the loops must not run.
         startup = None
         if scheduler.start_error is None:
             startup = asyncio.create_task(scheduler.start())
