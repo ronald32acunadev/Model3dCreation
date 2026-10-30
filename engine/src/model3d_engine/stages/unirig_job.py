@@ -4,7 +4,7 @@ Usage: python unirig_job.py --unirig-dir DIR --input GLB --output GLB --workdir 
 
 It follows UniRig's launch/inference scripts (generate_skeleton.sh, generate_skin.sh, merge.sh)
 with their defaults, but calls their Python modules directly: extract.sh runs `pip install` on
-every call. Protocol on stdout: `PROGRESS <0..1> <message>` lines, then `RESULT <vertices> <faces>`;
+every call. A last step, smooth_skin.py, smooths the merged skin weights over the surface. Protocol on stdout: `PROGRESS <0..1> <message>` lines, then `RESULT <vertices> <faces>`;
 on failure `ERROR <code> <message>` and a non-zero exit. UniRig's own output goes to stderr.
 Only the standard library is imported at module level, so the engine's tests can import it.
 """
@@ -21,6 +21,7 @@ SKELETON_TASK = "configs/task/quick_inference_skeleton_articulationxl_ar_256.yam
 SKIN_TASK = "configs/task/quick_inference_unirig_skin.yaml"
 SEED = 12345
 INFERENCE_FACES = 50000  # what UniRig samples its point cloud from, not the output mesh
+SMOOTH_SCRIPT = Path(__file__).with_name("smooth_skin.py")
 # torch>=2.6 loads checkpoints with weights_only=True, and UniRig's skin checkpoint pickles a
 # box.Box; allow that one class instead of turning the check off.
 RUN_BOOTSTRAP = (
@@ -35,7 +36,8 @@ STEP_PROGRESS = {
     "skeleton": (0.45, "Skeleton ready"),
     "extract skin": (0.5, "Skeleton prepared"),
     "skin": (0.85, "Skin weights ready"),
-    "merge": (1.0, "Skeleton added"),
+    "merge": (0.95, "Skeleton added"),
+    "smooth": (1.0, "Skin weights smoothed"),
 }
 
 
@@ -64,7 +66,7 @@ def npz_file(npz: Path, source: Path) -> Path:
 def step_commands(python: str, mesh: Path, output: Path, work: Path, stamp: str) -> list[tuple[str, list[str], Path]]:
     """(name, command, file it must produce) for each UniRig step, in order."""
     npz = work / "npz"
-    skeleton, skin = work / "skeleton.fbx", work / "skin.fbx"
+    skeleton, skin, merged = work / "skeleton.fbx", work / "skin.fbx", work / "merged.glb"
 
     def extract(source: Path) -> list[str]:
         return [
@@ -90,7 +92,8 @@ def step_commands(python: str, mesh: Path, output: Path, work: Path, stamp: str)
         ("extract skin", extract(skeleton), npz_file(npz, skeleton)),
         ("skin", run(SKIN_TASK, skeleton, skin, "--data_name=raw_data.npz"), skin),
         ("merge", [python, "-m", "src.inference.merge", f"--require_suffix={SUFFIXES}", "--num_runs=1", "--id=0",
-                   f"--source={skin}", f"--target={mesh}", f"--output={output}"], output),
+                   f"--source={skin}", f"--target={mesh}", f"--output={merged}"], merged),
+        ("smooth", [python, str(SMOOTH_SCRIPT), str(merged), str(output)], output),
     ]
 
 
