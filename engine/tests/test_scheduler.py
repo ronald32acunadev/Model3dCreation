@@ -6,7 +6,7 @@ from model3d_contracts.jobs import JobOptions, JobState
 from model3d_engine.jobs.events import EventBus
 from model3d_engine.jobs.scheduler import Scheduler
 from model3d_engine.jobs.store import JobStore
-from model3d_engine.stages.protocol import StageError
+from model3d_engine.stages.protocol import ProgressCallback, StageError, StageResult, StageTask
 
 from .fakes import FakeRunner
 
@@ -561,3 +561,24 @@ async def test_unexpected_error_in_a_job_does_not_end_its_stage_loop(tmp_path):
     await wait_final(second)
     assert second.state == JobState.succeeded
     await scheduler.stop()
+
+
+class TexturedRunner(FakeRunner):
+    """A shape stage that also textures, like TRELLIS.2: its result is final."""
+
+    async def run(self, task: StageTask, on_progress: ProgressCallback) -> StageResult:
+        result = await super().run(task, on_progress)
+        return StageResult(output=result.output, vertices=result.vertices, faces=result.faces, textured=True)
+
+
+async def test_textured_shape_result_skips_paint(tmp_path):
+    scheduler, store, bus, _, paint = await make(tmp_path, shape=TexturedRunner("model.glb"))
+    record, events = await submit(scheduler, store, bus)
+    await wait_final(record)
+    received = await drain(events)
+    await scheduler.stop()
+
+    assert record.state == JobState.succeeded
+    assert paint.runs == []
+    assert (record.dir / "model.glb").exists()
+    assert received[-1].stats.textured is True

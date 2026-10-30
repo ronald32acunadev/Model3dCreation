@@ -18,7 +18,7 @@ Five independent `uv` projects, each with its own `pyproject.toml`, lockfile and
 | `blender/` | Blender add-on `blender/model3d/` (stdlib `urllib` only, no contracts dependency); the uv project only runs its tests outside Blender. |
 | `packaging/` | Builds the `.deb` (`packaging/deb/build.sh`); the uv project only runs its tests. |
 
-`vendor/Hunyuan3D-2.1` and `vendor/UniRig` (with its own `.venv`) are not tracked; the engine path-depends on `vendor/Hunyuan3D-2.1/hy3dpaint/custom_rasterizer`, so `uv sync` in `engine/` needs that clone and `nvcc` (`CUDA_HOME`). `engine/patches/hunyuan3d-paint-device.patch` must be applied to the Hunyuan clone (it removes hardcoded `cuda:0`).
+`vendor/Hunyuan3D-2.1`, `vendor/UniRig`, and the optional `vendor/TRELLIS.2` (each of the last two with its own `.venv`) are not tracked; the engine path-depends on `vendor/Hunyuan3D-2.1/hy3dpaint/custom_rasterizer`, so `uv sync` in `engine/` needs that clone and `nvcc` (`CUDA_HOME`). `engine/patches/hunyuan3d-paint-device.patch` must be applied to the Hunyuan clone (it removes hardcoded `cuda:0`).
 
 ## Commands
 
@@ -47,11 +47,11 @@ No linter or formatter is configured.
 `__main__.build_engine` wires everything:
 
 1. **GPU placement** (`gpu/probe.py`, `gpu/modes.py`): detected GPUs pick a run mode — `dual_gpu`, `single_gpu_resident`, `single_gpu_swap`, `shape_only`, or `unsupported`. `unsupported` still starts the API; jobs then fail with the mode's error. Rigging runs on the paint card (shape card in `shape_only`).
-2. **Stage workers** (`stages/process.py`): each stage (`shape`, `paint`) is a `ProcessStageRunner` — a separate process created from a `module:factory` string (`stages/hunyuan.py:make_shape_stage` / `make_paint_stage`) that keeps its model resident on one device. It is killed on timeout, respawned with backoff after a crash, and can be `unload`ed/restarted to free VRAM (swap modes). Tests inject fake factories through those strings. `stages/rig.py` runs UniRig as a subprocess in UniRig's own venv.
+2. **Stage workers** (`stages/process.py`): each stage (`shape`, `paint`) is a `ProcessStageRunner` — a separate process created from a `module:factory` string (`stages/hunyuan.py:make_shape_stage` / `make_paint_stage`) that keeps its model resident on one device. It is killed on timeout, respawned with backoff after a crash, and can be `unload`ed/restarted to free VRAM (swap modes). Tests inject fake factories through those strings. `stages/rig.py` runs UniRig as a subprocess in UniRig's own venv. With `MODEL3D_GENERATOR=trellis2`, the shape slot hosts `stages/trellis.py`, a proxy that drives a persistent `stages/trellis_worker.py` process in `vendor/TRELLIS.2/.venv` over JSON lines (the worker must not import engine code); it returns a textured result, so the scheduler skips paint (`NoStage`), and it runs on one card chosen by `gpu/modes.py:choose_generator_mode`.
 3. **Scheduler** (`jobs/scheduler.py`): pipelines jobs shape → paint → optional rig, one task per card at a time, parking/reloading workers in swap modes. Cancel is immediate when queued, otherwise at the next stage boundary. `JobStore` persists records under `$MODEL3D_HOME/jobs` (default `data/`); `EventBus` publishes progress/completed/failed/cancelled events.
 4. **API** (`api/app.py`): `/v1/health`, `POST /v1/jobs` (image), `POST /v1/rig-jobs` (GLB to rig only), `GET|DELETE /v1/jobs/{id}`, `/v1/jobs/{id}/result`, WebSocket `/v1/jobs/{id}/events`. Request errors answer `{"error": {"code", "message"}}`; a stage's `StageError(code, message)` becomes the failed job's `JobError`.
 
-Configuration is env-only (`config.load_settings`): `MODEL3D_HOME`, `MODEL3D_HUNYUAN_DIR`, `MODEL3D_UNIRIG_DIR`, `MODEL3D_HOST`, `MODEL3D_PORT`, `MODEL3D_MODE`, `MODEL3D_SHAPE_BUS` + `MODEL3D_PAINT_BUS` (both or neither, PCI bus ids), `MODEL3D_ALLOWED_ORIGINS`, `MODEL3D_STAGE_TIMEOUT_S`.
+Configuration is env-only (`config.load_settings`): `MODEL3D_HOME`, `MODEL3D_HUNYUAN_DIR`, `MODEL3D_UNIRIG_DIR`, `MODEL3D_HOST`, `MODEL3D_PORT`, `MODEL3D_MODE`, `MODEL3D_SHAPE_BUS` + `MODEL3D_PAINT_BUS` (both or neither, PCI bus ids), `MODEL3D_ALLOWED_ORIGINS`, `MODEL3D_STAGE_TIMEOUT_S`, `MODEL3D_GENERATOR` (`hunyuan` default or `trellis2`), `MODEL3D_TRELLIS_DIR`.
 
 `engine/pyproject.toml` pins are deliberate and commented (numpy for `bpy`, trimesh 4.4.7 positional decimation, onnxruntime, setuptools<81). Read the comment before bumping any of them.
 

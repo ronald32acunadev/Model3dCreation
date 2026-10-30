@@ -59,3 +59,33 @@ def test_mode_and_bus_validation(tmp_path):
 def test_unirig_dir_default_and_override(tmp_path):
     assert load_settings({}, repo_root=tmp_path).unirig_dir == tmp_path / "vendor/UniRig"
     assert load_settings({"MODEL3D_UNIRIG_DIR": str(tmp_path / "rig")}, repo_root=tmp_path).unirig_dir == tmp_path / "rig"
+
+
+def test_generator_defaults_to_hunyuan(tmp_path):
+    s = load_settings({}, repo_root=tmp_path)
+    assert s.generator == "hunyuan"
+    assert s.trellis_dir == tmp_path / "vendor/TRELLIS.2"
+
+
+def test_generator_trellis2_and_dir(tmp_path):
+    s = load_settings(
+        {"MODEL3D_GENERATOR": "trellis2", "MODEL3D_TRELLIS_DIR": str(tmp_path / "t2")}, repo_root=tmp_path
+    )
+    assert s.generator == "trellis2"
+    assert s.trellis_dir == tmp_path / "t2"
+
+
+def test_unknown_generator_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="MODEL3D_GENERATOR must be one of hunyuan, trellis2; got 'foo'"):
+        load_settings({"MODEL3D_GENERATOR": "foo"}, repo_root=tmp_path)
+
+
+def test_trellis2_rejects_hunyuan_placement(tmp_path):
+    with pytest.raises(ValueError, match="apply only to MODEL3D_GENERATOR=hunyuan"):
+        load_settings({"MODEL3D_GENERATOR": "trellis2", "MODEL3D_MODE": "dual_gpu"}, repo_root=tmp_path)
+
+
+def test_hunyuan_keeps_placement_overrides(tmp_path):
+    s = load_settings({"MODEL3D_MODE": "dual_gpu"}, repo_root=tmp_path)
+    assert s.generator == "hunyuan"
+    assert s.mode == "dual_gpu"

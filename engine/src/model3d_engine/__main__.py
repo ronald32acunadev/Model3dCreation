@@ -12,7 +12,14 @@ from model3d_engine.api.app import create_app
 from model3d_engine.config import Settings, is_loopback_host, load_settings
 from model3d_contracts.jobs import JobError
 
-from model3d_engine.gpu.modes import ModeName, ModePlan, ModeUnavailable, choose_mode, placement
+from model3d_engine.gpu.modes import (
+    ModeName,
+    ModePlan,
+    ModeUnavailable,
+    choose_generator_mode,
+    choose_mode,
+    placement,
+)
 from model3d_engine.gpu.probe import Inventory, probe_gpus
 from model3d_engine.gpu.topology import normalize_bus_id
 from model3d_engine.jobs.events import EventBus
@@ -20,10 +27,12 @@ from model3d_engine.jobs.scheduler import Scheduler
 from model3d_engine.jobs.store import JobStore
 from model3d_engine.stages.hunyuan import stage_env
 from model3d_engine.stages.process import ProcessStageRunner
+from model3d_engine.stages.protocol import NoStage
 from model3d_engine.stages.rig import RigRunner
 
 SHAPE_FACTORY = "model3d_engine.stages.hunyuan:make_shape_stage"
 PAINT_FACTORY = "model3d_engine.stages.hunyuan:make_paint_stage"
+TRELLIS_FACTORY = "model3d_engine.stages.trellis:make_trellis_stage"
 logger = logging.getLogger(__name__)
 MEMORY_COMMAND = ["nvidia-smi", "--query-gpu=pci.bus_id,memory.used,memory.total", "--format=csv,noheader,nounits"]
 
@@ -44,34 +53,54 @@ def build_engine(
     inventory: Inventory | None = None,
     shape_factory: str = SHAPE_FACTORY,
     paint_factory: str = PAINT_FACTORY,
+    generator_factory: str = TRELLIS_FACTORY,
     memory_reader: Callable[[], dict[str, tuple[int, int]]] = read_memory,
     rig_runner: RigRunner | None = None,
 ) -> FastAPI:
     """Pick the run mode for the detected GPUs and wire workers, scheduler, store, and bus into the API."""
     inventory = probe_gpus() if inventory is None else inventory
-    forced = ModeName(settings.mode) if settings.mode is not None else None
-    try:
-        plan = choose_mode(inventory, forced, settings.shape_bus, settings.paint_bus)
-    except ModeUnavailable as error:
-        plan = ModePlan(ModeName.unsupported, False, error.message, None, None)
+    trellis = settings.generator == "trellis2"
+    if trellis:
+        plan = choose_generator_mode(inventory)
+    else:
+        forced = ModeName(settings.mode) if settings.mode is not None else None
+        try:
+            plan = choose_mode(inventory, forced, settings.shape_bus, settings.paint_bus)
+        except ModeUnavailable as error:
+            plan = ModePlan(ModeName.unsupported, False, error.message, None, None)
     logger.info("Run mode %s: %s", plan.name.value, plan.reason)
     devices = placement(plan)
     env = stage_env(settings)
-    hunyuan_dir = str(settings.hunyuan_dir)
-    shape = ProcessStageRunner(
-        shape_factory,
-        {"hunyuan_dir": hunyuan_dir, "device": devices.shape},
-        env,
-        name="shape",
-        task_timeout_s=settings.stage_timeout_s,
-    )
-    paint = ProcessStageRunner(
-        paint_factory,
-        {"hunyuan_dir": hunyuan_dir, "device": devices.paint, "helper_device": devices.helpers},
-        env,
-        name="paint",
-        task_timeout_s=settings.stage_timeout_s,
-    )
+    if trellis:
+        shape = ProcessStageRunner(
+            generator_factory,
+            {
+                "trellis_dir": str(settings.trellis_dir),
+                "device": devices.shape,
+                "hf_home": str(settings.hf_home),
+                "post_device": devices.paint if plan.name == ModeName.dual_gpu else None,
+            },
+            env,
+            name="generate",
+            task_timeout_s=settings.stage_timeout_s,
+        )
+        paint = NoStage()
+    else:
+        hunyuan_dir = str(settings.hunyuan_dir)
+        shape = ProcessStageRunner(
+            shape_factory,
+            {"hunyuan_dir": hunyuan_dir, "device": devices.shape},
+            env,
+            name="shape",
+            task_timeout_s=settings.stage_timeout_s,
+        )
+        paint = ProcessStageRunner(
+            paint_factory,
+            {"hunyuan_dir": hunyuan_dir, "device": devices.paint, "helper_device": devices.helpers},
+            env,
+            name="paint",
+            task_timeout_s=settings.stage_timeout_s,
+        )
     # Rigging runs on the paint card (the shape card in shape_only), taking turns with that
     # stage; with no usable GPU there is nothing to rig on.
     rig = rig_runner
@@ -93,7 +122,11 @@ def build_engine(
             env=env,
             task_timeout_s=settings.stage_timeout_s,
         )
-    cards = {"shape": devices.shape, "paint": devices.paint, "rig": devices.paint if plan.texture else devices.shape}
+    if trellis:
+        # One TRELLIS.2 job takes turns on one lock, even when its decode runs on the other card.
+        cards = {"shape": devices.shape, "paint": devices.shape, "rig": devices.shape}
+    else:
+        cards = {"shape": devices.shape, "paint": devices.paint, "rig": devices.paint if plan.texture else devices.shape}
     store, bus = JobStore(settings.jobs_dir), EventBus()
     swap = plan.name in (ModeName.single_gpu_swap, ModeName.shape_only)
     scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=cards)

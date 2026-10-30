@@ -61,6 +61,19 @@ When `model3d_engine` starts, `model3d_engine.gpu.probe` and `model3d_engine.gpu
 | `final` | Default balanced production quality (`Quality.final`). |
 | `high` | Maximum detail generation. |
 
+With `MODEL3D_GENERATOR=trellis2`, `draft` runs TRELLIS.2 at `512` and `final`/`high` at `1024_cascade`; the face target is the same as Hunyuan's (40 000, or 150 000 for `high`).
+
+### Alternative Generator: TRELLIS.2
+
+`MODEL3D_GENERATOR=trellis2` replaces Hunyuan's shape and paint stages with [TRELLIS.2](https://github.com/microsoft/TRELLIS.2), which generates geometry and PBR texture in one model and gives noticeably sharper faces (measurements in `docs/userstories/alternative-shape-models/`). With two cards it splits each job: decoding and texture baking, the heaviest part (about 10.1 GiB), run on the card with the most free VRAM, and the image encoder and flow models (about 5.2 GiB) run on the other; only the latents cross between them. With one card that has about 10.7 GiB free plus the 512 MiB margin, everything runs there, closer to the limit on dense models. Otherwise the engine starts in `unsupported` with the reason. Jobs and rigging take turns, so only one step uses the GPUs at a time. Its sub-models wait in RAM (about 10 GB) and each moves to a GPU only for its step. `MODEL3D_MODE` and the bus overrides apply only to Hunyuan and are rejected with `trellis2`.
+
+The setup wizard does not install it yet; set it up by hand:
+
+1. Clone it: `git clone --depth 1 --recursive --shallow-submodules https://github.com/microsoft/TRELLIS.2.git vendor/TRELLIS.2`.
+2. Create `vendor/TRELLIS.2/.venv` with Python 3.11 and install torch 2.9.0 + torchvision 0.24.0 + xformers 0.0.33.post1 from `https://download.pytorch.org/whl/cu130`, `transformers>=4.56,<5` (5.x breaks its DINOv3 extractor), and the packages from its `setup.sh` "basic" list.
+3. Build nvdiffrast v0.4.0, CuMesh, FlexGEMM, and `vendor/TRELLIS.2/o-voxel` with `uv pip install --no-build-isolation --no-deps ./<path>`, with `CUDA_HOME` pointing at CUDA 13.2 and `TORCH_CUDA_ARCH_LIST=12.0`. nvdiffrec is not needed.
+4. Weights go to `$MODEL3D_HOME/hf`: `microsoft/TRELLIS.2-4B` (the 512 and 1024 flows and the decoders, about 14 GB), `ckpts/ss_dec_conv3d_16l8_fp16.*` from `microsoft/TRELLIS-image-large`, and `facebook/dinov3-vitl16-pretrain-lvd1689m`. DINOv3 is gated: request access on Hugging Face and log in first. The gated `briaai/RMBG-2.0` is not needed; the engine removes backgrounds with BiRefNet.
+
 ---
 
 ## Architecture & Repository Layout
@@ -234,6 +247,8 @@ All engine and client path overrides are configured via environment variables (`
 | `MODEL3D_SHAPE_BUS` | *(auto-detected)* | Explicit PCI bus ID (e.g., `0000:01:00.0`) for the `shape` worker. Must be set together with `MODEL3D_PAINT_BUS`. |
 | `MODEL3D_PAINT_BUS` | *(auto-detected)* | Explicit PCI bus ID (e.g., `0000:29:00.0`) for the `paint` worker. Must be set together with `MODEL3D_SHAPE_BUS`. |
 | `MODEL3D_ALLOWED_ORIGINS` | `""` (empty) | Comma-separated list of browser `Origin` URLs permitted to send `POST` or `DELETE` requests. |
+| `MODEL3D_GENERATOR` | `hunyuan` | Generation pipeline: `hunyuan` (Hunyuan3D shape + paint) or `trellis2` (TRELLIS.2, see above). Other values exit at startup. |
+| `MODEL3D_TRELLIS_DIR` | `<repo_or_install>/vendor/TRELLIS.2` | Path to the TRELLIS.2 checkout containing its `.venv`. |
 | `MODEL3D_STAGE_TIMEOUT_S` | `900` | Maximum seconds a single stage task may run before its worker process is killed and respawned. |
 
 ### Diagnostic & Packaging Scripts

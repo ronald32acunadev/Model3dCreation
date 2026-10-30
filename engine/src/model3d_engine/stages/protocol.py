@@ -34,6 +34,8 @@ class StageResult:
     output: Path
     vertices: int
     faces: int
+    # A generator that also textures (TRELLIS.2) writes MODEL_OUTPUT and sets this, so paint is skipped.
+    textured: bool = False
 
 
 class StageError(Exception):
@@ -62,3 +64,22 @@ class StageRunner(Protocol):
         ...
 
     async def stop(self) -> None: ...
+
+
+class NoStage:
+    """Paint slot for a generator that already textures: it is never run."""
+
+    def __init__(self):
+        self.ready = True
+
+    async def start(self) -> None:
+        return None
+
+    async def run(self, task: StageTask, on_progress: ProgressCallback) -> StageResult:
+        raise StageError("stage_unavailable", "This generator does not use a paint stage")
+
+    async def unload(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None

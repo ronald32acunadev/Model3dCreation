@@ -16,6 +16,14 @@ PAINT_NEED_MIB = 10168
 PAINT_HELD_MIB = 4938
 # The owner chose 512 MiB: with 1 GiB, paint no longer fits the card that drives the desktop.
 MARGIN_MIB = 512
+# TRELLIS.2 1024_cascade peak with low_vram on the marine test image, measured 2026-10-29
+# (docs/userstories/alternative-shape-models/).
+TRELLIS_NEED_MIB = 10690
+# Split peaks of the 2026-10-30 marine measurement (docs/userstories/alternative-shape-models/):
+# the image encoder and flow models run on the generating card.
+TRELLIS_GEN_NEED_MIB = 5180
+# The decoders and CuMesh baking run on the decoding card (2026-10-30 marine measurement).
+TRELLIS_POST_NEED_MIB = 10120
 
 
 class ModeName(str, Enum):
@@ -45,6 +53,28 @@ class ModeUnavailable(Exception):
     def __init__(self, message: str):
         super().__init__(message)
         self.message = message
+
+
+def choose_generator_mode(inventory: Inventory) -> ModePlan:
+    """TRELLIS.2 splits generation and decoding across two cards when both fit, else runs on one card."""
+    usable = sorted((gpu for gpu in inventory.gpus if gpu.supported), key=lambda gpu: gpu.memory_free_mib, reverse=True)
+    if not usable:
+        return ModePlan(ModeName.unsupported, False, inventory.problem or "No supported NVIDIA GPU was found", None, None)
+    post = next((gpu for gpu in usable if _fits(gpu, TRELLIS_POST_NEED_MIB)), None)
+    if post is not None:
+        gen = next((gpu for gpu in usable if gpu != post and _fits(gpu, TRELLIS_GEN_NEED_MIB)), None)
+        if gen is not None:
+            reason = f"TRELLIS.2 generates on {gen.bus_id} and decodes on {post.bus_id}"
+            return ModePlan(ModeName.dual_gpu, True, reason, gen, post)
+    best = usable[0]
+    if _fits(best, TRELLIS_NEED_MIB):
+        reason = f"TRELLIS.2 generates shape and texture on {best.bus_id}"
+        return ModePlan(ModeName.single_gpu_resident, True, reason, best, best)
+    reason = (
+        f"No GPU has enough free VRAM for TRELLIS.2: {best.bus_id} has {_gib(best.memory_free_mib)} GiB free "
+        f"and it needs {_gib(TRELLIS_NEED_MIB + MARGIN_MIB)} GiB"
+    )
+    return ModePlan(ModeName.unsupported, False, reason, None, None)
 
 
 def placement(plan: ModePlan) -> Placement:

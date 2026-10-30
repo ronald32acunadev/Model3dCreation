@@ -242,6 +242,8 @@ class Scheduler:
             return
         if record.cancel_requested:
             self._cancel(record)
+        elif result.textured:
+            self._model_ready(record, result, True)
         elif not record.options.texture:
             model = result.output.replace(record.dir / MODEL_OUTPUT)
             self._model_ready(record, StageResult(output=model, vertices=result.vertices, faces=result.faces), False)

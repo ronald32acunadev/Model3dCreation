@@ -31,6 +31,10 @@ class Settings:
     stage_timeout_s: float = 900.0
     # UniRig's clone with its own .venv; rigging is unavailable when it is missing.
     unirig_dir: Path = REPO_ROOT / "vendor/UniRig"
+    # Which pipeline generates the shape: Hunyuan3D (shape + paint) or TRELLIS.2 (shape + texture).
+    generator: str = "hunyuan"
+    # TRELLIS.2's clone with its own .venv; jobs fail with a clear error when it is missing.
+    trellis_dir: Path = REPO_ROOT / "vendor/TRELLIS.2"
 
     @property
     def jobs_dir(self) -> Path:
@@ -39,6 +43,9 @@ class Settings:
     @property
     def hf_home(self) -> Path:
         return self.home / "hf"
+
+
+GENERATORS = ("hunyuan", "trellis2")
 
 
 def is_loopback_host(host: str) -> bool:
@@ -68,10 +75,18 @@ def load_settings(env: Mapping[str, str] | None = None, repo_root: Path | None =
     forcible = [name.value for name in ModeName if name != ModeName.unsupported]
     if mode is not None and mode not in forcible:
         raise ValueError(f"MODEL3D_MODE must be one of {', '.join(forcible)}; got {mode!r}")
+    generator = env.get("MODEL3D_GENERATOR", "hunyuan")
+    if generator not in GENERATORS:
+        raise ValueError(f"MODEL3D_GENERATOR must be one of {', '.join(GENERATORS)}; got {generator!r}")
+    trellis_dir = env.get("MODEL3D_TRELLIS_DIR")
+    if generator == "trellis2" and any(env.get(name) is not None for name in ("MODEL3D_MODE", "MODEL3D_SHAPE_BUS", "MODEL3D_PAINT_BUS")):
+        raise ValueError("MODEL3D_MODE, MODEL3D_SHAPE_BUS and MODEL3D_PAINT_BUS apply only to MODEL3D_GENERATOR=hunyuan")
     return Settings(
         home=Path(home).expanduser() if home else repo_root / "data",
         hunyuan_dir=Path(hunyuan_dir).expanduser() if hunyuan_dir else repo_root / "vendor/Hunyuan3D-2.1",
         unirig_dir=Path(unirig_dir).expanduser() if unirig_dir else repo_root / "vendor/UniRig",
+        generator=generator,
+        trellis_dir=Path(trellis_dir).expanduser() if trellis_dir else repo_root / "vendor/TRELLIS.2",
         host=env.get("MODEL3D_HOST", "127.0.0.1"),
         port=int(env.get("MODEL3D_PORT", "8765")),
         shape_bus=normalize_bus_id(shape_bus) if shape_bus is not None else None,

@@ -8,6 +8,7 @@ from model3d_engine.gpu.modes import (
     SHAPE_NEED_MIB,
     ModeName,
     ModeUnavailable,
+    choose_generator_mode,
     choose_mode,
     placement,
 )
@@ -150,3 +151,47 @@ def test_placement_uses_cuda_indexes_in_bus_order():
     visible = inventory(gpu("0000:29:00.0", 11173, index=0))  # GPU0 hidden by CUDA_VISIBLE_DEVICES
     assert placement(choose_mode(visible)) == Placement("cuda:0", "cuda:0", "cpu")
     assert placement(choose_mode(OWNER, forced=ModeName.shape_only)) == Placement("cuda:0", "cuda:0", "cpu")
+
+
+def test_generator_mode_uses_the_freest_card():
+    plan = choose_generator_mode(
+        inventory(gpu("0000:25:00.0", 4000, bandwidth=1.0, index=0), gpu("0000:29:00.0", 11761, index=1))
+    )
+    assert plan.name == ModeName.single_gpu_resident
+    assert plan.texture is True
+    assert plan.shape.bus_id == plan.paint.bus_id == "0000:29:00.0"
+    assert plan.reason == "TRELLIS.2 generates shape and texture on 0000:29:00.0"
+
+
+def test_generator_mode_splits_across_two_cards():
+    plan = choose_generator_mode(
+        inventory(gpu("0000:25:00.0", 11761, bandwidth=1.0, index=0), gpu("0000:29:00.0", 11173, index=1))
+    )
+    assert plan.name == ModeName.dual_gpu
+    assert plan.texture is True
+    assert (plan.shape.bus_id, plan.paint.bus_id) == ("0000:29:00.0", "0000:25:00.0")
+    assert plan.reason == "TRELLIS.2 generates on 0000:29:00.0 and decodes on 0000:25:00.0"
+
+
+def test_generator_mode_one_card_when_second_is_small():
+    plan = choose_generator_mode(
+        inventory(gpu("0000:25:00.0", 11761, bandwidth=1.0, index=0), gpu("0000:29:00.0", 4000, index=1))
+    )
+    assert plan.name == ModeName.single_gpu_resident
+    assert plan.shape.bus_id == plan.paint.bus_id == "0000:25:00.0"
+    assert plan.reason == "TRELLIS.2 generates shape and texture on 0000:25:00.0"
+
+
+def test_generator_mode_needs_room():
+    plan = choose_generator_mode(inventory(gpu("0000:01:00.0", 11000)))
+    assert plan.name == ModeName.unsupported
+    assert plan.texture is False
+    assert plan.reason == (
+        "No GPU has enough free VRAM for TRELLIS.2: 0000:01:00.0 has 10.7 GiB free and it needs 10.9 GiB"
+    )
+
+
+def test_generator_mode_without_gpus():
+    plan = choose_generator_mode(Inventory((), "x"))
+    assert plan.name == ModeName.unsupported
+    assert plan.reason == "x"

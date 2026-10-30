@@ -189,3 +189,50 @@ def test_build_engine_unsupported_has_no_rig(tmp_path):
     with TestClient(app, base_url=BASE_URL) as client:
         health = client.get("/v1/health").json()
         assert (health["rig"], health["rig_reason"]) == (False, "Rigging needs a usable GPU")
+
+
+def test_build_engine_trellis2_splits_across_two_cards(tmp_path):
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", generator="trellis2", trellis_dir=tmp_path / "t2")
+    app = build_engine(settings, inventory=REAL, generator_factory=STUB, memory_reader=dict)
+    with TestClient(app, base_url=BASE_URL) as client:
+        health = wait_ready(client)
+        assert health["mode"] == {
+            "name": "dual_gpu",
+            "texture": True,
+            "reason": "TRELLIS.2 generates on 0000:29:00.0 and decodes on 0000:25:00.0",
+        }
+        assert [(gpu["bus_id"], gpu["stage"]) for gpu in health["gpus"]] == [
+            ("0000:25:00.0", "paint"),
+            ("0000:29:00.0", "shape"),
+        ]
+        run_job(client, {"texture": False})
+
+
+def test_build_engine_trellis2_runs_on_one_card(tmp_path):
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", generator="trellis2", trellis_dir=tmp_path / "t2")
+    # 11761 MiB free clears TRELLIS.2's 10690 + 512 MiB need; ONE_CARD's 11173 MiB does not.
+    roomy = Inventory((GpuInfo(0, "0000:25:00.0", RTX, 12227, 11761, (12, 0), True, 1.0),), None)
+    app = build_engine(settings, inventory=roomy, generator_factory=STUB, memory_reader=dict)
+    with TestClient(app, base_url=BASE_URL) as client:
+        health = wait_ready(client)
+        assert health["mode"] == {
+            "name": "single_gpu_resident",
+            "texture": True,
+            "reason": "TRELLIS.2 generates shape and texture on 0000:25:00.0",
+        }
+        assert [(gpu["bus_id"], gpu["stage"]) for gpu in health["gpus"]] == [("0000:25:00.0", "shape+paint")]
+        run_job(client, {"texture": False})
+
+
+def test_build_engine_hunyuan_ignores_generator_factory(tmp_path):
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", unirig_dir=tmp_path / "UniRig")
+    app = build_engine(
+        settings,
+        inventory=REAL,
+        shape_factory=STUB,
+        paint_factory=STUB,
+        generator_factory="tests.worker_stubs:BrokenStage",
+        memory_reader=dict,
+    )
+    with TestClient(app, base_url=BASE_URL) as client:
+        assert wait_ready(client)["mode"]["name"] == "dual_gpu"
