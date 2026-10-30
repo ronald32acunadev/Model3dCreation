@@ -3,7 +3,7 @@
 ![Platform](https://img.shields.io/badge/platform-Linux%20x86__64-blue)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
 ![CUDA](https://img.shields.io/badge/CUDA-13.0%2B%20(sm__120)-76B900)
-![Version](https://img.shields.io/badge/version-0.1.1-informational)
+![Version](https://img.shields.io/badge/version-0.2.0-informational)
 
 **Model3D** is a local, GPU-only pipeline that turns a single PNG or JPEG image into a textured (and optionally rigged) binary glTF 2.0 (`.glb`) 3D model using **Hunyuan3D 2.1** and **UniRig**. It ships with a FastAPI/WebSocket inference engine, a PySide6 desktop application with an embedded 3D viewer and first-run setup wizard, a native Blender 4.2+ extension, and a Debian (`.deb`) package builder.
 
@@ -84,7 +84,7 @@ The repository is organized as five independent [`uv`](https://docs.astral.sh/uv
 | :--- | :--- | :--- | :--- |
 | [`contracts/`](./contracts) | `model3d-contracts@0.1.0` | `>=3.11` | Shared Pydantic v2 schemas (`jobs`, `events`, `health`). Editable dependency of `engine` and `client`. |
 | [`engine/`](./engine) | `model3d-engine@0.1.0` | `==3.11.*` | FastAPI inference server (`python -m model3d_engine`), GPU probe, stage process runner, job scheduler, and store. |
-| [`client/`](./client) | `model3d-client@0.1.1` | `>=3.11` | PySide6 MVVM desktop application (`python -m model3d_client`), first-run setup wizard, engine supervisor, and 3D viewer. |
+| [`client/`](./client) | `model3d-client@0.2.0` | `>=3.11` | PySide6 MVVM desktop application (`python -m model3d_client`), first-run setup wizard, engine supervisor, and 3D viewer. |
 | [`blender/`](./blender) | `model3d-blender@0.1.0` | `>=3.11` | Blender 4.2+ extension in [`blender/model3d/`](./blender/model3d) (`urllib` client, job tracker, library browser, UI panels). |
 | [`packaging/`](./packaging) | `model3d-packaging@0.1.0` | `>=3.11` | `.deb` package builder ([`packaging/deb/build.sh`](./packaging/deb/build.sh)) and package verification tests. |
 
@@ -133,7 +133,7 @@ Build the `.deb` package from the repository root:
 
 ```bash
 packaging/deb/build.sh
-sudo apt install ./dist/model3d_0.1.1_amd64.deb
+sudo apt install ./dist/model3d_0.2.0_amd64.deb
 ```
 
 Launch `model3d` from your application menu or terminal. On first run, the **Setup Wizard** verifies your NVIDIA driver, GPUs, and `nvcc`, then downloads and builds the engine environment and model weights inside your chosen installation directory.
