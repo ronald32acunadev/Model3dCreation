@@ -138,7 +138,24 @@ sudo apt install ./dist/model3d_0.2.0_amd64.deb
 
 Launch `model3d` from your application menu or terminal. On first run, the **Setup Wizard** verifies your NVIDIA driver, GPUs, and `nvcc`, then downloads and builds the engine environment and model weights inside your chosen installation directory.
 
-### Option 2: Development Setup from Source
+### Option 2: Setup Scripts
+
+From the repository root, one script installs the libraries and AI models into the repository (`.venv` folders, `vendor/`, and `data/`, all ignored by git):
+
+| System | Command | What it installs | Generates models? |
+| :--- | :--- | :--- | :--- |
+| Ubuntu | `scripts/setup/setup-ubuntu.sh` | Everything: client, engine, CUDA 13.2 toolkit, Hunyuan3D 2.1, UniRig, TRELLIS.2, and about 40 GB of weights | Yes |
+| Windows | `scripts\setup\setup-windows.ps1` | Client, Hunyuan3D source, and its weights; it stops at the engine | Not yet: the engine installs on Linux only (see `docs/userstories/cross-platform-native/`) |
+| macOS | `scripts/setup/setup-macos.sh` | Client only, no weights | No: the engine needs an NVIDIA GPU with CUDA |
+
+- Run a script again at any time: finished steps are skipped, and a cut download or build resumes. `--dry-run` prints the plan, and `--no-rig` and `--no-trellis` skip those parts.
+- Ubuntu asks for the `sudo` password once, at the start, and only when apt packages are missing. Everything else runs as your user.
+- The NVIDIA driver is not installed by any script. A missing driver stops the run before downloading anything.
+- TRELLIS.2 needs `facebook/dinov3-vitl16-pretrain-lvd1689m`, which is gated: request access on Hugging Face and run `engine/.venv/bin/huggingface-cli login`. Without it the script skips that download and continues.
+- A virtual environment built for another system on a shared disk is never deleted. UniRig then installs to `vendor/UniRig-linux`; for `engine/.venv` or `client/.venv` the script stops and explains.
+- The script ends with the exact command to start the app. It accounts for a wizard install on the same machine, which would otherwise take over the repository run.
+
+### Option 3: Development Setup by Hand
 
 1. **Install `uv`** and ensure Python 3.11 and CUDA 13 (`nvcc`) are available.
 2. **Clone external vendor repositories** (not tracked in git) when setting up the engine manually without the desktop wizard:
