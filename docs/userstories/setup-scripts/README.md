@@ -102,6 +102,80 @@ Dependencies: US-01 to US-03.
 
 Verification: documentation review.
 
+## Revision 2026-11-02: everything the project uses
+
+Status: approved 2026-11-02 ("Aprobado, todas"). US-06 to US-10 are complete. The from-zero run started 2026-11-02 21:08 after deleting every venv, `vendor/`, the weights, and the CUDA toolkit. It was interrupted once while flash-attn compiled; the rerun skipped the finished steps and ended with all 14 steps done, exit code 0.
+
+Found by the from-zero run, and fixed: `client/.venv` is built by uv with Python 3.14 here (the client does not pin 3.11), so the dev-tools done check, which looked only in `lib/python3.11`, never saw its packages. It now looks in any `lib/python3*/site-packages`.
+
+Request (verbatim): "Necesito que el script sea para el 100% de cosas que hemos incorporado , que cuando necesite mi pasword sudo me la pida o mi token de hugginface"
+
+What `setup-ubuntu.sh` leaves out today, checked on 2026-11-02 with `--dry-run` and the source:
+
+| Gap | Evidence |
+| --- | --- |
+| Test tools (`pytest`, `pytest-qt`, `httpx`, fake-engine packages) | Both syncs use `--no-dev` (`setup-ubuntu.sh:59`, `setup_repo.py:338,342`); `contracts/`, `blender/`, and `packaging/` are never synced |
+| Blender, for the add-on and the `-m blender` tests | `blender` is not on PATH here; the add-on needs Blender 4.2 or later (`blender_manifest.toml:10`) |
+| apt packages for `client/scripts/test_system_python.sh` | Listed in that script's header, installed by hand today |
+| Hugging Face token for DINOv3 | The script skips the download and tells the user to run `huggingface-cli login` by hand (`setup_repo.py:90-93`) |
+
+Assumptions to confirm when approving:
+
+- Ubuntu only. The Windows and macOS scripts do not change.
+- Blender is installed as the official portable build, pinned to one 4.5 LTS release, in `vendor/blender/`, with no `sudo` and nothing outside the repo except the add-on's registration in Blender's own user folder. The exact release and its checksum are verified on blender.org before implementing.
+- The NVIDIA driver stays excluded, as decided in the first round: it needs a reboot and can break the display. A missing driver still stops the run with instructions.
+- The token is read with hidden input, checked against Hugging Face, and saved where `huggingface_hub` reads it (`~/.cache/huggingface/token`, mode 600). It is never printed, logged, or stored in the repo.
+
+## US-06: Test tools for every project
+
+As a developer, I want the script to install the test tools of all five projects, so that `uv run pytest` works in each one right after setup.
+
+- US-06 / AC-01: After the script, `uv run --frozen pytest --co -q` collects tests without installing anything in `contracts/`, `engine/`, `client/`, `blender/`, and `packaging/`.
+- US-06 / AC-02: Dev dependencies are added with `--inexact`, so nothing already installed in `engine/.venv` or `client/.venv` is removed. A rerun with them present reports the step as done.
+
+Verification: a unit test of the step's commands and its done check; then a real run here and the collect command in each project.
+
+## US-07: Ask for the Hugging Face token when it is needed
+
+As a user, I want the script to ask for my Hugging Face token only when a gated model needs it, so that I do not have to stop and log in by hand.
+
+- US-07 / AC-01: When DINOv3 is not accessible and the script runs in a terminal, it explains why and asks for the token with hidden input. An empty answer skips DINOv3 with today's message, and the rest continues.
+- US-07 / AC-02: A token that Hugging Face rejects is reported as invalid and asked for again, at most three times. A valid token without access to DINOv3 prints the page where access is requested, then offers to check again or skip.
+- US-07 / AC-03: An accepted token is saved to `~/.cache/huggingface/token` with mode 600 and never appears in the output or in `data/setup-logs/`. A later run that already has access asks nothing.
+- US-07 / AC-04: Without a terminal (input redirected), the script never waits for input and skips DINOv3 as today.
+
+Verification: unit tests with a fake access probe and fake input (valid, invalid, no access, empty, no terminal) asserting the prompts, the saved file and its mode, and that the token is absent from the log; then a real run here.
+
+## US-08: Blender and the add-on
+
+As a user, I want the script to install Blender and the Model3D add-on, so that I can use the add-on and run its Blender tests.
+
+- US-08 / AC-01: The pinned Blender build is downloaded to `data/downloads/` (resumable, checksum verified) and extracted to `vendor/blender/`. A wrong checksum fails the step and deletes nothing else.
+- US-08 / AC-02: The add-on is built from `blender/model3d/` and installed into that Blender's user extensions, and `vendor/blender/blender --command extension list` lists it as installed. (Revised during implementation: `extension list` is the command that reports installed extensions, checked with Blender 4.5.15.)
+- US-08 / AC-03: `uv run pytest -m blender` in `blender/` passes with `vendor/blender` on PATH, and the script's final message says how to put it there.
+- US-08 / AC-04: A rerun with the same release and add-on version skips the step.
+
+Verification: unit tests for the plan and done checks; a real run here, then `uv run pytest -m blender`.
+
+## US-09: One sudo prompt for every system package
+
+As a user, I want every apt package the project uses to be installed at the start with one password prompt, so that the rest runs unattended.
+
+- US-09 / AC-01: The apt list adds the packages named in `client/scripts/test_system_python.sh`. `sudo` is still asked once, before any other work, and only when a package is missing.
+- US-09 / AC-02: After the script, `client/scripts/test_system_python.sh` runs without asking to install anything.
+
+Verification: `test_ubuntu_script_uses_sudo_only_for_apt` extended to the new list; a real run here, where those packages are missing, so the prompt runs for real and closes the partial US-01 / AC-06.
+
+## US-10: The README says what "everything" means
+
+As a new user, I want the README to list exactly what the script installs and what it asks me for, so that I am not surprised mid-run.
+
+Dependencies: US-06 to US-09.
+
+- US-10 / AC-01: The Ubuntu row and notes in "Option 2: Setup Scripts" list the test tools, Blender and the add-on, the sudo prompt, the token prompt, and the driver as the only manual step.
+
+Verification: documentation review.
+
 ## Excluded
 
 - Porting the engine to Windows (`docs/userstories/cross-platform-native/`).
@@ -117,10 +191,15 @@ Verification: documentation review.
 | US-01 / AC-02 | `client/tests/test_setup_repo.py::test_pins_come_from_the_recipe` | Passed |
 | US-01 / AC-03 | Rerun on this machine: `inpaint` built, the other steps skipped, `pytest` kept in `client/.venv`; `test_unirig_env_keeps_an_existing_venv` | Passed; the fresh clone also resumed after a reboot, skipping finished steps |
 | US-01 / AC-04 | `test_no_driver_stops_before_anything`, `test_low_disk_stops`, `test_ok_preflight_is_empty` | Passed |
-| US-01 / AC-06 | `test_ubuntu_script_uses_sudo_only_for_apt`; real runs here asked for no password, as no package was missing | Partial: the prompt itself has not run, since that needs a missing package |
+| US-01 / AC-06 | `test_ubuntu_script_uses_sudo_only_for_apt`; the 2026-11-02 from-zero run asked for the password once, before any other work | Passed |
 | US-01 / AC-07 | `test_no_driver_stops_before_anything`; toolkit built from nothing in the fresh clone | Passed |
 | US-01 / AC-05 | `test_foreign_engine_env_is_reported_and_kept`, `test_unirig_dir_switches_for_a_windows_env`; real run used `vendor/UniRig-linux` here | Passed |
 | US-02 / AC-01..AC-03 | `test_windows_stops_at_engine_while_linux_only`, `test_windows_runs_engine_when_allowed`, and `pwsh` parse (0 errors) passed; run on Windows pending | Pending manual run by the user |
 | US-03 / AC-01..AC-03 | `test_macos_has_no_steps` passed; run on a Mac pending | Pending manual run by the user |
 | US-04 / AC-01..AC-02 | `git status`, `git diff --ignore-space-at-eol`, `client/launch.sh` | Passed: all 195 blobs were already LF; `git status` lists only the real `.gitignore` line; `launch.sh` starts the app |
 | US-05 / AC-01 | README "Option 2: Setup Scripts" reviewed | Passed |
+| US-06 / AC-01..AC-02 | `test_dev_tools_syncs_every_project_keeping_packages`, `test_dev_tools_done_only_when_every_dev_package_is_present`, `test_dev_tools_done_finds_packages_for_any_python`; real run: the step installed pytest in all five projects | Passed: after the run, `pytest --co` collects 17 (contracts), 206 (engine), 276 (client), 29 (blender), and 7 (packaging) tests; a `--dry-run` rerun reports dev-tools done |
+| US-07 / AC-01..AC-04 | Ten token tests (valid, rejected three times, empty, no access then access, skip, saved token, no terminal, dry run, file mode); real run | Unit tests passed; real run saved `~/.cache/huggingface/token` with mode 600 at 21:09, and the token appears in no file under `data/setup-logs/` |
+| US-08 / AC-01..AC-04 | `test_blender_*` (four tests); real run; `uv run pytest -m blender` | Unit tests passed; the 4.5.15 archive's SHA-256 matched blender.org's; real run installed it; `vendor/blender/blender --command extension list` shows `model3d [installed]`; `pytest -m blender` with `vendor/blender` on PATH: 2 passed; a `--dry-run` rerun reports both steps done | 
+| US-09 / AC-01..AC-02 | Extended `test_ubuntu_script_uses_sudo_only_for_apt`; real run with the prompt; `test_system_python.sh` | Unit test passed; real run asked for `sudo` once and installed the seven missing packages (none missing afterwards). `client/scripts/test_system_python.sh`: 275 passed, 1 skipped, without installing anything. This also closes the partial US-01 / AC-06 |
+| US-10 / AC-01 | README review | Passed |

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PACKAGES=(build-essential git curl patch libegl1 libxkbcommon0 libxcb-cursor0 libdbus-1-3)
+PACKAGES=(build-essential git curl patch libegl1 libxkbcommon0 libxcb-cursor0 libdbus-1-3 python3-pyside6.qtwidgets python3-pyside6.qtwebenginewidgets python3-pyside6.qtwebsockets python3-pyside6.qttest python3-pydantic libgl1 libsm6 libx11-6 libxext6 libxfixes3 libxi6 libxrender1)
 
 export PATH="$HOME/.local/bin:$PATH"
 

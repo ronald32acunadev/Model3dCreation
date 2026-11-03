@@ -1,4 +1,4 @@
-"""Installs what Model3D needs inside this repository: the engine, its models, UniRig, and TRELLIS.2.
+"""Installs what Model3D needs inside this repository: the engine, its models, UniRig, TRELLIS.2, Blender, and the test tools.
 
 The wrapper scripts in this folder prepare uv and client/.venv, then run this file with the
 client's Python. The pins come from the client's install recipe, so this script and the
@@ -6,7 +6,10 @@ wizard cannot disagree.
 """
 
 import argparse
+import getpass
+import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -56,6 +59,7 @@ MIN_FREE_BYTES = 100 * 10**9
 RETRY_ATTEMPTS = 5
 RETRY_PAUSE_S = 20.0
 ENGINE_VENV = Path("engine/.venv")
+DEV_PROJECTS = ("contracts", "engine", "client", "blender", "packaging")
 TRELLIS_DIR = Path("vendor/TRELLIS.2")
 TRELLIS_COMMIT = "75fbf0183001ed9876c8dbb35de6b68552ee08bd"
 TRELLIS_URL = "https://github.com/microsoft/TRELLIS.2.git"
@@ -89,8 +93,15 @@ get("facebook/dinov3-vitl16-pretrain-lvd1689m", allow_patterns=["*.json", "model
 """
 DINOV3_SKIPPED = (
     "DINOv3 needs Hugging Face access: request it at https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m, "
-    "run `engine/.venv/bin/huggingface-cli login`, then run this script again."
+    "then run this script again in a terminal to paste your token (or run `engine/.venv/bin/huggingface-cli login`)."
 )
+BLENDER_VERSION = "4.5.15"
+BLENDER_SERIES = "4.5"
+BLENDER_URL = "https://download.blender.org/release/Blender4.5/blender-4.5.15-linux-x64.tar.xz"
+BLENDER_SHA256 = "0d2b8bb2efe97e6c8eb57de6b7322f8800e1984e3125b60decca5f6771e4773e"
+BLENDER_DIR = Path("vendor/blender")
+BLENDER_MARKER = ".model3d-release"
+ADDON_DIR = Path("blender/model3d")
 NO_DRIVER = (
     "NVIDIA driver not found: install the driver from https://www.nvidia.com/drivers and reboot, "
     "then run this script again"
@@ -103,6 +114,7 @@ MACOS_DONE = (
     "Client installed. The engine needs an NVIDIA GPU with CUDA, so generating models is not available on a Mac."
 )
 TOKEN_RELATIVE = Path(".cache/huggingface/token")
+HF_TOKEN_TRIES = 3
 LOG_DIR = Path("data/setup-logs")
 PLATFORMS = {"linux": "linux", "win32": "windows", "darwin": "macos"}
 SYSTEM_MARKERS = {"linux": "sys_platform == 'linux'", "windows": "sys_platform == 'win32'",
@@ -121,11 +133,20 @@ class CommandFailed(Exception):
     """A command that exited with an error."""
 
 
+def _never_valid(token: str) -> bool:
+    return False
+
+
 @dataclass(frozen=True)
 class Probes:
     run: Callable[[list[str]], str]
     disk_free: Callable[[Path], int]
     has_hf_access: Callable[[str], bool]
+    token_valid: Callable[[str], bool] = _never_valid
+
+
+def _default_blender_config() -> Path:
+    return Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "blender"
 
 
 @dataclass(frozen=True)
@@ -134,6 +155,27 @@ class Options:
     trellis: bool = True
     home: Path = field(default_factory=Path.home)
     cpu_count: int = field(default_factory=lambda: os.cpu_count() or 1)
+    blender_config: Path = field(default_factory=_default_blender_config)
+
+
+@dataclass(frozen=True)
+class Prompter:
+    interactive: Callable[[], bool]
+    secret: Callable[[str], str]
+    ask: Callable[[str], str]
+    out: Callable[[str], None]
+
+
+NO_PROMPT = Prompter(interactive=lambda: False, secret=lambda text: "", ask=lambda text: "", out=lambda line: None)
+
+
+def real_prompter() -> Prompter:
+    return Prompter(
+        interactive=lambda: sys.stdin.isatty() and sys.stdout.isatty(),
+        secret=getpass.getpass,
+        ask=input,
+        out=print,
+    )
 
 
 Runner = Callable[[Command, Callable[[str], None]], None]
@@ -493,6 +535,137 @@ def trellis_weights_done(repo: Path) -> bool:
     )
 
 
+def dev_requirements(repo: Path, project: str) -> list[str]:
+    data = tomllib.loads((repo / project / "pyproject.toml").read_bytes().decode("utf-8"))
+    names = []
+    for entry in data.get("dependency-groups", {}).get("dev", []):
+        match = re.match(r"[A-Za-z0-9._-]+", entry) if isinstance(entry, str) else None
+        if match:
+            names.append(match.group(0).lower().replace("-", "_").replace(".", "_"))
+    return names
+
+
+def dev_tools_step(repo: Path, env: dict[str, str]) -> Step:
+    def done() -> bool:
+        for project in DEV_PROJECTS:
+            folders = list((repo / project / ".venv").glob("lib/python3*/site-packages"))
+            if not folders:
+                return False
+            if not all(
+                any(_exists(folder, f"{name}-*.dist-info") for folder in folders)
+                for name in dev_requirements(repo, project)
+            ):
+                return False
+        return True
+
+    def run(ctx: Context) -> None:
+        for project in DEV_PROJECTS:
+            ctx.run(Command(["uv", "sync", "--frozen", "--inexact"], cwd=repo / project, env=env))
+
+    return Step("dev-tools", "Test tools", done, run)
+
+
+def sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def blender_steps(repo: Path, options: Options) -> list[Step]:
+    blender_dir = repo / BLENDER_DIR
+    archive = repo / "data/downloads" / f"blender-{BLENDER_VERSION}-linux-x64.tar.xz"
+    marker = blender_dir / BLENDER_MARKER
+    manifest = repo / ADDON_DIR / "blender_manifest.toml"
+
+    def install_done() -> bool:
+        return (
+            (blender_dir / "blender").is_file()
+            and marker.is_file()
+            and marker.read_text(encoding="utf-8").strip() == BLENDER_VERSION
+        )
+
+    def install(ctx: Context) -> None:
+        download(BLENDER_URL, archive, ctx.step_context())
+        if sha256_of(archive) != BLENDER_SHA256:
+            archive.unlink()
+            raise CommandFailed(
+                f"{archive.name} does not match its published SHA-256; it was deleted, "
+                "run the script again to download it again"
+            )
+        extract_tarball(archive, blender_dir, ctx.step_context())
+        marker.write_text(BLENDER_VERSION, encoding="utf-8")
+
+    def addon_identity() -> tuple[str, str]:
+        data = tomllib.loads(manifest.read_bytes().decode("utf-8"))
+        return data["id"], data["version"]
+
+    def addon_done() -> bool:
+        if not manifest.is_file():
+            return False
+        addon_id, version = addon_identity()
+        installed = options.blender_config / BLENDER_SERIES / "extensions/user_default" / addon_id / "blender_manifest.toml"
+        return installed.is_file() and tomllib.loads(installed.read_bytes().decode("utf-8")).get("version") == version
+
+    def addon_install(ctx: Context) -> None:
+        addon_id, version = addon_identity()
+        blender = str(blender_dir / "blender")
+        out_dir = repo / "data/downloads"
+        ctx.run(Command(
+            [blender, "--command", "extension", "build", "--source-dir", str(repo / ADDON_DIR),
+             "--output-dir", str(out_dir)],
+            cwd=repo,
+        ))
+        ctx.run(Command(
+            [blender, "--command", "extension", "install-file", "-r", "user_default", "-e",
+             str(out_dir / f"{addon_id}-{version}.zip")],
+            cwd=repo,
+        ))
+
+    return [
+        Step("blender", f"Blender {BLENDER_VERSION}", install_done, install),
+        Step("blender-addon", "Blender add-on", addon_done, addon_install),
+    ]
+
+
+def save_token(path: Path, token: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(token)
+    os.chmod(path, 0o600)
+
+
+def request_hf_access(repo_id: str, probes: Probes, prompter: Prompter, token_path: Path) -> bool:
+    if not prompter.interactive():
+        return False
+    existing = token_path.read_text(encoding="utf-8").strip() if token_path.is_file() else ""
+    if not (existing and probes.token_valid(existing)):
+        prompter.out(
+            f"{repo_id} is gated: TRELLIS.2 needs it. Paste a Hugging Face token "
+            "(https://huggingface.co/settings/tokens), or press Enter to skip."
+        )
+        for _ in range(HF_TOKEN_TRIES):
+            token = prompter.secret("Hugging Face token: ").strip()
+            if not token:
+                return False
+            if probes.token_valid(token):
+                save_token(token_path, token)
+                break
+            prompter.out("Hugging Face rejected that token.")
+        else:
+            return False
+    while not probes.has_hf_access(repo_id):
+        prompter.out(
+            f"Your account has no access to {repo_id} yet. Request it at https://huggingface.co/{repo_id}, then come back."
+        )
+        answer = prompter.ask("Press Enter to check again, or type s to skip: ").strip().lower()
+        if answer == "s":
+            return False
+    return True
+
+
 def build_steps(repo: Path, platform: str, options: Options, probes: Probes) -> list[Step]:
     if platform == "macos":
         return []
@@ -506,12 +679,14 @@ def build_steps(repo: Path, platform: str, options: Options, probes: Probes) -> 
             hunyuan_step(repo),
             engine_env_step(repo, platform, env),
             inpaint_step(repo, platform, env),
+            dev_tools_step(repo, env),
             weights_step(repo, engine_python, env),
         ]
         if options.rig:
             steps += rig_steps(repo, platform, env)
         if options.trellis:
             steps += trellis_steps(repo, env, probes)
+        steps += blender_steps(repo, options)
         return steps
     steps = [hunyuan_step(repo), weights_only_step(repo, env)]
     if not engine_allowed(repo, platform):
@@ -604,16 +779,28 @@ def _hf_access(repo_id: str, token_path: Path) -> bool:
         return False
 
 
+def _hf_token_valid(token: str) -> bool:
+    request = urllib.request.Request(
+        "https://huggingface.co/api/whoami-v2", headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status == 200
+    except OSError:
+        return False
+
+
 def real_probes(token_path: Path) -> Probes:
     return Probes(
         run=_probe_run,
         disk_free=lambda path: shutil.disk_usage(path).free,
         has_hf_access=lambda repo_id: _hf_access(repo_id, token_path),
+        token_valid=_hf_token_valid,
     )
 
 
 def main(argv: list[str] | None = None, *, repo: Path | None = None, platform: str | None = None,
-         probes: Probes | None = None, runner: Runner = execute) -> int:
+         probes: Probes | None = None, runner: Runner = execute, prompter: Prompter | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install Model3D's engine, models, UniRig, and TRELLIS.2.")
     parser.add_argument("--dry-run", action="store_true", help="print the plan and change nothing")
     parser.add_argument("--no-rig", action="store_true", help="skip UniRig")
@@ -634,6 +821,11 @@ def main(argv: list[str] | None = None, *, repo: Path | None = None, platform: s
     if system == "macos":
         print(MACOS_DONE)
         return 0
+    if prompter is None:
+        prompter = real_prompter()
+    if (not args.dry_run and system == "linux" and options.trellis and not trellis_weights_done(repo)
+            and not probes.has_hf_access(DINOV3_REPO)):
+        request_hf_access(DINOV3_REPO, probes, prompter, options.home / TOKEN_RELATIVE)
     steps = build_steps(repo, system, options, probes)
     results = run_plan(steps, args.dry_run, repo, runner, print)
     if args.dry_run:
@@ -650,6 +842,8 @@ def main(argv: list[str] | None = None, *, repo: Path | None = None, platform: s
             (repo / "data/repo-xdg-config").mkdir(parents=True, exist_ok=True)
         print("Start the app from the repository root with:")
         print(start_command(repo, os.environ, system, options, trellis_ready))
+        print("Run the Blender tests with:")
+        print('cd blender && PATH="$PWD/../vendor/blender:$PATH" uv run pytest -m blender')
     return 0
 
 

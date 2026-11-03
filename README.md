@@ -144,14 +144,15 @@ From the repository root, one script installs the libraries and AI models into t
 
 | System | Command | What it installs | Generates models? |
 | :--- | :--- | :--- | :--- |
-| Ubuntu | `scripts/setup/setup-ubuntu.sh` | Everything: client, engine, CUDA 13.2 toolkit, Hunyuan3D 2.1, UniRig, TRELLIS.2, and about 40 GB of weights | Yes |
+| Ubuntu | `scripts/setup/setup-ubuntu.sh` | Everything: client, engine, CUDA 13.2 toolkit, Hunyuan3D 2.1, UniRig, TRELLIS.2, about 40 GB of weights, the test tools of all five projects, the apt packages for `client/scripts/test_system_python.sh`, and Blender 4.5 LTS (`vendor/blender/`) with the Model3D add-on installed | Yes |
 | Windows | `scripts\setup\setup-windows.ps1` | Client, Hunyuan3D source, and its weights; it stops at the engine | Not yet: the engine installs on Linux only (see `docs/userstories/cross-platform-native/`) |
 | macOS | `scripts/setup/setup-macos.sh` | Client only, no weights | No: the engine needs an NVIDIA GPU with CUDA |
 
 - Run a script again at any time: finished steps are skipped, and a cut download or build resumes. `--dry-run` prints the plan, and `--no-rig` and `--no-trellis` skip those parts.
 - Ubuntu asks for the `sudo` password once, at the start, and only when apt packages are missing. Everything else runs as your user.
-- The NVIDIA driver is not installed by any script. A missing driver stops the run before downloading anything.
-- TRELLIS.2 needs `facebook/dinov3-vitl16-pretrain-lvd1689m`, which is gated: request access on Hugging Face and run `engine/.venv/bin/huggingface-cli login`. Without it the script skips that download and continues.
+- TRELLIS.2 needs `facebook/dinov3-vitl16-pretrain-lvd1689m`, which is gated. When your account cannot reach it, the script asks for a Hugging Face token right after the `sudo` prompt (input is hidden), saves it to `~/.cache/huggingface/token` with mode 600, and never prints or logs it. If the account has no access yet, it shows the page where access is requested and lets you check again or skip. Press Enter at the token prompt, or run without a terminal, to skip DINOv3 and continue.
+- The NVIDIA driver is the only manual step: no script installs it, because it needs a reboot and can break the display. A missing driver stops the run before downloading anything.
+- Blender is downloaded from blender.org, checked against its published SHA-256, and kept inside the repository. The add-on is registered in Blender's own user folder (`~/.config/blender/4.5/extensions/user_default/model3d`). The script ends with the command that runs the Blender tests.
 - A virtual environment built for another system on a shared disk is never deleted. UniRig then installs to `vendor/UniRig-linux`; for `engine/.venv` or `client/.venv` the script stops and explains.
 - The script ends with the exact command to start the app. It accounts for a wizard install on the same machine, which would otherwise take over the repository run.
 
