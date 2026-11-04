@@ -42,6 +42,10 @@ class AppPaths:
         return self.repo / "vendor/Hunyuan3D-2.1"
 
     @property
+    def trellis_python(self) -> Path:
+        return self.repo / "vendor/TRELLIS.2/.venv/bin/python"
+
+    @property
     def viewer_dir(self) -> Path:
         return PACKAGE_DIR / "viewer"
 

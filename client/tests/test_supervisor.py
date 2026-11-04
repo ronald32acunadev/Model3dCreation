@@ -80,6 +80,37 @@ def test_engine_gets_model3d_home(qtbot, paths, make_supervisor):
     assert f"HOME={paths.data}" in paths.engine_log.read_text()
 
 
+GENERATOR_PROGRAM = [sys.executable, "-c", "import os, sys; print('GENERATOR=' + os.environ.get('MODEL3D_GENERATOR', 'unset')); sys.exit(1)"]
+
+
+def test_engine_uses_trellis_when_installed(qtbot, paths, make_supervisor, monkeypatch):
+    monkeypatch.delenv("MODEL3D_GENERATOR", raising=False)
+    paths.trellis_python.parent.mkdir(parents=True, exist_ok=True)
+    paths.trellis_python.write_text("")
+    sup = make_supervisor(free_port(), GENERATOR_PROGRAM)
+    sup.start()
+    qtbot.waitUntil(lambda: sup.state == EngineState.crashed, timeout=15000)
+    assert "GENERATOR=trellis2" in paths.engine_log.read_text()
+
+
+def test_engine_keeps_explicit_generator(qtbot, paths, make_supervisor, monkeypatch):
+    monkeypatch.setenv("MODEL3D_GENERATOR", "hunyuan")
+    paths.trellis_python.parent.mkdir(parents=True, exist_ok=True)
+    paths.trellis_python.write_text("")
+    sup = make_supervisor(free_port(), GENERATOR_PROGRAM)
+    sup.start()
+    qtbot.waitUntil(lambda: sup.state == EngineState.crashed, timeout=15000)
+    assert "GENERATOR=hunyuan" in paths.engine_log.read_text()
+
+
+def test_engine_without_trellis_gets_no_generator(qtbot, paths, make_supervisor, monkeypatch):
+    monkeypatch.delenv("MODEL3D_GENERATOR", raising=False)
+    sup = make_supervisor(free_port(), GENERATOR_PROGRAM)
+    sup.start()
+    qtbot.waitUntil(lambda: sup.state == EngineState.crashed, timeout=15000)
+    assert "GENERATOR=unset" in paths.engine_log.read_text()
+
+
 def test_loading_until_ready(qtbot, paths, make_supervisor):
     port = free_port()
     sup = make_supervisor(port, [sys.executable, FAKE_PROCESS, str(port), "loading"])

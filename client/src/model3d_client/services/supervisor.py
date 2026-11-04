@@ -98,6 +98,9 @@ class EngineSupervisor(QObject):
         process = QProcess(self)
         env = QProcessEnvironment.systemEnvironment()
         env.insert("MODEL3D_HOME", str(self._paths.data))
+        # The engine defaults to Hunyuan3D; the app prefers TRELLIS.2 when it is installed and nothing chose otherwise.
+        if not env.contains("MODEL3D_GENERATOR") and self._paths.trellis_python.is_file():
+            env.insert("MODEL3D_GENERATOR", "trellis2")
         process.setProcessEnvironment(env)
         process.setWorkingDirectory(str(self._paths.repo))
         process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)

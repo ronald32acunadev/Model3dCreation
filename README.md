@@ -265,7 +265,7 @@ All engine and client path overrides are configured via environment variables (`
 | `MODEL3D_SHAPE_BUS` | *(auto-detected)* | Explicit PCI bus ID (e.g., `0000:01:00.0`) for the `shape` worker. Must be set together with `MODEL3D_PAINT_BUS`. |
 | `MODEL3D_PAINT_BUS` | *(auto-detected)* | Explicit PCI bus ID (e.g., `0000:29:00.0`) for the `paint` worker. Must be set together with `MODEL3D_SHAPE_BUS`. |
 | `MODEL3D_ALLOWED_ORIGINS` | `""` (empty) | Comma-separated list of browser `Origin` URLs permitted to send `POST` or `DELETE` requests. |
-| `MODEL3D_GENERATOR` | `hunyuan` | Generation pipeline: `hunyuan` (Hunyuan3D shape + paint) or `trellis2` (TRELLIS.2, see above). Other values exit at startup. |
+| `MODEL3D_GENERATOR` | `hunyuan` | Generation pipeline: `hunyuan` (Hunyuan3D shape + paint) or `trellis2` (TRELLIS.2, see above). Other values exit at startup. When the desktop app starts the engine and `vendor/TRELLIS.2/.venv` exists, it sets `trellis2` unless this variable is already set. |
 | `MODEL3D_TRELLIS_DIR` | `<repo_or_install>/vendor/TRELLIS.2` | Path to the TRELLIS.2 checkout containing its `.venv`. |
 | `MODEL3D_STAGE_TIMEOUT_S` | `900` | Maximum seconds a single stage task may run before its worker process is killed; the next task loads it again. |
 
