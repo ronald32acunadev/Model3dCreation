@@ -31,7 +31,7 @@ def action(menu, name: str):
 
 def test_menu_lists_add_walk_after_add_skeleton(panel):
     names = [a.objectName() for a in panel.build_menu(rigged_entry()).actions()]
-    assert names == ["rename", "delete", "add_skeleton", "add_walk"]
+    assert names == ["rename", "delete", "add_skeleton", "add_walk", "regenerate"]
 
 
 def test_add_walk_follows_can_add_walk(panel):
@@ -44,3 +44,15 @@ def test_add_walk_follows_can_add_walk(panel):
 
 def test_add_walk_disabled_by_default(panel):
     assert not action(panel.build_menu(rigged_entry()), "add_walk").isEnabled()
+
+
+def test_regenerate_follows_can_regenerate(panel):
+    entry = rigged_entry()
+    panel.can_regenerate = lambda _entry: True
+    assert action(panel.build_menu(entry), "regenerate").isEnabled()
+    panel.can_regenerate = lambda _entry: False
+    assert not action(panel.build_menu(entry), "regenerate").isEnabled()
+
+
+def test_regenerate_disabled_by_default(panel):
+    assert not action(panel.build_menu(rigged_entry()), "regenerate").isEnabled()

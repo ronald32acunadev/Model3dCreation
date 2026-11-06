@@ -1,5 +1,7 @@
+import json
+
 import pytest
-from model3d_contracts.jobs import JobState, Quality
+from model3d_contracts.jobs import JobOptions, JobState, Quality
 
 from fake_engine import CLOSE, FakeEngine, error_body, make_job
 from fakes import FakeSupervisor
@@ -269,3 +271,51 @@ def test_add_skeleton_refused_for_rigged_or_failed_entry(make_vm, library, png):
     assert vm.can_add_skeleton(library._read(failed.entry_id)) is False
     vm.add_skeleton(rigged.entry_id)
     assert vm.phase == Phase.idle
+
+
+def test_regenerate_submits_same_image_and_options_with_new_seed(qtbot, engine, make_vm, library, png):
+    source = finished_entry(library, png, quality=Quality.draft)
+    library.update(source.model_copy(update={"seed": 42, "name": "Knight"}))
+    source = library._read(source.entry_id)
+    engine.controller.push(completed(), CLOSE)
+    vm = make_vm()
+    assert vm.can_regenerate(source)
+    done = []
+    vm.finished.connect(done.append)
+    vm.regenerate(source.entry_id)
+    qtbot.waitUntil(lambda: bool(done), timeout=10000)
+    assert len(engine.controller.submissions) == 1
+    submission = engine.controller.submissions[0]
+    assert submission["image"] == png.read_bytes()
+    sent = json.loads(submission["options"])
+    assert sent["quality"] == "draft"
+    assert sent["seed"] != 42 and 0 <= sent["seed"] < 2**32
+    new = done[0]
+    assert new.outcome == Outcome.succeeded
+    assert new.entry_id != source.entry_id
+    assert new.name == "Knight"
+
+
+def test_regenerate_keeps_source_entry_unchanged(qtbot, engine, make_vm, library, png):
+    source = finished_entry(library, png)
+    source_json = (library.folder(source.entry_id) / "entry.json").read_bytes()
+    engine.controller.push(completed(), CLOSE)
+    vm = make_vm()
+    done = []
+    vm.finished.connect(done.append)
+    vm.regenerate(source.entry_id)
+    qtbot.waitUntil(lambda: bool(done), timeout=10000)
+    assert (library.folder(source.entry_id) / "entry.json").read_bytes() == source_json
+    assert library.model_path(source.entry_id).read_bytes() == b"glTF source model"
+    assert len(library.entries()) == 2
+
+
+def test_regenerate_refused_for_failed_entry(make_vm, library, png):
+    vm = make_vm()
+    failed = library.create(png, JobOptions())
+    library.update(failed.model_copy(update={"outcome": Outcome.failed}))
+    failed = library._read(failed.entry_id)
+    assert vm.can_regenerate(failed) is False
+    vm.regenerate(failed.entry_id)
+    assert vm.phase == Phase.idle
+    assert len(library.entries()) == 1

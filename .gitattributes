@@ -1,0 +1,15 @@
+# Git stores text with LF; each system checks out what it needs. This repo is used from Windows and Linux.
+* text=auto
+
+# Linux and macOS cannot run these with CRLF (env: 'bash\r').
+*.sh text eol=lf
+packaging/deb/** text eol=lf
+
+# PowerShell scripts for Windows.
+*.ps1 text eol=crlf
+
+*.qm binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.glb binary

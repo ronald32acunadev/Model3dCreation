@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 let renderer;
 try {
@@ -18,8 +19,9 @@ document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x2b2d31);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.0));
-const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+// Image-based light: metallic surfaces need something to reflect, or they render black.
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
 sun.position.set(3, 5, 4);
 scene.add(sun);
 

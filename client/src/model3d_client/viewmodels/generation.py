@@ -1,6 +1,7 @@
 """The generation panel's state: from an input image to a finished library entry."""
 
 import logging
+import secrets
 from enum import Enum
 from pathlib import Path
 
@@ -81,6 +82,13 @@ class GenerationViewModel(QObject):
             and not self._library.has_skeleton(entry)
         )
 
+    def can_regenerate(self, entry: Entry) -> bool:
+        return (
+            self._supervisor.state == EngineState.ready
+            and self.phase == Phase.idle
+            and entry.outcome == Outcome.succeeded
+        )
+
     @property
     def can_generate(self) -> bool:
         return (
@@ -136,6 +144,24 @@ class GenerationViewModel(QObject):
         self.entry = self._library.create_derived(entry_id)
         self._start()
         self._api.submit_rig(self._library.model_path(entry_id), self._on_submitted)
+
+    def regenerate(self, entry_id: str) -> None:
+        """Generate the entry's image again with its options and a different seed, into a new entry."""
+        source = next((entry for entry in self._library.entries() if entry.entry_id == entry_id), None)
+        if source is None or not self.can_regenerate(source):
+            return
+        seed = secrets.randbelow(2**32)
+        while seed == source.seed:
+            seed = secrets.randbelow(2**32)
+        options = source.options.model_copy(update={
+            "seed": seed,
+            "texture": source.options.texture and self.texture_available,
+            "rig": source.options.rig and self.rig_available,
+        })
+        image = self._library.input_path(entry_id)
+        self.entry = self._library.create(image, options, name=source.name)
+        self._start()
+        self._api.submit(image, options, self._on_submitted)
 
     def _start(self) -> None:
         self.library_changed.emit()

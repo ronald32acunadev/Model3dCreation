@@ -71,7 +71,7 @@ class Library:
                     logger.warning("Skipping unreadable library entry %s: %s", folder, error)
         return sorted(found, key=lambda entry: (entry.created_at, entry.entry_id), reverse=True)
 
-    def create(self, image: Path, options: JobOptions) -> Entry:
+    def create(self, image: Path, options: JobOptions, name: str | None = None) -> Entry:
         """Copy the image into a new entry that is running."""
         now = datetime.now(UTC)
         entry_id = f"{now:%Y%m%dT%H%M%S}-{secrets.token_hex(3)}"
@@ -80,7 +80,7 @@ class Library:
         shutil.copyfile(image, self.folder(entry_id) / input_file)
         entry = Entry(
             entry_id=entry_id,
-            name=image.stem,
+            name=image.stem if name is None else name,
             created_at=now,
             options=options,
             outcome=Outcome.running,

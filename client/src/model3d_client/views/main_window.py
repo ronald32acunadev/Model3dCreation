@@ -67,6 +67,8 @@ class MainWindow(QMainWindow):
         self.library_panel.can_add_skeleton = vm.generation.can_add_skeleton
         self.library_panel.rig_reason = lambda: vm.generation.rig_reason
         self.library_panel.add_skeleton_requested.connect(vm.generation.add_skeleton)
+        self.library_panel.can_regenerate = vm.generation.can_regenerate
+        self.library_panel.regenerate_requested.connect(vm.generation.regenerate)
         self.library_panel.can_add_walk = vm.can_add_walk
         self.library_panel.add_walk_requested.connect(vm.detect_body)
         vm.body_detected.connect(self._on_body_detected)

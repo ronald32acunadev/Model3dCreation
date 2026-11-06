@@ -138,7 +138,25 @@ sudo apt install ./dist/model3d_0.2.0_amd64.deb
 
 Launch `model3d` from your application menu or terminal. On first run, the **Setup Wizard** verifies your NVIDIA driver, GPUs, and `nvcc`, then downloads and builds the engine environment and model weights inside your chosen installation directory.
 
-### Option 2: Development Setup from Source
+### Option 2: Setup Scripts
+
+From the repository root, one script installs the libraries and AI models into the repository (`.venv` folders, `vendor/`, and `data/`, all ignored by git):
+
+| System | Command | What it installs | Generates models? |
+| :--- | :--- | :--- | :--- |
+| Ubuntu | `scripts/setup/setup-ubuntu.sh` | Everything: client, engine, CUDA 13.2 toolkit, Hunyuan3D 2.1, UniRig, TRELLIS.2, about 40 GB of weights, the test tools of all five projects, the apt packages for `client/scripts/test_system_python.sh`, and Blender 4.5 LTS (`vendor/blender/`) with the Model3D add-on installed | Yes |
+| Windows | `scripts\setup\setup-windows.ps1` | Client, Hunyuan3D source, and its weights; it stops at the engine | Not yet: the engine installs on Linux only (see `docs/userstories/cross-platform-native/`) |
+| macOS | `scripts/setup/setup-macos.sh` | Client only, no weights | No: the engine needs an NVIDIA GPU with CUDA |
+
+- Run a script again at any time: finished steps are skipped, and a cut download or build resumes. `--dry-run` prints the plan, and `--no-rig` and `--no-trellis` skip those parts.
+- Ubuntu asks for the `sudo` password once, at the start, and only when apt packages are missing. Everything else runs as your user.
+- TRELLIS.2 needs `facebook/dinov3-vitl16-pretrain-lvd1689m`, which is gated. When your account cannot reach it, the script asks for a Hugging Face token right after the `sudo` prompt (input is hidden), saves it to `~/.cache/huggingface/token` with mode 600, and never prints or logs it. If the account has no access yet, it shows the page where access is requested and lets you check again or skip. Press Enter at the token prompt, or run without a terminal, to skip DINOv3 and continue.
+- The NVIDIA driver is the only manual step: no script installs it, because it needs a reboot and can break the display. A missing driver stops the run before downloading anything.
+- Blender is downloaded from blender.org, checked against its published SHA-256, and kept inside the repository. The add-on is registered in Blender's own user folder (`~/.config/blender/4.5/extensions/user_default/model3d`). The script ends with the command that runs the Blender tests.
+- A virtual environment built for another system on a shared disk is never deleted. UniRig then installs to `vendor/UniRig-linux`; for `engine/.venv` or `client/.venv` the script stops and explains.
+- The script ends with the exact command to start the app. It accounts for a wizard install on the same machine, which would otherwise take over the repository run.
+
+### Option 3: Development Setup by Hand
 
 1. **Install `uv`** and ensure Python 3.11 and CUDA 13 (`nvcc`) are available.
 2. **Clone external vendor repositories** (not tracked in git) when setting up the engine manually without the desktop wizard:
@@ -247,7 +265,7 @@ All engine and client path overrides are configured via environment variables (`
 | `MODEL3D_SHAPE_BUS` | *(auto-detected)* | Explicit PCI bus ID (e.g., `0000:01:00.0`) for the `shape` worker. Must be set together with `MODEL3D_PAINT_BUS`. |
 | `MODEL3D_PAINT_BUS` | *(auto-detected)* | Explicit PCI bus ID (e.g., `0000:29:00.0`) for the `paint` worker. Must be set together with `MODEL3D_SHAPE_BUS`. |
 | `MODEL3D_ALLOWED_ORIGINS` | `""` (empty) | Comma-separated list of browser `Origin` URLs permitted to send `POST` or `DELETE` requests. |
-| `MODEL3D_GENERATOR` | `hunyuan` | Generation pipeline: `hunyuan` (Hunyuan3D shape + paint) or `trellis2` (TRELLIS.2, see above). Other values exit at startup. |
+| `MODEL3D_GENERATOR` | `hunyuan` | Generation pipeline: `hunyuan` (Hunyuan3D shape + paint) or `trellis2` (TRELLIS.2, see above). Other values exit at startup. When the desktop app starts the engine and `vendor/TRELLIS.2/.venv` exists, it sets `trellis2` unless this variable is already set. |
 | `MODEL3D_TRELLIS_DIR` | `<repo_or_install>/vendor/TRELLIS.2` | Path to the TRELLIS.2 checkout containing its `.venv`. |
 | `MODEL3D_STAGE_TIMEOUT_S` | `900` | Maximum seconds a single stage task may run before its worker process is killed; the next task loads it again. |
 

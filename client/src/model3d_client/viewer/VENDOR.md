@@ -14,6 +14,7 @@ Files copied, unchanged:
 | `examples/jsm/controls/OrbitControls.js` | `addons/controls/` |
 | `examples/jsm/loaders/GLTFLoader.js` | `addons/loaders/` |
 | `examples/jsm/utils/BufferGeometryUtils.js`, `examples/jsm/utils/SkeletonUtils.js` | `addons/utils/` |
+| `examples/jsm/environments/RoomEnvironment.js` | `addons/environments/` |
 
 `GLTFLoader.js` imports the two utils files. `index.html` maps `three` and `three/addons/` to these files with an import map.
 
