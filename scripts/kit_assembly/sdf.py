@@ -35,10 +35,23 @@ def weld(vertices: np.ndarray, faces: np.ndarray, tolerance: float = 1e-6) -> tu
     return np.asarray(vertices, np.float64)[first], welded[keep]
 
 
-class MeshField:
-    """Signed distance to the outer surface of a closed or hollow triangle mesh."""
+def sphere_directions(count: int) -> np.ndarray:
+    """Evenly spread unit vectors (Fibonacci sphere)."""
+    index = np.arange(count) + 0.5
+    polar = np.arccos(1 - 2 * index / count)
+    azimuth = np.pi * (1 + 5**0.5) * index
+    return np.column_stack([np.cos(azimuth) * np.sin(polar), np.sin(azimuth) * np.sin(polar), np.cos(polar)])
 
-    def __init__(self, vertices: np.ndarray, faces: np.ndarray, cell: float):
+
+class MeshField:
+    """Signed distance to the outer surface of a closed or hollow triangle mesh.
+
+    With `enclosure` set, empty cells from which at least that fraction of rays hits the mesh also
+    count as inside: a generated part such as a torso is a shell open at the neck, sleeves, and
+    waist, so its body would otherwise read as outside.
+    """
+
+    def __init__(self, vertices: np.ndarray, faces: np.ndarray, cell: float, enclosure: float | None = None):
         vertices = np.asarray(vertices, np.float64)
         faces = np.asarray(faces, np.int64)
         self.cell = float(cell)
@@ -58,6 +71,10 @@ class MeshField:
         wall = (distances < 0.87 * self.cell).reshape(self.shape)
         labels, _ = ndimage.label(~wall)
         exterior = labels == labels[0, 0, 0]
+        if enclosure is not None:
+            exterior &= ~self._enclosed(np.flatnonzero(exterior.ravel()), enclosure).reshape(self.shape)
+            labels, _ = ndimage.label(exterior)
+            exterior = labels == labels[0, 0, 0]
         self.inside = ~exterior
         self.boundary = wall & ndimage.binary_dilation(exterior, structure=np.ones((3, 3, 3), bool))
 
@@ -65,6 +82,20 @@ class MeshField:
     def bounds(self) -> tuple[np.ndarray, np.ndarray]:
         """Corners of the occupancy grid, which pads the mesh by three cells."""
         return self.origin, self.origin + self.shape * self.cell
+
+    def _enclosed(self, cells: np.ndarray, threshold: float, rays: int = 64) -> np.ndarray:
+        """Grid mask of the given flat cell indices whose center sees the mesh in `threshold` of directions."""
+        directions = sphere_directions(rays).astype(np.float32)
+        mask = np.zeros(int(np.prod(self.shape)), bool)
+        per_batch = max(1, CHUNK * 4 // rays)
+        for start in range(0, len(cells), per_batch):
+            batch = cells[start:start + per_batch]
+            centers = self.origin + (np.stack(np.unravel_index(batch, self.shape), axis=1) + 0.5) * self.cell
+            origins = np.repeat(centers.astype(np.float32), rays, axis=0)
+            hits = self.scene.cast_rays(o3d.core.Tensor(np.hstack([origins, np.tile(directions, (len(batch), 1))])))
+            hit_fraction = np.isfinite(hits["t_hit"].numpy()).reshape(len(batch), rays).mean(axis=1)
+            mask[batch] = hit_fraction >= threshold
+        return mask
 
     def _distance(self, points: np.ndarray) -> np.ndarray:
         tensor = o3d.core.Tensor(np.asarray(points, np.float32))
@@ -146,9 +177,13 @@ def _block_nodes(origin: np.ndarray, cells: np.ndarray) -> np.ndarray:
 
 
 def extract_surface(
-    field: Field, lo, hi, h: float, block: int = 32, batch_points: int = 2_000_000
+    field: Field, lo, hi, h: float, block: int = 32, batch_points: int = 2_000_000, lipschitz: float = 1.0
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Zero level set of `field` inside the box [lo, hi] on a grid of spacing h, as a welded mesh."""
+    """Zero level set of `field` inside the box [lo, hi] on a grid of spacing h, as a welded mesh.
+
+    Blocks are skipped where the field at their center proves no surface inside, assuming the field
+    changes at most `lipschitz` times as fast as distance (1 for true distances and their min/max).
+    """
     lo = np.asarray(lo, np.float64)
     counts = np.ceil((np.asarray(hi, np.float64) - lo) / h).astype(np.int64)
     starts = [np.arange(0, counts[axis], block) for axis in range(3)]
@@ -156,7 +191,7 @@ def extract_surface(
     sizes = np.minimum(block, counts - origins)
     centers = lo + (origins + sizes / 2) * h
     coarse = np.concatenate([field(centers[s:s + batch_points]) for s in range(0, len(centers), batch_points)])
-    keep = np.abs(coarse) <= 0.5 * h * np.linalg.norm(sizes, axis=1) + h
+    keep = np.abs(coarse) <= lipschitz * 0.5 * h * np.linalg.norm(sizes, axis=1) + h
     origins, sizes = origins[keep], sizes[keep]
 
     vertex_parts: list[np.ndarray] = []

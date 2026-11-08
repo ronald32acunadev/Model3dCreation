@@ -1,8 +1,9 @@
 """Generate each part crop alone through the running engine, with the mold job's seed.
 
-`python generate_parts.py RUN_DIR [--engine URL]` submits crops/<part>.png as `high` jobs without
-rig, waits for each, and copies its result to parts/<part>.glb. Finished parts are skipped, so a
-rerun resumes. parts.json records each part's job id, state, and seconds.
+`python generate_parts.py RUN_DIR [--engine URL] [--parts head,arm_px] [--seeds 1,2]` submits
+crops/<part>.png as `high` jobs without rig, waits for each, and copies its result to
+parts/<part>.glb, or parts/<part>@<seed>.glb for extra seeds (kit.py keeps the most solid one).
+Finished parts are skipped, so a rerun resumes. parts.json records each job's id, state, and seconds.
 """
 
 import argparse
@@ -42,21 +43,27 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("run")
     parser.add_argument("--engine", default="http://127.0.0.1:8765")
+    parser.add_argument("--parts", help="comma-separated part names (default: every crop)")
+    parser.add_argument("--seeds", help="comma-separated extra seeds (default: the mold job's seed)")
     args = parser.parse_args(argv)
     run = Path(args.run)
-    seed = json.loads((run / "job.json").read_text())["seed"]
+    job_seed = json.loads((run / "job.json").read_text())["seed"]
     crops = json.loads((run / "crops.json").read_text())["parts"]
+    parts = args.parts.split(",") if args.parts else list(crops)
+    seeds = [int(s) for s in args.seeds.split(",")] if args.seeds else [job_seed]
     (run / "parts").mkdir(exist_ok=True)
     record_path = run / "parts.json"
     record = json.loads(record_path.read_text()) if record_path.exists() else {}
 
-    for part in crops:
-        target = run / "parts" / f"{part}.glb"
+    for part, seed in ((p, s) for p in parts for s in seeds):
+        key = part if seed == job_seed else f"{part}@{seed}"
+        target = run / "parts" / f"{key}.glb"
         if target.exists():
             continue
         started = time.monotonic()
         job_id = submit(args.engine, run / "crops" / f"{part}.png", {"quality": "high", "seed": seed, "rig": False})
-        record[part] = {"job_id": job_id, "state": "queued"}
+        record[key] = {"job_id": job_id, "state": "queued", "seed": seed}
+        part = key
         record_path.write_text(json.dumps(record, indent=2))
         while True:
             job = get_json(f"{args.engine}/v1/jobs/{job_id}")

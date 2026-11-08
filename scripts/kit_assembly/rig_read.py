@@ -7,6 +7,7 @@ written in the glTF frame (+Y up). See README.md for the file formats.
 """
 
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -165,4 +166,8 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv))
+    code = main(sys.argv)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # bpy can hang in interpreter teardown after the work is written; exit without it.
+    os._exit(code)
