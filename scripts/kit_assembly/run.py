@@ -120,14 +120,22 @@ def prepare(job: Path, run: Path) -> None:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("job", help="job id or folder in data/jobs")
+    parser.add_argument("job", help="job id or folder in data/jobs, or 'latest' for the newest rigged job")
     parser.add_argument("--extra-seeds", default="11", help="comma-separated seeds tried besides the job's (empty for none)")
     parser.add_argument("--engine", default="http://127.0.0.1:8765")
     args = parser.parse_args(argv)
-    job = Path(args.job) if Path(args.job).is_dir() else ROOT / "data/jobs" / args.job
+    rigged = sorted((p for p in (ROOT / "data/jobs").glob("*") if (p / "rig_input.glb").exists()),
+                    key=lambda p: (p / "job.json").stat().st_mtime, reverse=True)
+    if args.job == "latest" and rigged:
+        job = rigged[0]
+    else:
+        job = Path(args.job) if Path(args.job).is_dir() else ROOT / "data/jobs" / args.job
     if not job.is_dir():
-        print(f"No job folder {job}", file=sys.stderr)
+        print(f"No job folder {job}. Pass a job id from data/jobs, or 'latest'. Rigged jobs, newest first:", file=sys.stderr)
+        for path in rigged[:10]:
+            print(f"  {path.name}", file=sys.stderr)
         return 2
+    print(f"Job {job.name}", flush=True)
     run = ROOT / "data/kit_runs" / job.name
     log = run / "run.log"
     started = time.monotonic()
