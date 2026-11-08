@@ -23,7 +23,7 @@ import trimesh
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
-from sdf import CutterField, MeshField, edge_counts, extract_surface, signed_volume, weld
+from sdf import CutterField, MeshField, capsule_distance, edge_counts, extract_surface, signed_volume, weld
 
 GRID_CELLS = 256  # occupancy cells along each model's longest side
 RADIUS_PERCENTILE = 98  # capsule radius: this percentile of a bone's region distances
@@ -43,6 +43,10 @@ RAISE_LIMIT = 0.5
 RAISE_STEPS = 40
 SOLID_SHARE = 0.9
 MIN_OUTLINE = 0.5
+# The raised cut must also cross the mold where OWN_SHARE of its surface points within LABEL_SLAB
+# of the plane (inside the cutter) are labeled as the part.
+OWN_SHARE = 0.9
+LABEL_SLAB = 0.005
 BLEND = 0.03  # glTF units over which the mold turns into the sculpted part above a cut
 # Head swap: mold faces from SWAP_MARGIN below the cut upward are replaced; the patch reaches
 # SWAP_OVERLAP further down, inside the kept body (glTF units, body about 1.0 tall).
@@ -148,18 +152,26 @@ def seam(cut: CutterField, torso, part) -> dict:
     }
 
 
-def raise_plane(cut: CutterField, region: np.ndarray, part, mold) -> float:
-    """Distance to move the cut along its normal so it crosses the sculpted part where it is solid.
+def raise_plane(cut: CutterField, region: np.ndarray, part, mold, mold_points: np.ndarray, own: np.ndarray) -> float:
+    """Distance to move the cut along its normal so it crosses the sculpted part where it is solid,
+    and the mold where its surface already belongs to the part.
 
     A generated part is hollow and ragged where the body continued (a head's neck ends in a tube
     and a shirt collar); the mold, which is solid there, keeps everything below the raised plane.
+    `own` marks the mold points labeled as the part: a cut through the mold's shirt collar mixed
+    the bust's collar with the body's and left it ragged (the man), so the cut moves up to skin.
     """
     reach = float(np.max((region - cut.point) @ cut.normal)) * RAISE_LIMIT
+    inside = np.min([capsule_distance(mold_points, a, b, r) for a, b, r in cut.segments], axis=0) < 0
+    heights = (mold_points - cut.point) @ cut.normal
     for offset in np.linspace(0.0, reach, RAISE_STEPS):
         point = cut.point + offset * cut.normal
         solid, outline, _ = section(point, cut, part)
         _, mold_outline, _ = section(point, cut, mold)
-        if outline.sum() and solid.sum() >= SOLID_SHARE * outline.sum() and outline.sum() >= MIN_OUTLINE * mold_outline.sum():
+        if not (outline.sum() and solid.sum() >= SOLID_SHARE * outline.sum() and outline.sum() >= MIN_OUTLINE * mold_outline.sum()):
+            continue
+        slab = inside & (np.abs(heights - offset) < LABEL_SLAB)
+        if slab.any() and own[slab].mean() >= OWN_SHARE:
             return float(offset)
     return 0.0
 
@@ -265,7 +277,9 @@ def main(argv: list[str]) -> int:
 
     mold_mesh = load_mesh(run / "mold.glb")
     labels = np.load(run / "mold_labels.npy")
-    mold = mesh_field(np.asarray(mold_mesh.vertices), np.asarray(mold_mesh.faces))
+    # Molds can be open too: the alien's read as hollow in the neck (its head held a tenth of the
+    # dog's solid volume) and the blend into the head left holes and strands there.
+    mold = mesh_field(np.asarray(mold_mesh.vertices), np.asarray(mold_mesh.faces), enclosure=ENCLOSURE)
     names = rig["parts"][1:]
     cutters = {
         part: cutter(rig["joints"][part], np.asarray(mold_mesh.vertices)[labels == index], h)
@@ -303,7 +317,8 @@ def main(argv: list[str]) -> int:
     report["raised"] = {}
     for part, field in sculpted.items():
         region = np.asarray(mold_mesh.vertices)[labels == names.index(part) + 1]
-        offset = raise_plane(cutters[part], region, field, mold)
+        offset = raise_plane(cutters[part], region, field, mold, np.asarray(mold_mesh.vertices),
+                             labels == names.index(part) + 1)
         cut = cutters[part]
         cutters[part] = CutterField(cut.point + offset * cut.normal, cut.normal, cut.segments)
         blend = Blend(cutters[part], mold, field)
