@@ -42,8 +42,57 @@ def import_glb(bpy, path: Path):
     return bpy.context.view_layer.objects.active
 
 
-def bake(bpy, target, source, image, clear: bool) -> None:
-    """Bake the source's base color onto the target's active image node."""
+def blend_weight(bpy, target, source, plane: dict, blend: float, size: int) -> np.ndarray:
+    """Per-texel weight of the part's color: 0 at the cut plane, 1 at `blend` above it (smoothstep).
+
+    It matches kit.py's geometry blend, so the colors meet where the shapes do (the bust's brighter
+    shirt otherwise showed as a band above the dog's cut). Baked as emission from the part's surface.
+    """
+    point, normal = blender_vector(plane["point"]), blender_vector(plane["normal"])
+    material = bpy.data.materials.new("blend_weight")
+    material.use_nodes = True
+    tree = material.node_tree
+    tree.nodes.clear()
+    geometry = tree.nodes.new("ShaderNodeNewGeometry")
+    dot = tree.nodes.new("ShaderNodeVectorMath")
+    dot.operation = "DOT_PRODUCT"
+    dot.inputs[1].default_value = normal
+    offset = tree.nodes.new("ShaderNodeMath")
+    offset.operation = "SUBTRACT"
+    offset.inputs[1].default_value = float(np.dot(point, normal))
+    ramp = tree.nodes.new("ShaderNodeMapRange")
+    ramp.interpolation_type = "SMOOTHSTEP"
+    ramp.inputs["From Min"].default_value = 0.0
+    ramp.inputs["From Max"].default_value = blend
+    emission = tree.nodes.new("ShaderNodeEmission")
+    output = tree.nodes.new("ShaderNodeOutputMaterial")
+    tree.links.new(geometry.outputs["Position"], dot.inputs[0])
+    tree.links.new(dot.outputs["Value"], offset.inputs[0])
+    tree.links.new(offset.outputs["Value"], ramp.inputs["Value"])
+    tree.links.new(ramp.outputs["Result"], emission.inputs["Color"])
+    tree.links.new(emission.outputs["Emission"], output.inputs["Surface"])
+
+    originals = list(source.data.materials)
+    for index in range(len(originals)):
+        source.data.materials[index] = material
+    image = bpy.data.images.new("weight", size, size, alpha=True)
+    image.pixels.foreach_set(np.zeros(size * size * 4, np.float32))
+    bake(bpy, target, source, image, clear=False, kind="EMIT")
+    for index, original in enumerate(originals):
+        source.data.materials[index] = original
+    weight = pixels(image)[:, :, 0].copy()
+    bpy.data.images.remove(image)
+    bpy.data.materials.remove(material)
+    return np.clip(weight, 0.0, 1.0)
+
+
+def blender_vector(vector) -> tuple[float, float, float]:
+    """glTF (x, y, z) to Blender world (x, -z, y)."""
+    return float(vector[0]), -float(vector[2]), float(vector[1])
+
+
+def bake(bpy, target, source, image, clear: bool, kind: str = "DIFFUSE") -> None:
+    """Bake the source's base color (or emission) onto the target's active image node."""
     bpy.ops.object.select_all(action="DESELECT")
     source.select_set(True)
     target.select_set(True)
@@ -52,7 +101,7 @@ def bake(bpy, target, source, image, clear: bool) -> None:
     node.image = image
     target.active_material.node_tree.nodes.active = node
     bpy.ops.object.bake(
-        type="DIFFUSE", pass_filter={"COLOR"}, use_selected_to_active=True,
+        type=kind, pass_filter={"COLOR"}, use_selected_to_active=True,
         cage_extrusion=CAGE_EXTRUSION, max_ray_distance=MAX_RAY_DISTANCE,
         margin=MARGIN_PX, use_clear=clear,
     )
@@ -156,7 +205,12 @@ def main(argv: list[str]) -> int:
             bake(bpy, target, sources[name], own, clear=False)
             own_pixels = pixels(own)
             hit = own_pixels[:, :, 3] > 0.5
-            color[hit] = own_pixels[hit]
+            weight = np.ones(color.shape[:2], np.float32)
+            plane = kit.get("planes", {}).get(name)
+            if plane is not None:
+                weight = blend_weight(bpy, target, sources[name], plane, kit["blend"], size)
+            mixed = weight[hit][:, None]
+            color[hit] = mixed * own_pixels[hit] + (1 - mixed) * color[hit]
             islands = island_mask(target, size)
             part_share = float((hit & islands).sum() / max(islands.sum(), 1))
             bpy.data.images.remove(own)

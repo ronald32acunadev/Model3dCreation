@@ -17,11 +17,16 @@ SAMPLES = 40_000
 ICP_DISTANCES = (0.04, 0.02, 0.01, 0.005)  # glTF units; the body is about 1.0 tall
 
 
-def region_points(mold: trimesh.Trimesh, labels: np.ndarray, part: int) -> np.ndarray:
-    """Surface samples of the mold faces whose corners mostly belong to `part`."""
-    corner = labels[mold.faces]
-    face_labels = np.where(corner[:, 1] == corner[:, 2], corner[:, 1], corner[:, 0])
-    region = mold.submesh([np.flatnonzero(face_labels == part)], append=True)
+def region_points(mold: trimesh.Trimesh, labels: np.ndarray, part: int, above: float | None = None) -> np.ndarray:
+    """Surface samples of the mold faces whose corners mostly belong to `part`, or, for a bust,
+    of every face whose center is above the height `above`."""
+    if above is None:
+        corner = labels[mold.faces]
+        face_labels = np.where(corner[:, 1] == corner[:, 2], corner[:, 1], corner[:, 0])
+        selected = np.flatnonzero(face_labels == part)
+    else:
+        selected = np.flatnonzero(mold.triangles_center[:, 1] > above)
+    region = mold.submesh([selected], append=True)
     points, _ = trimesh.sample.sample_surface(region, SAMPLES, seed=0)
     return np.asarray(points)
 
@@ -90,11 +95,14 @@ def main(argv: list[str]) -> int:
         part = path.stem
         if part in report and (run / "aligned" / path.name).exists():
             continue
-        index = rig["parts"].index(part.split("@")[0])
+        base = part.split("@")[0]
+        bust = base.endswith("_bust")
+        index = rig["parts"].index(base.removesuffix("_bust"))
         scene = trimesh.load(path)
         mesh = scene.dump(concatenate=True) if isinstance(scene, trimesh.Scene) else scene
         source, _ = trimesh.sample.sample_surface(mesh, SAMPLES, seed=0)
-        target = region_points(mold, labels, index)
+        above = json.loads((run / "crops.json").read_text())["parts"]["head_bust"]["y_cut"] if bust else None
+        target = region_points(mold, labels, index, above)
         method, matrix, fitness, scores = best_fit(np.asarray(source), target)
         distances, _ = cKDTree(target).query(transform(np.asarray(source), matrix))
         scene.apply_transform(matrix)

@@ -108,6 +108,19 @@ Verification: comparison sheets; user verdict.
 
 Dependencies: US-01 → US-02 → US-03 → US-04 → US-05 → US-06 → US-07 → US-08.
 
+## US-09: One command for a head pass
+
+Added 2026-11-08 at the user's request ("Yes, write the runner") after the results showed that only the head is worth sculpting.
+
+As a user, I want one command that takes a finished job from the app and gives it a sculpted head, so that I can try it on new images without running eight tools by hand.
+
+- US-09 / AC-01: Given a rigged job folder (or job id) in `data/jobs`, when `python scripts/kit_assembly/run.py JOB` runs, then it prepares `data/kit_runs/<job_id>/`, generates only the head-and-shoulders crop (the job's seed plus `--extra-seeds`), and runs align, kit, paint, and compare, ending with the paths of `model.glb` and the comparison sheets.
+- US-09 / AC-02: When no engine answers, it starts one with TRELLIS.2 for the generation and stops it afterwards; an engine that was already running is used and left running.
+- US-09 / AC-03: A step whose outputs exist is skipped, so a rerun resumes; a failing step stops the run with its name and the end of its output.
+- US-09 / AC-04: A job without a skeleton ends with `model.glb` equal to the job's model and the reason, without generating anything.
+
+Verification: a run on the man's job from a clean run folder; a rerun that skips every step; a run on a job with no skeleton.
+
 ## Log
 
 - 2026-11-08: TRELLIS.2 meshes are hollow shells. After welding UV seams, the man's mold has 0 boundary edges and 522 non-manifold edges, and a ray through the chest crosses 4 walls (outer and inner, front and back); its enclosed volume is about a tenth of the body's. Ray-parity inside tests read the body as empty, so `sdf.py` defines inside by flood-filling the exterior on a grid and signs points near the outer wall by the closest face's normal.
@@ -129,12 +142,15 @@ Dependencies: US-01 → US-02 → US-03 → US-04 → US-05 → US-06 → US-07 
 
 - 2026-11-08, user on the first comparison (verbatim): "La ultima imagen se ve genial la cara y el cuerpo solo el problema es conectar el cuello con el resto del cuerpo". Fix: `kit.py` raises each sculpted part's cut along its normal to the first plane where the part is solid in 90 % of its outline and its outline is at least half the mold's, and above the cut the field turns from the mold into the part over 3 cm (smoothstep). `paint.py` exports smooth normals. Man: cut raised 7.4 cm (neck base to jaw), outline IoU at the cut 0.88 (was 0.009), fused surface closed (931 534 faces, then 500 000), 243 s, 2.6 GB. Head material 98.7 % from the sculpted head, density 10 704 px per body height (4.3x the current model). By eye: the neck is continuous and the collar comes from the mold; a slightly lighter band remains on the neck.
 
+- 2026-11-08, dog with a head-and-shoulders crop (`crops/head_bust.png`, down to 5 cm below the shoulder joints): all three seeds are real 3D busts with a dog's muzzle, ears, and the open-mouth smile (the four head-only crops were flat cards). Alignment 4-9 mm both ways, solid-volume ratio 0.94-1.0, cut not raised (the bust is solid at the neck), outline IoU 0.93, fused closed. The bust's brighter shirt showed as a band above the cut until `paint.py` blended the colors with the same smoothstep weight as the geometry (an emission bake of the height above the cut plane). Fused faces now take the mold's geodesic labels, and a sculpted part claims the faces inside its cutter: before, a leg cutter that also covered the tail took 173 000 faces and left the other leg 1 012.
+- 2026-11-08, US-09 runner (`run.py`): a job without a skeleton ends in 7 s with `model.glb` byte-identical to the job's, and a rerun skips every step. On the man's job from a clean folder, with no engine running: it started the engine, generated two busts (job seed and 11, 340 s), stopped the engine, and finished in 648 s; head from `head_bust.glb` (solid-volume ratio 1.06). By eye: open blue eyes and a continuous neck, but a darker, heavier beard than the image, and the head-only crop's face (previous run, kept in `data/kit_runs/01M6Y2QGM129CQTEJ6FNTEFWZ6_fullkit/`) is closer to the image. The pick between candidates is by solid volume, not likeness.
+
 ## Verification mapping
 
 | Story / criterion | Check | Observed result |
 | --- | --- | --- |
 | US-01 / AC-01..AC-02 | Runs on both images; log, files, joints found | Pending |
-| US-01 / AC-03 | Run on a GLB with no skeleton: output equals the mold, reason logged | Pending |
+| US-01 / AC-03 | Run on a GLB with no skeleton: output equals the mold, reason logged | Passed (identical SHA-256) |
 | US-02 / AC-01..AC-02 | Crop sizes; contact sheet | Pending |
 | US-03 / AC-01..AC-02 | Run log; per-part renders | Pending |
 | US-04 / AC-01..AC-02 | Alignment distances; render | Pending |
@@ -143,5 +159,7 @@ Dependencies: US-01 → US-02 → US-03 → US-04 → US-05 → US-06 → US-07 
 | US-06 / AC-01..AC-02 | Mesh checks; memory log; renders | Pending |
 | US-07 / AC-01..AC-03 | Renders; texel shares; density table; opens in Blender | Pending |
 | US-08 / AC-01..AC-02 | Comparison sheets; user verdict | Pending |
+
+| US-09 / AC-01..AC-04 | Clean run on the man's job; rerun; job with no skeleton | Passed: man 648 s with engine started and stopped; no-skeleton job byte-identical in 7 s; rerun skipped every step |
 
 The pipeline is an experiment judged by renders, so most checks are reproducible manual procedures; the pure geometry step (cut and cap) gets an automated test.

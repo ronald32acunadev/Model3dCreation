@@ -21,6 +21,7 @@ import numpy as np
 import open3d as o3d
 import trimesh
 from scipy import ndimage
+from scipy.spatial import cKDTree
 
 from sdf import CutterField, MeshField, edge_counts, extract_surface, signed_volume, weld
 
@@ -224,7 +225,8 @@ def main(argv: list[str]) -> int:
     sources: dict[str, BoxBounded] = {}
     every_cut = lambda p: np.min([cutters[q](p) for q in names], axis=0)
     for part in ["torso"] + names:
-        paths = sorted((run / "aligned").glob(f"{part}.glb")) + sorted((run / "aligned").glob(f"{part}@*.glb"))
+        paths = [p for pattern in (f"{part}.glb", f"{part}@*.glb", f"{part}_bust.glb", f"{part}_bust@*.glb")
+                 for p in sorted((run / "aligned").glob(pattern))]
         if part == "torso":
             box = (mold.lo, mold.hi)
             within = lambda field: (lambda p: np.maximum(field(p), -every_cut(p)))
@@ -295,7 +297,14 @@ def main(argv: list[str]) -> int:
     vertices, faces = decimate(vertices, faces, args.faces)
     report["fused"] = mesh_stats(vertices, faces)
     centroids = vertices[faces].mean(axis=1)
-    np.save(run / "fused_labels.npy", np.argmin(np.abs(piece_values(centroids)), axis=0).astype(np.int8))
+    # Faces take the mold's geodesic part labels; a sculpted part claims the faces in its cutter.
+    _, nearest = cKDTree(np.asarray(mold_mesh.vertices)).query(centroids)
+    face_labels = labels[nearest].astype(np.int8)
+    for part in sculpted:
+        face_labels[cutters[part](centroids) < 0] = names.index(part) + 1
+    np.save(run / "fused_labels.npy", face_labels)
+    report["blend"] = BLEND
+    report["planes"] = {p: {"point": cutters[p].point.tolist(), "normal": cutters[p].normal.tolist()} for p in sculpted}
     save(run / "fused.glb", vertices, faces)
     report["seconds"] = round(time.monotonic() - started, 1)
     report["peak_rss_gib"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20, 2)

@@ -20,6 +20,7 @@ ALPHA_THRESHOLD = 0.8 * 255  # TRELLIS.2 crops its input to alpha above this
 DILATION = 0.01  # part masks grow by this fraction of the image height
 MARGIN = 0.02  # crop boxes grow by this fraction of the image height
 TRELLIS_MAX_SIDE = 1024  # TRELLIS.2 shrinks its input so the longer side is at most this
+BUST_DROP = 0.05  # glTF units below the shoulder joints where the bust crop ends (body about 1.0 tall)
 
 
 def load_mold(run: Path, rig: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -115,12 +116,34 @@ def main(argv: list[str]) -> int:
         Image.fromarray(crop).save(crops_dir / f"{part}.png")
         part_scale = min(1.0, TRELLIS_MAX_SIDE / max(x1 - x0, y1 - y0))
         info["parts"][part] = {"box": crop_box, "mask_box": mask_box, "pixel_gain": part_scale / body_scale}
+    line = bust_line(rig)
+    if line is not None:
+        # Head and shoulders: a head crop alone can read as a flat picture (the illustrated dog's
+        # head came out as a card on four seeds), a bust reads as a sculpture.
+        mask = alpha > 0
+        mask[max(0, round(-scale * line + offset[1])):, :] = False
+        ys, xs = np.nonzero(mask)
+        x0, y0 = max(0, int(xs.min()) - margin), max(0, int(ys.min()) - margin)
+        x1, y1 = min(image.width, int(xs.max()) + 1 + margin), int(ys.max()) + 1
+        crop = rgba[y0:y1, x0:x1].copy()
+        crop[:, :, 3] = np.where(mask[y0:y1, x0:x1], crop[:, :, 3], 0)
+        Image.fromarray(crop).save(crops_dir / "head_bust.png")
+        part_scale = min(1.0, TRELLIS_MAX_SIDE / max(x1 - x0, y1 - y0))
+        info["parts"]["head_bust"] = {"box": [x0, y0, x1, y1], "pixel_gain": part_scale / body_scale, "y_cut": line}
     info["head_ratio"] = info["parts"].get("head", {}).get("pixel_gain")
     (run / "crops.json").write_text(json.dumps(info, indent=2))
     contact_sheet(crops_dir, info, parts_map, run / "crops.png")
     print(json.dumps({"iou": round(iou, 3), "flip": flip, "head_ratio": info["head_ratio"],
                       "sizes": {p: [v["box"][2] - v["box"][0], v["box"][3] - v["box"][1]] for p, v in info["parts"].items()}}))
     return 0
+
+
+def bust_line(rig: dict) -> float | None:
+    """Height (glTF y) where a head-and-shoulders crop ends: BUST_DROP below the highest shoulder."""
+    shoulders = [rig["joints"][p]["point"][1] for p in rig["parts"] if p.startswith("arm_")]
+    if "head" not in rig["parts"] or not shoulders:
+        return None
+    return max(shoulders) - BUST_DROP
 
 
 def contact_sheet(crops_dir: Path, info: dict, parts_map: np.ndarray, path: Path) -> None:
