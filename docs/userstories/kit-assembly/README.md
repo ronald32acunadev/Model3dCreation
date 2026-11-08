@@ -121,6 +121,18 @@ As a user, I want one command that takes a finished job from the app and gives i
 
 Verification: a run on the man's job from a clean run folder; a rerun that skips every step; a run on a job with no skeleton.
 
+## US-10: Replace only the head
+
+Added 2026-11-08 after the alien and the cat came out with blurred shirts and noisy bodies, because the whole body was remeshed and re-baked. Approval (verbatim): "Yes, head only".
+
+As a user, I want the head pass to keep the original body's mesh and texture and change only the head and neck, so that the face improves without the body getting worse.
+
+- US-10 / AC-01: Given a sculpted head, when the pass runs, then `model.glb` holds the original mold's triangles and material for every face outside the head region, unchanged, plus one patch mesh (the sculpted head and a neck band blended into the mold) with its own 4096 px material.
+- US-10 / AC-02: The patch overlaps the kept body by about 1 cm inside the neck, so no gap opens where they meet.
+- US-10 / AC-03: When no sculpted head passes the volume check, `model.glb` is the mold unchanged.
+
+Verification: the five run characters re-run; front and head renders against the app's model; the kept body faces' vertex positions equal the mold's.
+
 ## Log
 
 - 2026-11-08: TRELLIS.2 meshes are hollow shells. After welding UV seams, the man's mold has 0 boundary edges and 522 non-manifold edges, and a ray through the chest crosses 4 walls (outer and inner, front and back); its enclosed volume is about a tenth of the body's. Ray-parity inside tests read the body as empty, so `sdf.py` defines inside by flood-filling the exterior on a grid and signs points near the outer wall by the closest face's normal.
@@ -162,6 +174,7 @@ Verification: a run on the man's job from a clean run folder; a rerun that skips
 | US-07 / AC-01..AC-03 | Renders; texel shares; density table; opens in Blender | Pending |
 | US-08 / AC-01..AC-02 | Comparison sheets; user verdict | Pending |
 
+| US-10 / AC-01..AC-03 | Five characters re-run; renders; kept faces equal the mold's | Pending |
 | US-09 / AC-01..AC-04 | Clean run on the man's job; rerun; job with no skeleton | Passed: man 648 s with engine started and stopped; no-skeleton job byte-identical in 7 s; rerun skipped every step |
 
 The pipeline is an experiment judged by renders, so most checks are reproducible manual procedures; the pure geometry step (cut and cap) gets an automated test.

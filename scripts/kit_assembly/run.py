@@ -150,7 +150,9 @@ def main(argv: list[str]) -> int:
             seeds = [str(json.loads((run / "job.json").read_text())["seed"])]
             seeds += [s for s in args.extra_seeds.split(",") if s.strip()]
             wanted = [run / "parts" / (f"{part}.glb" if i == 0 else f"{part}@{s}.glb") for i, s in enumerate(seeds)]
-            if not all(p.exists() for p in wanted):
+            record = json.loads((run / "parts.json").read_text()) if (run / "parts.json").exists() else {}
+            failed = {key for key, job in record.items() if job.get("state") == "failed"}
+            if not all(p.exists() or p.stem in failed for p in wanted):
                 engine = None if engine_ready(args.engine) else start_engine(args.engine, log)
                 if "TRELLIS.2" not in engine_mode(args.engine):
                     raise StepFailed("the running engine does not use TRELLIS.2; stop it (or the app) and run again")
@@ -161,7 +163,7 @@ def main(argv: list[str]) -> int:
                     if engine is not None:
                         stop_engine(engine)
             step("align the head", [tool("align"), str(run)], run / "align.json", log)
-        step("cut, cap and fuse", [tool("kit"), str(run)], run / "kit.json", log)
+        step("cut the head and blend the neck", [tool("kit"), str(run), "--head-swap"], run / "kit.json", log)
         step("paint each piece", [tool("paint"), str(run)], run / "paint.json", log)
         if rig["reason"] is None:
             step("render the comparison", [tool("compare"), str(run)], run / "compare.json", log)

@@ -45,6 +45,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--engine", default="http://127.0.0.1:8765")
     parser.add_argument("--parts", help="comma-separated part names (default: every crop)")
     parser.add_argument("--seeds", help="comma-separated extra seeds (default: the mold job's seed)")
+    parser.add_argument("--retry-failed", action="store_true", help="run again jobs that failed before")
     args = parser.parse_args(argv)
     run = Path(args.run)
     job_seed = json.loads((run / "job.json").read_text())["seed"]
@@ -59,6 +60,10 @@ def main(argv: list[str]) -> int:
         key = part if seed == job_seed else f"{part}@{seed}"
         target = run / "parts" / f"{key}.glb"
         if target.exists():
+            continue
+        if record.get(key, {}).get("state") == "failed" and not args.retry_failed:
+            # A crop and seed that ran out of VRAM did so again on retry (the second dog, twice).
+            print(json.dumps({key: "skipped, failed before (--retry-failed to try again)"}), flush=True)
             continue
         started = time.monotonic()
         job_id = submit(args.engine, run / "crops" / f"{part}.png", {"quality": "high", "seed": seed, "rig": False})

@@ -44,6 +44,10 @@ RAISE_STEPS = 40
 SOLID_SHARE = 0.9
 MIN_OUTLINE = 0.5
 BLEND = 0.03  # glTF units over which the mold turns into the sculpted part above a cut
+# Head swap: mold faces from SWAP_MARGIN below the cut upward are replaced; the patch reaches
+# SWAP_OVERLAP further down, inside the kept body (glTF units, body about 1.0 tall).
+SWAP_MARGIN = 0.01
+SWAP_OVERLAP = 0.01
 # Blended fields change faster than a distance (mold and part differ inside the band), so block
 # skipping in extract_surface allows for twice the slope.
 LIPSCHITZ = 2.0
@@ -196,11 +200,57 @@ def decimate(vertices: np.ndarray, faces: np.ndarray, target: int) -> tuple[np.n
     return np.asarray(mesh.vertices), np.asarray(mesh.triangles).astype(np.int64)
 
 
+def cutter_json(cut: CutterField) -> dict:
+    return {"point": cut.point.tolist(), "normal": cut.normal.tolist(),
+            "segments": [[a.tolist(), b.tolist(), r] for a, b, r in cut.segments]}
+
+
+def head_swap(run: Path, h: float, faces_target: int, report: dict, mold_mesh: trimesh.Trimesh,
+              sources: dict, cutters: dict, started: float) -> int:
+    """Write a head patch and the mold faces it replaces; the rest of the mold stays as it is.
+
+    Remeshing and re-baking the whole body blurred the alien's and the cat's shirts. The patch is
+    the sculpted head plus a neck band that turns from the mold into it; mold faces whose centers
+    lie SWAP_MARGIN below the cut are removed, and the patch reaches SWAP_OVERLAP further down,
+    inside the kept body, so no gap opens between them.
+    """
+    report["mode"] = "head_swap"
+    if not isinstance(sources.get("head"), Blend):
+        shutil.copy(run / "mold.glb", run / "model.glb")
+        report["skipped"] = "no sculpted head passed the volume check"
+        (run / "kit.json").write_text(json.dumps(report, indent=2))
+        print(json.dumps({"skipped": report["skipped"]}))
+        return 0
+    cut = cutters["head"]
+    remove = CutterField(cut.point - SWAP_MARGIN * cut.normal, cut.normal, cut.segments)
+    reach = CutterField(cut.point - (SWAP_MARGIN + SWAP_OVERLAP) * cut.normal, cut.normal, cut.segments)
+    head = sources["head"]
+    vertices, faces = extract_surface(lambda p: np.maximum(head(p), reach(p)), *cutter_box(reach), h, lipschitz=LIPSCHITZ)
+    report["patch_raw"] = mesh_stats(vertices, faces)
+    vertices, faces = decimate(vertices, faces, faces_target)
+    report["patch"] = mesh_stats(vertices, faces)
+    save(run / "patch.glb", vertices, faces)
+    removed = remove(np.asarray(mold_mesh.triangles_center)) < 0
+    report["removed_body_faces"] = int(removed.sum())
+    report["kept_body_faces"] = int((~removed).sum())
+    report["remove_cutter"] = cutter_json(remove)
+    report["blend"] = BLEND
+    report["planes"] = {"head": {"point": cut.point.tolist(), "normal": cut.normal.tolist()}}
+    report["seconds"] = round(time.monotonic() - started, 1)
+    report["peak_rss_gib"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20, 2)
+    (run / "kit.json").write_text(json.dumps(report, indent=2))
+    print(json.dumps({"patch": report["patch"], "removed_body_faces": report["removed_body_faces"],
+                      "kept_body_faces": report["kept_body_faces"], "seconds": report["seconds"]}))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("run")
     parser.add_argument("--h", type=float, default=1 / 512)
     parser.add_argument("--faces", type=int, default=500_000)
+    parser.add_argument("--head-swap", action="store_true",
+                        help="keep the mold's body as it is and write only a head patch (patch.glb)")
     args = parser.parse_args(argv)
     run, h = Path(args.run), args.h
     rig = json.loads((run / "rig.json").read_text())
@@ -224,7 +274,7 @@ def main(argv: list[str]) -> int:
     report: dict = {"h": h, "pieces": {}, "seams": {}, "cutters": {}, "volume_check": {}}
     sources: dict[str, BoxBounded] = {}
     every_cut = lambda p: np.min([cutters[q](p) for q in names], axis=0)
-    for part in ["torso"] + names:
+    for part in (["head"] if args.head_swap and "head" in names else ["torso"] + names):
         paths = [p for pattern in (f"{part}.glb", f"{part}@*.glb", f"{part}_bust.glb", f"{part}_bust@*.glb")
                  for p in sorted((run / "aligned").glob(pattern))]
         if part == "torso":
@@ -249,7 +299,7 @@ def main(argv: list[str]) -> int:
                                         "ratios": ratios, "mold_volume": molded}
         print(json.dumps({part: report["volume_check"][part]}), flush=True)
 
-    sculpted = {part: sources[part] for part in names if sources[part] is not mold}
+    sculpted = {part: sources[part] for part in names if sources.get(part, mold) is not mold}
     report["raised"] = {}
     for part, field in sculpted.items():
         region = np.asarray(mold_mesh.vertices)[labels == names.index(part) + 1]
@@ -262,6 +312,9 @@ def main(argv: list[str]) -> int:
         sources[part] = blend
         report["raised"][part] = offset
         print(json.dumps({part: {"raised_by": round(offset, 4)}}), flush=True)
+
+    if args.head_swap:
+        return head_swap(run, h, args.faces, report, mold_mesh, sources, cutters, started)
 
     def piece_values(points: np.ndarray) -> np.ndarray:
         """Field value of every piece at the points: torso first, then the parts in `names` order."""

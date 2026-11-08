@@ -123,6 +123,152 @@ def island_mask(obj, size: int) -> np.ndarray:
     return np.asarray(mask, bool)
 
 
+def label_mask(bpy, target, mold, own: np.ndarray, size: int) -> np.ndarray:
+    """Per-texel 1 where the nearest mold surface belongs to the part, 0 elsewhere (baked as emission).
+
+    `own` is a per-vertex 0/1 array in the mold object's vertex order. The bust's shirt is a
+    different blue from the body's; without this mask it showed on the shoulders above the cut.
+    """
+    attribute = mold.data.color_attributes.new("part_mask", "FLOAT_COLOR", "POINT")
+    colors = np.repeat(own.astype(np.float32)[:, None], 4, axis=1)
+    colors[:, 3] = 1.0
+    attribute.data.foreach_set("color", colors.ravel())
+    material = bpy.data.materials.new("part_mask")
+    material.use_nodes = True
+    tree = material.node_tree
+    tree.nodes.clear()
+    node = tree.nodes.new("ShaderNodeAttribute")
+    node.attribute_name = "part_mask"
+    emission = tree.nodes.new("ShaderNodeEmission")
+    output = tree.nodes.new("ShaderNodeOutputMaterial")
+    tree.links.new(node.outputs["Color"], emission.inputs["Color"])
+    tree.links.new(emission.outputs["Emission"], output.inputs["Surface"])
+    originals = list(mold.data.materials)
+    for index in range(len(originals)):
+        mold.data.materials[index] = material
+    image = bpy.data.images.new("part_mask", size, size, alpha=True)
+    image.pixels.foreach_set(np.zeros(size * size * 4, np.float32))
+    bake(bpy, target, mold, image, clear=False, kind="EMIT")
+    for index, original in enumerate(originals):
+        mold.data.materials[index] = original
+    baked = pixels(image)
+    # Texels the mold does not reach lie on sculpted shape away from the mold, which is the part.
+    mask = np.where(baked[:, :, 3] > 0.5, np.clip(baked[:, :, 0], 0.0, 1.0), 1.0)
+    bpy.data.images.remove(image)
+    bpy.data.materials.remove(material)
+    mold.data.color_attributes.remove(mold.data.color_attributes["part_mask"])
+    return mask
+
+
+def bake_piece(bpy, target, name: str, mold, source, kit: dict, size: int,
+               own_vertices: np.ndarray | None = None) -> float | None:
+    """Bake the mold, then the sculpted source blended over it, into the target's 'Bake' image.
+
+    With `own_vertices` (0/1 per mold vertex), the source's colors are kept only where the mold
+    surface belongs to the part. Returns the share of the target's texels the source reached
+    (None when the source is the mold).
+    """
+    base = bpy.data.images.new(f"{name}_mold", size, size, alpha=True)
+    bake(bpy, target, mold, base, clear=True)
+    color = pixels(base)
+    part_share = None
+    if source is not mold:
+        own = bpy.data.images.new(f"{name}_part", size, size, alpha=True)
+        own.pixels.foreach_set(np.zeros(size * size * 4, np.float32))
+        bake(bpy, target, source, own, clear=False)
+        own_pixels = pixels(own)
+        hit = own_pixels[:, :, 3] > 0.5
+        weight = np.ones(color.shape[:2], np.float32)
+        plane = kit.get("planes", {}).get(name)
+        if plane is not None:
+            weight = blend_weight(bpy, target, source, plane, kit["blend"], size)
+        if own_vertices is not None:
+            weight = weight * label_mask(bpy, target, mold, own_vertices, size)
+        mixed = weight[hit][:, None]
+        color[hit] = mixed * own_pixels[hit] + (1 - mixed) * color[hit]
+        islands = island_mask(target, size)
+        part_share = float((hit & islands).sum() / max(islands.sum(), 1))
+        bpy.data.images.remove(own)
+    color[:, :, 3] = 1.0
+    final = bpy.data.images.new(f"{name}_color", size, size, alpha=False)
+    final.pixels.foreach_set(color.ravel())
+    final.pack()
+    target.active_material.node_tree.nodes["Bake"].image = final
+    bpy.data.images.remove(base)
+    return part_share
+
+
+def bake_material(bpy, name: str):
+    """Principled material whose base color is an image node named 'Bake'."""
+    material = bpy.data.materials.new(name)
+    material.use_nodes = True
+    tree = material.node_tree
+    principled = tree.nodes["Principled BSDF"]
+    principled.inputs["Roughness"].default_value = 0.7
+    principled.inputs["Metallic"].default_value = 0.0
+    node = tree.nodes.new("ShaderNodeTexImage")
+    node.name = "Bake"
+    tree.links.new(node.outputs["Color"], principled.inputs["Base Color"])
+    return material
+
+
+def paint_head_swap(bpy, run: Path, kit: dict, size: int, started: float) -> int:
+    """The mold's body as it is, minus the head region, plus the head patch with its own texture."""
+    import bmesh
+
+    from sdf import CutterField
+
+    body = import_glb(bpy, run / "mold.glb")
+    body.name = "body"
+    cut = kit["remove_cutter"]
+    remove = CutterField(cut["point"], cut["normal"], [(a, b, r) for a, b, r in cut["segments"]])
+    centers = np.array([gltf_point(body.matrix_world @ p.center) for p in body.data.polygons])
+    doomed = np.flatnonzero(remove(centers) < 0)
+    mesh = bmesh.new()
+    mesh.from_mesh(body.data)
+    mesh.faces.ensure_lookup_table()
+    bmesh.ops.delete(mesh, geom=[mesh.faces[int(i)] for i in doomed], context="FACES")
+    mesh.to_mesh(body.data)
+    mesh.free()
+
+    patch = import_glb(bpy, run / "patch.glb")
+    patch.name = "head"
+    patch.data.materials.clear()
+    patch.data.materials.append(bake_material(bpy, "head"))
+    bpy.ops.object.select_all(action="DESELECT")
+    patch.select_set(True)
+    bpy.context.view_layer.objects.active = patch
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.002)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    mold = import_glb(bpy, run / "mold.glb")
+    part = import_glb(bpy, run / "aligned" / kit["volume_check"]["head"]["file"])
+    reference = trimesh.load(run / "mold.glb", force="mesh")
+    head_index = json.loads((run / "rig.json").read_text())["parts"].index("head")
+    positions = np.array([gltf_point(mold.matrix_world @ v.co) for v in mold.data.vertices])
+    _, nearest = cKDTree(np.asarray(reference.vertices)).query(positions)
+    own = np.load(run / "mold_labels.npy")[nearest] == head_index
+    part_share = bake_piece(bpy, patch, "head", mold, part, kit, size, own_vertices=own)
+    for source in (mold, part):
+        bpy.data.objects.remove(source, do_unlink=True)
+
+    bpy.ops.object.select_all(action="DESELECT")
+    patch.select_set(True)
+    bpy.context.view_layer.objects.active = patch
+    bpy.ops.object.shade_smooth()
+    body.select_set(True)
+    bpy.ops.export_scene.gltf(filepath=str(run / "model.glb"), export_format="GLB", use_selection=True,
+                              export_image_format="AUTO")
+    report = {"mode": "head_swap", "removed_body_faces": len(doomed), "kept_body_faces": len(body.data.polygons),
+              "head": {"faces": len(patch.data.polygons), "texture_px": size, "part_texel_share": part_share},
+              "seconds": round(time.monotonic() - started, 1)}
+    (run / "paint.json").write_text(json.dumps(report, indent=2))
+    print(json.dumps(report))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("run")
@@ -145,6 +291,8 @@ def main(argv: list[str]) -> int:
     scene.render.engine = "CYCLES"
     scene.cycles.device = "CPU"
     scene.cycles.samples = 1
+    if kit.get("mode") == "head_swap":
+        return paint_head_swap(bpy, run, kit, size, started)
 
     fused = import_glb(bpy, run / "fused.glb")
     fused.name = "model"
@@ -155,16 +303,7 @@ def main(argv: list[str]) -> int:
     face_labels = labels[nearest]
 
     for name in names:
-        material = bpy.data.materials.new(name)
-        material.use_nodes = True
-        tree = material.node_tree
-        principled = tree.nodes["Principled BSDF"]
-        principled.inputs["Roughness"].default_value = 0.7
-        principled.inputs["Metallic"].default_value = 0.0
-        node = tree.nodes.new("ShaderNodeTexImage")
-        node.name = "Bake"
-        tree.links.new(node.outputs["Color"], principled.inputs["Base Color"])
-        fused.data.materials.append(material)
+        fused.data.materials.append(bake_material(bpy, name))
     fused.data.polygons.foreach_set("material_index", face_labels.astype(np.int32))
     fused.data.update()
 
@@ -195,31 +334,7 @@ def main(argv: list[str]) -> int:
         bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.002)
         bpy.ops.object.mode_set(mode="OBJECT")
 
-        base = bpy.data.images.new(f"{name}_mold", size, size, alpha=True)
-        bake(bpy, target, mold, base, clear=True)
-        color = pixels(base)
-        part_share = None
-        if sources[name] is not mold:
-            own = bpy.data.images.new(f"{name}_part", size, size, alpha=True)
-            own.pixels.foreach_set(np.zeros(size * size * 4, np.float32))
-            bake(bpy, target, sources[name], own, clear=False)
-            own_pixels = pixels(own)
-            hit = own_pixels[:, :, 3] > 0.5
-            weight = np.ones(color.shape[:2], np.float32)
-            plane = kit.get("planes", {}).get(name)
-            if plane is not None:
-                weight = blend_weight(bpy, target, sources[name], plane, kit["blend"], size)
-            mixed = weight[hit][:, None]
-            color[hit] = mixed * own_pixels[hit] + (1 - mixed) * color[hit]
-            islands = island_mask(target, size)
-            part_share = float((hit & islands).sum() / max(islands.sum(), 1))
-            bpy.data.images.remove(own)
-        color[:, :, 3] = 1.0
-        final = bpy.data.images.new(f"{name}_color", size, size, alpha=False)
-        final.pixels.foreach_set(color.ravel())
-        final.pack()
-        target.active_material.node_tree.nodes["Bake"].image = final
-        bpy.data.images.remove(base)
+        part_share = bake_piece(bpy, target, name, mold, sources[name], kit, size)
         report[name] = {"faces": len(target.data.polygons), "texture_px": size,
                         "part_texel_share": part_share,
                         "mold_texel_share": None if part_share is None else 1.0 - part_share}
