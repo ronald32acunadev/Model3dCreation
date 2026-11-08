@@ -4,6 +4,17 @@ Experiment tools for `docs/userstories/kit-assembly/`: generate a character's pa
 
 Run every tool with the engine's interpreter (`engine/.venv/bin/python`, which ships `bpy`, `open3d`, `scipy`, `scikit-image`, `trimesh`) and under `ulimit -v 16000000`. Generation itself goes through the engine's HTTP API, so no tool loads TRELLIS.2.
 
+## Head pass in one command
+
+Generate the model in the app first, with high quality and **rig** on (the skeleton locates the head). Close the app, or leave its engine running if it uses TRELLIS.2, then:
+
+```bash
+python3 scripts/kit_assembly/run.py JOB_ID          # JOB_ID is a folder name in data/jobs
+python3 scripts/kit_assembly/run.py JOB_ID --extra-seeds 11,22   # more tries for the head
+```
+
+It takes about 11 minutes with two seeds and writes `data/kit_runs/<JOB_ID>/model.glb` plus `compare_head.png` and `compare_front.png`. A rerun skips finished steps; delete the run folder to start over. A job without a skeleton ends with its own model. Only the head is sculpted: in the experiment, torsos came out as flat sheets and limbs bent differently from the body (see `docs/userstories/kit-assembly/`).
+
 ## Frame and units
 
 All coordinates are in the glTF frame of the GLB files: +Y up, the subject faces +Z (toward the camera), the body is about 1.0 tall. Blender imports glTF as (x, -z, y); convert Blender world coordinates back with `(x, y, z)_gltf = (bx, bz, -by)`.
