@@ -159,6 +159,8 @@ Verification: the five run characters re-run; front and head renders against the
 
 - 2026-11-08, user on the dog's bust face (verbatim): "esta es la que espero". Three new rigged jobs from the app (alien, black cat, a second dog image) through `run.py`, 691-707 s each. Heads: the new dog matches that face (sharp eyes, fur, ears, smile; the app's head is blurred with melted ears); the cat gets green eyes with pupils (the app's are yellow slits); the alien gets its skull ridges, nose and mouth, but its eyes are matte and its thin neck seam drips. The alien's mold head reads about a tenth as solid as the dog's (volume ratio 11), so its mold is probably open there. Bodies: worse than the app's model on the alien and the cat, with a blurred, darkened shirt logo and a noisy surface, because `kit.py` remeshes and `paint.py` re-bakes the whole body even where nothing changed. The new dog's job-seed bust failed with CUDA out of memory (the runner went on with seed 11 and records the failure in `parts.json`); what else held the GPU then is not known.
 
+- 2026-11-08, US-10 head swap on all five characters: bodies render the same as the app's models (same shirt logos and skin), and on the second dog the kept body's 123 481 faces sit exactly on mold vertices (largest distance 0.0) with the mold's own 4096 px texture; the head is a separate 177 402-face patch with its own 4096 px texture. kit 47-120 s and paint 25-32 s per character, against 190-470 s and 60 s for the whole-body fuse. The bust's brighter shirt showed on the shoulders above the tilted cut until the bust's colors were limited to texels whose nearest mold surface is labeled head; texels the mold does not reach (sculpted shape away from the mold) count as head, otherwise the face went dark. Heads by eye: the dogs and the cat match the earlier head results; the man's collar is ragged with blue blotches; the alien's thin neck still drips. The second dog's job-seed bust ran out of VRAM again on a retry with nothing else on the GPU, so that crop and seed are too dense for a 12 GB card; failed seeds are now skipped on reruns unless `--retry-failed` is given.
+
 ## Verification mapping
 
 | Story / criterion | Check | Observed result |
@@ -174,7 +176,7 @@ Verification: the five run characters re-run; front and head renders against the
 | US-07 / AC-01..AC-03 | Renders; texel shares; density table; opens in Blender | Pending |
 | US-08 / AC-01..AC-02 | Comparison sheets; user verdict | Pending |
 
-| US-10 / AC-01..AC-03 | Five characters re-run; renders; kept faces equal the mold's | Pending |
+| US-10 / AC-01..AC-03 | Five characters re-run; renders; kept faces equal the mold's | AC-01, AC-02 passed (bodies unchanged, largest kept-vertex distance 0.0, no gap seen); AC-03 not exercised: every character had a sculpted head that passed |
 | US-09 / AC-01..AC-04 | Clean run on the man's job; rerun; job with no skeleton | Passed: man 648 s with engine started and stopped; no-skeleton job byte-identical in 7 s; rerun skipped every step |
 
 The pipeline is an experiment judged by renders, so most checks are reproducible manual procedures; the pure geometry step (cut and cap) gets an automated test.
