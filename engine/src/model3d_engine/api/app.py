@@ -6,8 +6,10 @@ import io
 import json
 import logging
 import struct
+import sys
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -23,12 +25,14 @@ from model3d_contracts.library import Library
 
 from model3d_engine.api.errors import ApiError
 from model3d_engine.api.library import library_router
+from model3d_engine.api.tasks import ToolTasks
 from model3d_engine.config import Settings, is_loopback_host, normalize_origin
 from model3d_engine.jobs.events import EventBus
 from model3d_engine.jobs.scheduler import ORIGINAL_OUTPUT, Scheduler
 from model3d_engine.jobs.store import JobRecord, JobStore
 from model3d_engine.stages.protocol import MODEL_OUTPUT
 
+TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 _SUFFIXES = {"PNG": ".png", "JPEG": ".jpg"}
 _STATE_CHANGING = {"POST", "DELETE"}
 logger = logging.getLogger(__name__)
@@ -162,13 +166,15 @@ def create_app(
     texture_available: bool = True,
     rig_reason: Callable[[], str | None] = lambda: None,
     detailed_face_reason: Callable[[], str | None] = lambda: "Detailed face is not set up",
+    tool_tasks: ToolTasks | None = None,
 ) -> FastAPI:
     """Build the API around an existing scheduler, store, and event bus.
 
     `health` returns the body of GET /v1/health without its `error`, which comes from the
     scheduler; `texture_available` is false when the run mode has no paint stage; `rig_reason`
     explains why rigging is unavailable; `detailed_face_reason` explains why Detailed face is
-    unavailable (None when it is available).
+    unavailable (None when it is available); `tool_tasks` runs the export and walk scripts (the
+    engine's own Python and `tools/` by default).
     """
 
     @asynccontextmanager
@@ -193,7 +199,8 @@ def create_app(
         api_keys=settings.api_keys,
     )
     app.state.bus = bus
-    app.include_router(library_router(Library(settings.home / "library", recover=False), store))
+    tasks = tool_tasks or ToolTasks(sys.executable, TOOLS_DIR)
+    app.include_router(library_router(Library(settings.home / "library", recover=False), store, tasks))
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:

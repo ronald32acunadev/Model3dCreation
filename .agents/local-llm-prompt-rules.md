@@ -27,3 +27,4 @@ Paste this list into the system message of every code request to a local model. 
 - Change a pydantic model with `model.model_copy(update={...})`, never by assigning its fields.
 - Keep every non-empty output line (step and tag lines included) in the failure tail; `from __future__ import annotations` is forbidden even when type hints look forward-referencing.
 - Engine API tests: enter the client with `with make_client(...) as client:`, use `/v1/health`, read `response.json()["job_id"]`, and put a bare `assert` on every checked value.
+- A `finally` belongs to one `try` that wraps the whole body; never put `finally:` after an `if/else`.
