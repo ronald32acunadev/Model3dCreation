@@ -20,7 +20,6 @@ Paste this list into the system message of every code request to a local model. 
 - Ask for one file per request and end the request with a 3-line checklist of the rules it most needs.
 - Tests: pytest functions with `tmp_path`; never write to `/tmp`; never patch a whole module; import every name used.
 - Tests: keep each requested test's name, inputs, and assertions exactly; assert exact values.
-- Never run `uv run --project engine` or `uv sync` in `engine/` for checks: it rebuilds native CUDA extensions; use `engine/.venv/bin/python` directly.
-- Installers must survive a rerun after a cut: guard `uv venv` on the interpreter existing; `uv sync --no-dev` prunes dev packages unless `--inexact`; `--dry-run` must change nothing, wrappers included.
-- Hugging Face gated access: check a HEAD on `/{repo}/resolve/main/config.json`; `/api/models/{repo}` answers 200 without access.
-- Pip-built CUDA toolkit: torch's headers need `cusparse.h`, so include nvidia-cublas, cufft, curand, cusolver, cusparse, nvjitlink, and nvtx, not only nvcc.
+- 3D grids: build per-axis index ranges, combine them with `np.meshgrid(..., indexing="ij")`, and reshape values to the grid's shape before indexing it with three indices.
+- Signed distances: union is `np.minimum`, intersection is `np.maximum`, subtraction is `np.maximum(a, -b)`; follow the formula the brief gives.
+- Build expensive objects (scenes, trees, models) once in `__init__`, never inside a per-call loop.

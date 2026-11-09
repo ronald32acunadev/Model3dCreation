@@ -38,6 +38,7 @@ client/scripts/test_system_python.sh      # client tests on apt's PySide6/pydant
 packaging/deb/build.sh [--out DIR]        # dist/model3d_<version>_amd64.deb; version comes from client/pyproject.toml
 uv run --project engine python scripts/verify_gpus.py
 uv run --project engine python scripts/measure_stage_vram.py   # unload LM Studio/Ollama models first
+scripts/setup/setup-ubuntu.sh             # full in-repo install (.venvs, vendor/, data/, Blender); runs setup_repo.py with pins from the client's recipe
 ```
 
 No linter or formatter is configured.
@@ -73,4 +74,4 @@ The `.deb` installs the client and contracts sources under `/opt/model3d/lib`, t
 
 ## Code delegation in Claude Code
 
-The delegation rule in `AGENTS.md` covers source code, tests, and scripts; docs, config, and commit messages are written by the agent. In Claude Code the lightweight implementer is a subagent (Agent tool) on a smaller model such as `haiku`. Do not use the local LLM MCP servers (`pumbastudio`, `pumbalama`) for code: the GPUs are reserved for the engine. Prompt rules for the implementer live in `.agents/local-llm-prompt-rules.md`.
+The delegation rule in `AGENTS.md` covers source code, tests, and scripts; docs, config, and commit messages are written by the agent. Code goes to the local LLM MCP servers first (`pumbastudio` → `pumbalama`, or `scripts/ask_local_llm.py` when the MCP call times out); only when both are unavailable does it fall back to a subagent (Agent tool) on a smaller model such as `haiku`. Local models share the GPUs with the engine, so unload them before GPU tests or VRAM measurements. Prompt rules for the implementer live in `.agents/local-llm-prompt-rules.md`.

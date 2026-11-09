@@ -2,7 +2,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-Linux%20x86__64-blue)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB)
-![CUDA](https://img.shields.io/badge/CUDA-13.0%2B%20(sm__120)-76B900)
+![CUDA](https://img.shields.io/badge/CUDA-13.0%2B%20%28sm__120%29-76B900)
 ![Version](https://img.shields.io/badge/version-0.2.0-informational)
 
 **Model3D** is a local, GPU-only pipeline that turns a single PNG or JPEG image into a textured (and optionally rigged) binary glTF 2.0 (`.glb`) 3D model using **Hunyuan3D 2.1** and **UniRig**. It ships with a FastAPI/WebSocket inference engine, a PySide6 desktop application with an embedded 3D viewer and first-run setup wizard, a native Blender 4.2+ extension, and a Debian (`.deb`) package builder.
@@ -33,10 +33,10 @@ Designed for Linux `x86_64` workstations with NVIDIA GPUs (targeting dual RTX 50
 ## Key Features
 
 - **100% Local Image-to-3D Pipeline**: Converts 2D images (`PNG`/`JPEG` up to 20 MB) into 3D meshes (`shape`), generates PBR textures (`paint`), and optionally rigs skeletons (`rig`) into `.glb` assets without cloud dependencies.
-- **Standalone Skeletal Rigging**: Accepts existing `.glb` models (up to 200 MB) via `/v1/rig-jobs` to generate armatures and skinning weights using UniRig.
+- **Standalone Skeletal Rigging**: Accepts existing `.glb` models (up to 200 MB) via `/v1/rig-jobs` to generate armatures and skinning weights using UniRig with post-rig weight smoothing.
 - **Automatic Multi-GPU & Single-GPU Placement**: Probes NVIDIA GPUs and PCIe link bandwidth at startup, assigning stages across two GPUs or dynamically swapping stage workers on a single GPU.
 - **Fault-Tolerant Process Workers**: Runs `shape` and `paint` inside isolated `ProcessStageRunner` subprocesses with configurable task timeouts. Each worker loads its model for its task and unloads when no task waits for it, so an idle engine holds no VRAM.
-- **PySide6 Desktop Client & Setup Wizard**: Provides an interactive first-run installer (probing drivers, `nvcc`, compilers, and downloading ~31 GB base + ~8 GB skeleton weights with resumable step fingerprints), real-time job progress over WebSockets, a local model library, and an embedded QtWebEngine 3D viewer (`English` and `Español`).
+- **PySide6 Desktop Client & Setup Wizard**: Provides an interactive first-run installer (probing drivers, `nvcc`, compilers, and downloading ~31 GB base + ~8 GB skeleton weights with resumable step fingerprints), real-time job progress over WebSockets, a local model library (supporting seed regeneration, standalone rigging, procedural walk animations, and multi-format exports), and an embedded QtWebEngine 3D viewer with RoomEnvironment PBR lighting (`English` and `Español`).
 - **Zero-Dependency Blender Extension**: Connects Blender (`>= 4.2.0`) directly to the local engine and shared model library using Python's standard library (`urllib`).
 
 ---
@@ -100,7 +100,7 @@ Model3dCreation/
 │   └── src/model3d_client/  # services/, setup/, viewmodels/, views/, viewer/, i18n/
 ├── blender/                 # Blender 4.2+ add-on (blender/model3d/) and test suite
 ├── packaging/               # Debian package build scripts (packaging/deb/build.sh)
-├── scripts/                 # GPU verification (verify_gpus.py) & VRAM benchmark (measure_stage_vram.py)
+├── scripts/                 # Setup scripts, GPU verification, VRAM benchmarks, and utility helpers
 └── Fases/                   # Architectural phase specifications (Spanish)
 ```
 
@@ -144,17 +144,16 @@ From the repository root, one script installs the libraries and AI models into t
 
 | System | Command | What it installs | Generates models? |
 | :--- | :--- | :--- | :--- |
-| Ubuntu | `scripts/setup/setup-ubuntu.sh` | Everything: client, engine, CUDA 13.2 toolkit, Hunyuan3D 2.1, UniRig, TRELLIS.2, about 40 GB of weights, the test tools of all five projects, the apt packages for `client/scripts/test_system_python.sh`, and Blender 4.5 LTS (`vendor/blender/`) with the Model3D add-on installed | Yes |
-| Windows | `scripts\setup\setup-windows.ps1` | Client, Hunyuan3D source, and its weights; it stops at the engine | Not yet: the engine installs on Linux only (see `docs/userstories/cross-platform-native/`) |
+| Ubuntu | `scripts/setup/setup-ubuntu.sh` | Everything: client, engine, CUDA 13.2 toolkit, Hunyuan3D 2.1, UniRig, TRELLIS.2, about 40 GB of weights, test tools of all five projects, apt packages for `client/scripts/test_system_python.sh`, and Blender 4.5 LTS (`vendor/blender/`) with the Model3D add-on installed | Yes |
+| Windows | `scripts\setup\setup-windows.ps1` | Client, Hunyuan3D source, and its weights; stops at the engine | Not yet: the engine currently requires Linux x86_64 with CUDA (see `docs/userstories/setup-scripts/`) |
 | macOS | `scripts/setup/setup-macos.sh` | Client only, no weights | No: the engine needs an NVIDIA GPU with CUDA |
 
-- Run a script again at any time: finished steps are skipped, and a cut download or build resumes. `--dry-run` prints the plan, and `--no-rig` and `--no-trellis` skip those parts.
+- Run a script again at any time: finished steps are skipped, and an interrupted download or build resumes. Pass `--dry-run` to inspect the plan, and `--no-rig` or `--no-trellis` to skip those components.
 - Ubuntu asks for the `sudo` password once, at the start, and only when apt packages are missing. Everything else runs as your user.
-- TRELLIS.2 needs `facebook/dinov3-vitl16-pretrain-lvd1689m`, which is gated. When your account cannot reach it, the script asks for a Hugging Face token right after the `sudo` prompt (input is hidden), saves it to `~/.cache/huggingface/token` with mode 600, and never prints or logs it. If the account has no access yet, it shows the page where access is requested and lets you check again or skip. Press Enter at the token prompt, or run without a terminal, to skip DINOv3 and continue.
-- The NVIDIA driver is the only manual step: no script installs it, because it needs a reboot and can break the display. A missing driver stops the run before downloading anything.
-- Blender is downloaded from blender.org, checked against its published SHA-256, and kept inside the repository. The add-on is registered in Blender's own user folder (`~/.config/blender/4.5/extensions/user_default/model3d`). The script ends with the command that runs the Blender tests.
-- A virtual environment built for another system on a shared disk is never deleted. UniRig then installs to `vendor/UniRig-linux`; for `engine/.venv` or `client/.venv` the script stops and explains.
-- The script ends with the exact command to start the app. It accounts for a wizard install on the same machine, which would otherwise take over the repository run.
+- TRELLIS.2 needs `facebook/dinov3-vitl16-pretrain-lvd1689m`, which is gated. When your account cannot reach it, the script prompts for a Hugging Face token right after the `sudo` prompt (input is hidden), saves it to `~/.cache/huggingface/token` with mode 600, and never logs it. Press Enter at the token prompt, or run without a terminal, to skip DINOv3 and continue.
+- The NVIDIA driver is the only manual step: no script installs it, because it requires a reboot and can affect display configuration. A missing driver stops execution before downloading anything.
+- Blender is downloaded from blender.org, verified against its published SHA-256, and kept inside `vendor/blender/`. The add-on is registered in Blender's user extension folder (`~/.config/blender/4.5/extensions/user_default/model3d`).
+- Virtual environments built for another system on a shared disk are preserved. UniRig then installs to `vendor/UniRig-linux`; for `engine/.venv` or `client/.venv` the script halts with an explanation.
 
 ### Option 3: Development Setup by Hand
 
@@ -181,7 +180,7 @@ From the repository root, one script installs the libraries and AI models into t
 
 ### Desktop Application
 
-Start the desktop client (which automatically starts and supervises the local engine if it is not already running):
+Start the desktop client (which automatically launches and supervises the local engine if it is not already running):
 
 ```bash
 # Using the launcher script from anywhere
@@ -191,7 +190,21 @@ Start the desktop client (which automatically starts and supervises the local en
 uv run --project client python -m model3d_client
 ```
 
-**Export formats.** **Export…** saves the selected library model as GLB (a plain copy) or converts it with the engine's `bpy` in a separate process (no GPU or running engine needed). The dialog warns when the chosen format drops the skeleton or the texture.
+#### Generation & Embedded 3D Viewer
+
+- **Interactive Generation Panel**: Drag and drop an input image (`PNG` or `JPEG`), toggle PBR texture generation, toggle skeletal rigging (with an explanatory status hint if GPUs or dependencies are unavailable), and select quality presets (`draft`, `final`, `high detail`).
+- **Embedded Three.js 3D Viewer**: Hosted in QtWebEngine with interactive OrbitControls (rotate, pan, zoom), camera reset, texture display toggle, and **RoomEnvironment studio lighting** ensuring metallic surfaces reflect accurate environmental lighting rather than rendering pitch black.
+- **Walk Animation Playback**: Rigged models with an added walk animation can be previewed directly in the viewer with dedicated Play/Pause controls.
+
+#### Model Library Management & Context Menu
+
+The local model library persists generated assets and allows direct operations from each entry's context menu:
+
+- **Regenerate with new seed**: Resubmits the model's original image and generation options with a fresh random seed, generating a new variation without altering the existing entry.
+- **Add skeleton**: Invokes standalone rigging on unrigged library models using UniRig.
+- **Add walk animation**: Automatically detects skeleton morphology (2 legs for biped, 4 legs for quadruped, with user confirmation) and generates a procedural looping one-second `Walk` animation clip saved as `<name> (walk)`.
+- **Rename & Delete**: Manages saved records and deletes associated disk artifacts in `data/library/`.
+- **Export…**: Converts and exports the library model to multiple formats using the engine's embedded `bpy` module in an isolated process:
 
 | Format | Texture | Skeleton | Files written |
 | :--- | :--- | :--- | :--- |
@@ -201,9 +214,7 @@ uv run --project client python -m model3d_client
 | STL | No | No | 1 |
 | USDZ | Yes (packaged) | Viewer-dependent | 1 |
 
-Exports keep a model's animation in GLB and FBX.
-
-**Walk animation.** For a model with a skeleton, the library's context menu offers **Add walk animation**. The app detects the body type from the skeleton (2 legs: biped, 4: quadruped; otherwise you choose), lets you confirm or change it, and saves the result as a new `<name> (walk)` entry with a looping one-second `Walk` clip. The viewer plays it, with a play/pause button. The walk is procedural: UniRig's bones have no semantic names, so legs and arms are found by their position and hierarchy. It is a way to test the rig, not production animation, and skinning flaws from UniRig show up when the model moves.
+*Note: GLB and FBX exports preserve generated skeletal animations.*
 
 ### Local Inference Engine
 
@@ -274,7 +285,12 @@ All engine and client path overrides are configured via environment variables (`
 | Command | Arguments / Env | Description |
 | :--- | :--- | :--- |
 | `uv run --project engine python scripts/verify_gpus.py` | None | Validates PyTorch CUDA 13 build, `sm_120` kernel support, GPU count/VRAM, `nvidia-smi` PCI bus ordering, `nvcc` version match, `custom_rasterizer`, and `mesh_inpaint_processor`. |
-| `uv run --project engine python scripts/measure_stage_vram.py` | `[--bus 0000:29:00.0]` | Benchmarks idle, loaded, and peak VRAM (MiB) and runtime across `final` and `draft` presets on a target GPU. |
+| `uv run --project engine python scripts/measure_stage_vram.py` | `[--bus BUS_ID] [--image PATH] [--qualities QUALITIES] [--no-resident]` | Benchmarks idle, loaded, and peak VRAM (MiB) and runtime across quality presets (`final`, `draft`, `high`) on a target GPU. |
+| `scripts/setup/setup-ubuntu.sh` | `[--dry-run] [--no-rig] [--no-trellis]` | Automated full in-repo installation on Ubuntu (apt tools, CUDA 13.2 toolkit, `.venv`s, vendor clones, weights, Blender, and add-on). |
+| `scripts\setup\setup-windows.ps1` | `[-DryRun] [-NoRig] [-NoTrellis]` | Windows client and vendor setup. |
+| `scripts/setup/setup-macos.sh` | `[--dry-run]` | macOS client environment setup. |
+| `scripts/configure_ollama_models.sh` | Run with `sudo` | Configures system Ollama model directory and systemd drop-in override. |
+| `python3 scripts/ask_local_llm.py` | `--user REQ.md --out ANS.md [--code-out FILE.py] [--provider lmstudio\|ollama]` | Queries local LLM servers (LM Studio on port 1234 or Ollama on port 11434) with project rules and zero reasoning effort. |
 | `packaging/deb/build.sh` | `[--out DIR]`, `UV_BINARY=/path/to/uv` | Builds `model3d_<version>_amd64.deb` (defaults to `dist/`). |
 | `client/scripts/update_translations.sh` | None | Extracts UI strings with `pyside6-lupdate` into `model3d_es.ts` and compiles `model3d_es.qm` with `pyside6-lrelease`. |
 | `client/scripts/test_system_python.sh` | `[pytest args...]` | Runs the `client` test suite against `/usr/bin/python3` and apt-installed `PySide6`/`pydantic`, matching the `.deb` runtime environment. |
@@ -304,8 +320,11 @@ uv run --project client pytest -m gpu
 # Client QtWebEngine viewer tests (requires an active display with GPU rendering)
 uv run --project client pytest -m webengine
 
-# Blender smoke tests (requires `blender` executable on PATH)
+# Blender smoke tests (requires system `blender` on PATH)
 uv run --project blender pytest -m blender
+
+# Blender smoke tests using in-repo Blender (installed by scripts/setup/setup-ubuntu.sh)
+cd blender && PATH="$PWD/../vendor/blender:$PATH" uv run pytest -m blender
 ```
 
 ---
