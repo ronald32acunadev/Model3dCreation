@@ -118,3 +118,11 @@ def test_invalid_lan_host_is_rejected(tmp_path, value):
     assert str(raised.value) == (
         "MODEL3D_LAN_HOST must be this machine's network IP address, like 192.168.90.10; got '" + value + "'"
     )
+
+
+def test_api_keys_default_is_empty(tmp_path):
+    assert load_settings({}, repo_root=tmp_path).api_keys == ()
+
+
+def test_api_keys_are_split_stripped_and_emptied(tmp_path):
+    assert load_settings({"MODEL3D_API_KEYS": " k1, ,k2 "}, repo_root=tmp_path).api_keys == ("k1", "k2")

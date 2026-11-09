@@ -1,8 +1,8 @@
 # Public API
 
-Status: approved 2026-11-08 ("Approve, all stories"), execution mode: all stories. US-01 complete; US-02 next. Branch: `feat/public-api-voice` (from `exp/kit-assembly`, which holds the head pass).
+Status: approved 2026-11-08 ("Approve, all stories"), execution mode: all stories. US-01 and US-02 complete; US-03 and US-06 next. Branch: `feat/public-api-voice` (from `exp/kit-assembly`, which holds the head pass).
 
-Implementer route: LM Studio and Ollama had no model loaded on 2026-11-08, so code goes to a lightweight hosted implementer (haiku subagent), per `AGENTS.md`.
+Implementer route: LM Studio and Ollama had no model loaded on 2026-11-08, so US-01 and US-02 went to a lightweight hosted implementer (haiku subagent), per `AGENTS.md`. From US-06 on, pumbastudio (LM Studio, `qwen/qwen3.8-27b`) is available and implements first.
 
 ## Context
 
@@ -24,7 +24,7 @@ Assumptions (to confirm at approval):
 
 Out of scope: internet exposure, HTTPS, user accounts, rate limits.
 
-## Proposed revision (2026-11-08, waiting for approval)
+## Revision R1/R2 (approved 2026-11-08, "Approve R1 and R2")
 
 Found while preparing US-03..US-05; US-01 and US-02 are unaffected.
 
@@ -56,26 +56,26 @@ As the machine's owner, I want LAN clients to present a key, so that nobody else
 As an API client, I want to ask for the Detailed face option when I submit an image, so that I get the sculpted head without the desktop app.
 
 - US-03 / AC-01: `POST /v1/jobs` accepts `detailed_face: true` (requires `rig: true`, the TRELLIS.2 generator, and the head-pass tools); otherwise it answers 422 with a code naming the missing requirement.
-- US-03 / AC-02: The scheduler runs the head pass as a stage after rigging, on a card under the existing one-task-per-card rule, and publishes its progress as events.
+- US-03 / AC-02: After rigging, the job enters state `detailing` (stage `face`); the scheduler runs the head pass without holding a card, its GPU work runs as ordinary sub-jobs under the one-task-per-card rule, and its steps are published as progress events.
 - US-03 / AC-03: When the pass applies, `/v1/jobs/{id}/result` is the head-pass model and `/v1/jobs/{id}/result?variant=original` the plain one; when it does not apply, the job succeeds with the plain model and a reason in the record.
 - US-03 / AC-04: Cancel during the pass stops it and keeps the plain model.
 - US-03 / AC-05: `/v1/health` reports whether Detailed face is available and, if not, why.
 
-## US-04: Export a model to another format
+## US-04: Export a library model to another format
 
-As an API client, I want to convert a finished model to another format, so that I can use it in tools that do not read GLB.
+As an API client, I want to convert a library model to another format, so that I can use it in tools that do not read GLB.
 
-- US-04 / AC-01: `POST /v1/jobs/{id}/exports` with `{"format": <one of the app's formats>}` starts an export task and answers 202; an unknown format answers 422 listing the valid ones.
-- US-04 / AC-02: When it finishes, `GET /v1/jobs/{id}/exports/{format}` returns the file (a zip when the format has several files, as in the app).
-- US-04 / AC-03: An export of a job that has not succeeded answers 409.
+- US-04 / AC-01: `POST /v1/library/{id}/exports` with `{"format": <one of the app's formats>}` starts an export and answers 202; an unknown format answers 422 listing the valid ones; an unknown entry answers 404.
+- US-04 / AC-02: When it finishes, `GET /v1/library/{id}/exports/{format}` returns the file (a zip when the format writes several files, as in the app); before that it answers 409 with the export's state.
+- US-04 / AC-03: Exporting an entry that has no finished model answers 409.
 
-## US-05: Add a walk animation
+## US-05: Add a walk animation to a library model
 
 As an API client, I want a rigged model with a walk cycle, so that I can animate it without Blender.
 
-- US-05 / AC-01: `POST /v1/jobs/{id}/walk` with `{"body": <one of the app's body types>}` on a rigged job starts the walk task; on an unrigged job it answers 409.
-- US-05 / AC-02: When the rig has no legs the app can detect, the task fails with the same reason the app shows.
-- US-05 / AC-03: When it finishes, `GET /v1/jobs/{id}/walk` returns the animated GLB.
+- US-05 / AC-01: `GET /v1/library/{id}/body` returns the detected body type the app shows; an entry without a skeleton answers 409.
+- US-05 / AC-02: `POST /v1/library/{id}/walk` with `{"body": "biped" | "quadruped"}` on a rigged entry starts the walk and answers 202 with the new `"<name> (walk)"` entry, which ends succeeded with the animated model; the source entry is unchanged.
+- US-05 / AC-03: When the rig has no legs the tool can detect, the new entry ends failed with the same reason the app shows.
 
 ## US-06: Library through the API
 
@@ -84,6 +84,7 @@ As an API client, I want to list, save and download library models, so that the 
 - US-06 / AC-01: `GET /v1/library` lists entries (id, name, created, files); `GET /v1/library/{id}` returns one; an unknown id answers 404.
 - US-06 / AC-02: `GET /v1/library/{id}/files/{name}` returns a file of the entry; a name outside the entry (for example `../x`) answers 404.
 - US-06 / AC-03: `POST /v1/library` with `{"job_id", "name"}` saves a finished job the way the app does, and the app shows it.
+- US-06 / AC-04: The library entry model lives in `contracts/`, used by both the engine and the app.
 
 ## US-07: The desktop app uses the engine's endpoints
 
@@ -101,7 +102,7 @@ As a developer of another project, I want accurate documentation, so that I can 
 
 ## Dependencies
 
-US-01 → US-02 → (US-03, US-04, US-05, US-06 in any order) → US-07 → US-08.
+US-01 → US-02 → US-03 and US-06 → (US-04, US-05) → US-07 → US-08.
 
 ## Verification mapping
 
@@ -110,10 +111,11 @@ US-01 → US-02 → (US-03, US-04, US-05, US-06 in any order) → US-07 → US-0
 | US-01 / AC-01..AC-06 | `engine/tests/test_network.py` (5 tests), `test_config.py` (port and LAN host cases), `test_main.py::test_main_serves_on_loopback_and_writes_engine_info`, `test_main_exits_when_lan_address_is_missing`, `test_api.py::test_lan_host_header_is_allowed`; engine suite 221 passed | Passed |
 | US-01 / AC-01, AC-03..AC-05 | Real engine run, `MODEL3D_LAN_HOST=192.168.90.10 MODEL3D_PORT=auto` | Passed: `engine.json` `{"port": 41353, "hosts": ["127.0.0.1", "192.168.90.10"]}`, `/v1/health` 200 on both addresses, two `Listening on` lines; `MODEL3D_LAN_HOST=192.0.2.1` → `192.0.2.1 is not an address of this machine`, exit 2; busy 8765 → `Port 8765 is already in use on 127.0.0.1`, exit 2 |
 | US-01 / AC-05 (app) | `client/tests/test_supervisor.py::test_engine_listens_on_the_polled_port` (RED without the change, then GREEN); client suite 291 passed | Passed |
-| US-02 / AC-01..AC-04 | `engine/tests/test_auth.py` (no key, wrong key, valid key, loopback without key, WebSocket, empty keys refuse start, Origin) | Pending |
+| US-02 / AC-01..AC-04 | `engine/tests/test_auth.py` (9 tests: no key, wrong key, no `Bearer` prefix, valid key, loopback and `::1` without key, WebSocket 4401, foreign Origin and Host with a valid key), `test_config.py` (keys split), `test_main.py::test_main_refuses_lan_without_keys`; RED observed (missing field), engine suite 233 passed | Passed |
+| US-02 / AC-01..AC-03 | Real engine run on `192.168.90.10` with `MODEL3D_API_KEYS=test-key-1` | Passed: no keys → `MODEL3D_LAN_HOST needs MODEL3D_API_KEYS: ...`, exit 2; loopback without key 200; LAN without key 401 with the exact body; wrong key 401; valid key 200; LAN with a spoofed `Host: 127.0.0.1` and no key 401 |
 | US-03 / AC-01..AC-05 | `engine/tests/test_scheduler.py` and `test_api.py` with a fake head-pass stage; one real run (GPU) | Pending |
-| US-04 / AC-01..AC-03 | `engine/tests/test_exports.py` with a fake converter; one real FBX export | Pending |
-| US-05 / AC-01..AC-03 | `engine/tests/test_walk.py` with a fake animator; one real walk on a rigged job | Pending |
+| US-04 / AC-01..AC-03 | `engine/tests/test_exports.py` with a fake converter; one real FBX export of a library entry | Pending |
+| US-05 / AC-01..AC-03 | `engine/tests/test_walk.py` with a fake animator; one real walk on a rigged library entry | Pending |
 | US-06 / AC-01..AC-03 | `engine/tests/test_library.py` on a temp `MODEL3D_HOME` | Pending |
 | US-07 / AC-01..AC-02 | client `uv run pytest`; one generation with Detailed face, one export and one walk in the running app | Pending |
 | US-08 / AC-01..AC-02 | `test_api.py` checks the OpenAPI paths; curl examples run against the real engine | Pending |

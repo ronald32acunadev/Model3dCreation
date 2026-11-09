@@ -172,6 +172,9 @@ def main() -> None:
     if not is_loopback_host(settings.host):
         print("MODEL3D_HOST must be a loopback address", file=sys.stderr)
         raise SystemExit(2)
+    if settings.lan_host and not settings.api_keys:
+        print("MODEL3D_LAN_HOST needs MODEL3D_API_KEYS: clients on the network must send a key", file=sys.stderr)
+        raise SystemExit(2)
     hosts = listen_hosts(settings)
     try:
         sockets = bind_sockets(hosts, settings.port)

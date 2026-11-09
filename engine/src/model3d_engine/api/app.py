@@ -1,6 +1,7 @@
 """REST and WebSocket API of the engine."""
 
 import asyncio
+import hmac
 import io
 import json
 import logging
@@ -99,30 +100,58 @@ class LoopbackGuard:
     Clients that send no Origin header, like curl and the desktop app, are not affected.
     """
 
-    def __init__(self, app: ASGIApp, allowed_origins: tuple[str, ...], allowed_hosts: tuple[str, ...] = ()):
+    def __init__(
+        self,
+        app: ASGIApp,
+        allowed_origins: tuple[str, ...],
+        allowed_hosts: tuple[str, ...] = (),
+        api_keys: tuple[str, ...] = (),
+    ):
         self.app = app
         self.allowed_origins = {normalize_origin(origin) for origin in allowed_origins}
         self.allowed_hosts = {host.lower() for host in allowed_hosts}
+        self.api_keys = tuple(key.encode() for key in api_keys)
 
-    def _rejection(self, scope: Scope) -> str | None:
+    def _rejection(self, scope: Scope) -> tuple[int, str, str] | None:
         headers = Headers(scope=scope)
         host = _host_name(headers.get("host", ""))
         if not (is_loopback_host(host) or host in self.allowed_hosts):
-            return "The Host header must name a loopback address or the LAN address"
+            return 403, "forbidden_origin", "The Host header must name a loopback address or the LAN address"
+        if not self._is_local(scope) and not self._has_valid_key(headers):
+            return 401, "unauthorized", "Send Authorization: Bearer <key> to use the engine from the network"
         origin = headers.get("origin")
         if scope["type"] == "http" and scope["method"] in _STATE_CHANGING and origin is not None:
             if normalize_origin(origin) not in self.allowed_origins:
-                return f"Origin {origin} may not change engine state"
+                return 403, "forbidden_origin", f"Origin {origin} may not change engine state"
         return None
 
+    @staticmethod
+    def _is_local(scope: Scope) -> bool:
+        """Whether the connection arrived on a loopback address; unknown addresses count as remote."""
+        server = scope.get("server")
+        return server is not None and is_loopback_host(server[0])
+
+    def _has_valid_key(self, headers: Headers) -> bool:
+        authorization = headers.get("authorization", "")
+        if not authorization.startswith("Bearer "):
+            return False
+        presented = authorization[len("Bearer ") :].encode()
+        matched = False
+        for key in self.api_keys:
+            matched |= hmac.compare_digest(presented, key)
+        return matched
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] not in ("http", "websocket") or (message := self._rejection(scope)) is None:
+        if scope["type"] not in ("http", "websocket") or (rejection := self._rejection(scope)) is None:
             await self.app(scope, receive, send)
-        elif scope["type"] == "websocket":
-            await send({"type": "websocket.close", "code": 4403})  # before accept: the server answers 403
+            return
+        status, code, message = rejection
+        if scope["type"] == "websocket":
+            # Closed before accept: the server answers the handshake with 403.
+            await send({"type": "websocket.close", "code": 4401 if status == 401 else 4403})
         else:
-            body = ErrorBody(error=JobError(code="forbidden_origin", message=message))
-            await JSONResponse(status_code=403, content=body.model_dump())(scope, receive, send)
+            body = ErrorBody(error=JobError(code=code, message=message))
+            await JSONResponse(status_code=status, content=body.model_dump())(scope, receive, send)
 
 
 def _log_startup_failure(task: asyncio.Task) -> None:
@@ -165,6 +194,7 @@ def create_app(
         LoopbackGuard,
         allowed_origins=settings.allowed_origins,
         allowed_hosts=(settings.lan_host,) if settings.lan_host else (),
+        api_keys=settings.api_keys,
     )
     app.state.bus = bus
 

@@ -67,6 +67,7 @@ def test_main_serves_on_loopback_and_writes_engine_info(monkeypatch, tmp_path):
 
     monkeypatch.delenv("MODEL3D_HOST", raising=False)
     monkeypatch.delenv("MODEL3D_LAN_HOST", raising=False)
+    monkeypatch.delenv("MODEL3D_API_KEYS", raising=False)
     monkeypatch.setenv("MODEL3D_HOME", str(tmp_path))
     monkeypatch.setenv("MODEL3D_PORT", "auto")
     monkeypatch.setattr(entry, "build_engine", lambda settings: "app")
@@ -78,10 +79,30 @@ def test_main_serves_on_loopback_and_writes_engine_info(monkeypatch, tmp_path):
     assert json.loads((tmp_path / "engine.json").read_text()) == {"port": served["port"], "hosts": ["127.0.0.1"]}
 
 
+def test_main_refuses_lan_without_keys(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("MODEL3D_HOME", str(tmp_path))
+    monkeypatch.setenv("MODEL3D_PORT", "auto")
+    monkeypatch.setenv("MODEL3D_LAN_HOST", "192.168.90.10")
+    monkeypatch.delenv("MODEL3D_API_KEYS", raising=False)
+    monkeypatch.delenv("MODEL3D_HOST", raising=False)
+
+    def bind_must_not_run(hosts, port):
+        raise AssertionError("bind_sockets must not run without API keys")
+
+    monkeypatch.setattr(entry, "bind_sockets", bind_must_not_run)
+    with pytest.raises(SystemExit) as exited:
+        main()
+    assert exited.value.code == 2
+    assert capsys.readouterr().err.strip() == (
+        "MODEL3D_LAN_HOST needs MODEL3D_API_KEYS: clients on the network must send a key"
+    )
+
+
 def test_main_exits_when_lan_address_is_missing(monkeypatch, capsys, tmp_path):
     monkeypatch.setenv("MODEL3D_HOME", str(tmp_path))
     monkeypatch.setenv("MODEL3D_PORT", "auto")
     monkeypatch.setenv("MODEL3D_LAN_HOST", "192.0.2.1")
+    monkeypatch.setenv("MODEL3D_API_KEYS", "k1")
     built = []
     monkeypatch.setattr(entry, "build_engine", lambda settings: built.append(settings))
     with pytest.raises(SystemExit) as exited:

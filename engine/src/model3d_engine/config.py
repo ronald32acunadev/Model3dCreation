@@ -20,6 +20,8 @@ class Settings:
     port: int = 8765
     # Extra address, besides loopback, that the engine listens on for other machines on the LAN.
     lan_host: str | None = None
+    # Bearer keys that LAN clients must present; required when lan_host is set.
+    api_keys: tuple[str, ...] = ()
     # Unset buses and mode mean automatic placement from the detected GPUs.
     shape_bus: str | None = None
     paint_bus: str | None = None
@@ -123,6 +125,7 @@ def load_settings(env: Mapping[str, str] | None = None, repo_root: Path | None =
         host=env.get("MODEL3D_HOST", "127.0.0.1"),
         port=_parse_port(env.get("MODEL3D_PORT", "8765")),
         lan_host=_parse_lan_host(env.get("MODEL3D_LAN_HOST")),
+        api_keys=tuple(key.strip() for key in env.get("MODEL3D_API_KEYS", "").split(",") if key.strip()),
         shape_bus=normalize_bus_id(shape_bus) if shape_bus is not None else None,
         paint_bus=normalize_bus_id(paint_bus) if paint_bus is not None else None,
         mode=mode,

@@ -61,6 +61,8 @@ def make_client(
     rig=None,
     max_model_bytes: int = 1024 * 1024,
     lan_host=None,
+    api_keys=(),
+    base_url="http://127.0.0.1:8765",
 ) -> TestClient:
     settings = Settings(
         home=tmp_path,
@@ -69,6 +71,7 @@ def make_client(
         allowed_origins=allowed_origins,
         max_model_bytes=max_model_bytes,
         lan_host=lan_host,
+        api_keys=api_keys,
     )
     store, bus = JobStore(settings.jobs_dir), EventBus()
     scheduler = Scheduler(store, bus, shape or FakeRunner("shape.glb"), paint or FakeRunner("model.glb"), rig=rig)
@@ -82,7 +85,7 @@ def make_client(
         texture_available=texture_available,
         rig_reason=lambda: reason,
     )
-    client = ReadyClient(app, base_url="http://127.0.0.1:8765")
+    client = ReadyClient(app, base_url=base_url)
     client.wait_ready = wait_ready
     return client
 
