@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +28,7 @@ PYTHON = ROOT / "engine/.venv/bin/python"
 MEMORY_LIMIT = 40 * 2**30  # an earlier exploration script used 57 GB and was killed by the kernel
 STEP_TIMEOUT_S = 3600
 ENGINE_START_TIMEOUT_S = 180
+RESULT_TAG = "MODEL3D_HEAD_PASS "
 
 
 class StepFailed(Exception):
@@ -118,27 +120,82 @@ def prepare(job: Path, run: Path) -> None:
             shutil.copy(source, run / name)
 
 
+def multipart_post(url: str, field: str, path: Path, content_type: str) -> dict:
+    """POST one file as multipart form data and return the JSON answer."""
+    boundary = uuid.uuid4().hex
+    body = b"".join([
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; filename=\"{path.name}\"\r\n"
+        f"Content-Type: {content_type}\r\n\r\n".encode(),
+        path.read_bytes(),
+        f"\r\n--{boundary}--\r\n".encode(),
+    ])
+    request = urllib.request.Request(url, data=body, method="POST",
+                                     headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    with urllib.request.urlopen(request, timeout=300) as response:
+        return json.loads(response.read())
+
+
+def add_skeleton(engine_url: str, source: Path, target: Path) -> None:
+    """Rig the head-pass model through the engine's /v1/rig-jobs and save the result as target."""
+    print("[run]  add the skeleton", flush=True)
+    started = time.monotonic()
+    job_id = multipart_post(f"{engine_url}/v1/rig-jobs", "model", source, "model/gltf-binary")["job_id"]
+    while True:
+        with urllib.request.urlopen(f"{engine_url}/v1/jobs/{job_id}", timeout=60) as response:
+            job = json.loads(response.read())
+        if job["state"] in ("succeeded", "failed", "cancelled"):
+            break
+        time.sleep(3)
+    if job["state"] != "succeeded":
+        raise StepFailed(f"adding the skeleton {job['state']}: {(job.get('error') or {}).get('message', '')}")
+    with urllib.request.urlopen(f"{engine_url}/v1/jobs/{job_id}/result", timeout=300) as response:
+        part = target.with_suffix(".part")
+        part.write_bytes(response.read())
+        os.replace(part, target)
+    print(f"       add the skeleton took {time.monotonic() - started:.0f} s", flush=True)
+
+
+def report(model: Path, applied: bool, reason: str | None) -> None:
+    """The line the desktop app reads: where the model is, and whether the head pass changed it."""
+    print(RESULT_TAG + json.dumps({"model": str(model), "applied": applied, "reason": reason}), flush=True)
+
+
+def stop_on_term(_signum, _frame) -> None:
+    # Unwind through main's finally blocks, so an engine started here is stopped.
+    raise SystemExit(143)
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("job", help="job id or folder in data/jobs, or 'latest' for the newest rigged job")
     parser.add_argument("--extra-seeds", default="11", help="comma-separated seeds tried besides the job's (empty for none)")
     parser.add_argument("--engine", default="http://127.0.0.1:8765")
+    parser.add_argument("--home", type=Path, default=ROOT / "data", help="data folder with jobs/ (MODEL3D_HOME)")
     args = parser.parse_args(argv)
-    rigged = sorted((p for p in (ROOT / "data/jobs").glob("*") if (p / "rig_input.glb").exists()),
+    signal.signal(signal.SIGTERM, stop_on_term)
+    jobs = args.home / "jobs"
+    rigged = sorted((p for p in jobs.glob("*") if (p / "rig_input.glb").exists()),
                     key=lambda p: (p / "job.json").stat().st_mtime, reverse=True)
     if args.job == "latest" and rigged:
         job = rigged[0]
     else:
-        job = Path(args.job) if Path(args.job).is_dir() else ROOT / "data/jobs" / args.job
+        job = Path(args.job) if Path(args.job).is_dir() else jobs / args.job
     if not job.is_dir():
-        print(f"No job folder {job}. Pass a job id from data/jobs, or 'latest'. Rigged jobs, newest first:", file=sys.stderr)
+        print(f"No job folder {job}. Pass a job id from {jobs}, or 'latest'. Rigged jobs, newest first:", file=sys.stderr)
         for path in rigged[:10]:
             print(f"  {path.name}", file=sys.stderr)
         return 2
     print(f"Job {job.name}", flush=True)
-    run = ROOT / "data/kit_runs" / job.name
+    run = args.home / "kit_runs" / job.name
     log = run / "run.log"
     started = time.monotonic()
+    engine: subprocess.Popen | None = None
+
+    def ensure_engine() -> None:
+        nonlocal engine
+        if engine is None and not engine_ready(args.engine):
+            engine = start_engine(args.engine, log)
+
     try:
         prepare(job, run)
         tool = lambda name: str(TOOLS / f"{name}.py")
@@ -153,33 +210,42 @@ def main(argv: list[str]) -> int:
             record = json.loads((run / "parts.json").read_text()) if (run / "parts.json").exists() else {}
             failed = {key for key, job in record.items() if job.get("state") == "failed"}
             if not all(p.exists() or p.stem in failed for p in wanted):
-                engine = None if engine_ready(args.engine) else start_engine(args.engine, log)
+                ensure_engine()
                 if "TRELLIS.2" not in engine_mode(args.engine):
                     raise StepFailed("the running engine does not use TRELLIS.2; stop it (or the app) and run again")
-                try:
-                    step("sculpt the head", [tool("generate_parts"), str(run), "--parts", part, "--seeds", ",".join(seeds),
-                                             "--engine", args.engine], None, log)
-                finally:
-                    if engine is not None:
-                        stop_engine(engine)
+                step("sculpt the head", [tool("generate_parts"), str(run), "--parts", part, "--seeds", ",".join(seeds),
+                                         "--engine", args.engine], None, log)
             step("align the head", [tool("align"), str(run)], run / "align.json", log)
         step("cut the head and blend the neck", [tool("kit"), str(run), "--head-swap"], run / "kit.json", log)
         step("paint each piece", [tool("paint"), str(run)], run / "paint.json", log)
-        if rig["reason"] is None:
+        kit = json.loads((run / "kit.json").read_text())
+        applied = "skipped" not in kit
+        if applied:
             step("render the comparison", [tool("compare"), str(run)], run / "compare.json", log)
+            final = run / "final.glb"
+            if (job / "rig_input.glb").exists() and not final.exists():
+                ensure_engine()
+                add_skeleton(args.engine, run / "model.glb", final)
+            elif not final.exists():
+                shutil.copy(run / "model.glb", final)
+        else:
+            final = job / "model.glb"
     except StepFailed as error:
         print(f"[fail] {error}", file=sys.stderr)
         return 1
+    finally:
+        if engine is not None:
+            stop_engine(engine)
 
-    kit = json.loads((run / "kit.json").read_text())
     print(f"\nDone in {time.monotonic() - started:.0f} s. Run folder: {run}")
-    if "skipped" in kit:
-        print(f"No head pass: {kit['skipped']}. model.glb is the job's model.")
-    else:
+    if applied:
         head = kit["volume_check"].get("head", {})
         print(f"Head: {head.get('used')} ({head.get('file') or 'mold'}); solid-volume ratios {head.get('ratios')}")
-        print(f"Model: {run / 'model.glb'}")
+        print(f"Model: {final}")
         print(f"Compare: {run / 'compare_head.png'}, {run / 'compare_front.png'}")
+    else:
+        print(f"No head pass: {kit.get('skipped') or rig['reason']}. The job's model is unchanged.")
+    report(final, applied, None if applied else (kit.get("skipped") or rig["reason"]))
     return 0
 
 

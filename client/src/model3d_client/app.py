@@ -13,6 +13,8 @@ import model3d_client
 from model3d_client.i18n import apply_language
 from model3d_client.paths import PACKAGE_DIR, REPO_ROOT, app_paths
 from model3d_client.services.engine_api import EngineApi
+from model3d_client.services.head_pass import SCRIPT as HEAD_PASS_SCRIPT
+from model3d_client.services.head_pass import HeadPass
 from model3d_client.services.library import Library
 from model3d_client.services.settings import load_settings
 from model3d_client.services.supervisor import EngineSupervisor
@@ -74,7 +76,8 @@ def build_app(
     api = EngineApi(parent=app)
     library = Library(paths.library)
     supervisor = EngineSupervisor(api, paths, parent=app)
-    generation = GenerationViewModel(api, library, supervisor, settings, parent=app)
+    head_pass = HeadPass(paths.engine_python, paths.repo / HEAD_PASS_SCRIPT, paths.data, api.base_url, parent=app)
+    generation = GenerationViewModel(api, library, supervisor, settings, head_pass=head_pass, parent=app)
     vm = MainViewModel(paths, api, supervisor, library, generation, settings, parent=app)
     if viewer_factory is None:
         from model3d_client.views.viewer_widget import ViewerWidget
