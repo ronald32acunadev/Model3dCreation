@@ -1,3 +1,4 @@
+import json
 import time
 
 import pytest
@@ -51,14 +52,43 @@ def test_main_rejects_non_loopback_host(monkeypatch, capsys):
     assert "MODEL3D_HOST must be a loopback address" in capsys.readouterr().err
 
 
-def test_main_runs_uvicorn_on_loopback(monkeypatch):
-    calls = {}
+def test_main_serves_on_loopback_and_writes_engine_info(monkeypatch, tmp_path):
+    served = {}
+
+    class FakeServer:
+        def __init__(self, config):
+            served["app"] = config.app
+
+        def run(self, sockets):
+            served["hosts"] = [sock.getsockname()[0] for sock in sockets]
+            served["port"] = sockets[0].getsockname()[1]
+            for sock in sockets:
+                sock.close()
+
     monkeypatch.delenv("MODEL3D_HOST", raising=False)
-    monkeypatch.setenv("MODEL3D_PORT", "9001")
+    monkeypatch.delenv("MODEL3D_LAN_HOST", raising=False)
+    monkeypatch.setenv("MODEL3D_HOME", str(tmp_path))
+    monkeypatch.setenv("MODEL3D_PORT", "auto")
     monkeypatch.setattr(entry, "build_engine", lambda settings: "app")
-    monkeypatch.setattr(entry.uvicorn, "run", lambda app, host, port: calls.update(app=app, host=host, port=port))
+    monkeypatch.setattr(entry.uvicorn, "Server", FakeServer)
     main()
-    assert calls == {"app": "app", "host": "127.0.0.1", "port": 9001}
+    assert served["app"] == "app"
+    assert served["hosts"] == ["127.0.0.1"]
+    assert served["port"] != 0
+    assert json.loads((tmp_path / "engine.json").read_text()) == {"port": served["port"], "hosts": ["127.0.0.1"]}
+
+
+def test_main_exits_when_lan_address_is_missing(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("MODEL3D_HOME", str(tmp_path))
+    monkeypatch.setenv("MODEL3D_PORT", "auto")
+    monkeypatch.setenv("MODEL3D_LAN_HOST", "192.0.2.1")
+    built = []
+    monkeypatch.setattr(entry, "build_engine", lambda settings: built.append(settings))
+    with pytest.raises(SystemExit) as exited:
+        main()
+    assert exited.value.code == 2
+    assert "192.0.2.1 is not an address of this machine" in capsys.readouterr().err
+    assert built == []
 
 
 def test_build_engine_dual_gpu_health(tmp_path):

@@ -18,6 +18,8 @@ class Settings:
     hunyuan_dir: Path
     host: str = "127.0.0.1"
     port: int = 8765
+    # Extra address, besides loopback, that the engine listens on for other machines on the LAN.
+    lan_host: str | None = None
     # Unset buses and mode mean automatic placement from the detected GPUs.
     shape_bus: str | None = None
     paint_bus: str | None = None
@@ -58,6 +60,37 @@ def is_loopback_host(host: str) -> bool:
         return False
 
 
+def _parse_port(value: str) -> int:
+    """A TCP port number, or 0 for `auto`, which binds a free port."""
+    message = f"MODEL3D_PORT must be a port number or auto; got '{value}'"
+    if value == "auto":
+        return 0
+    try:
+        port = int(value)
+    except ValueError as error:
+        raise ValueError(message) from error
+    if not 0 <= port <= 65535:
+        raise ValueError(message)
+    return port
+
+
+def _parse_lan_host(value: str | None) -> str | None:
+    """The normalized LAN address, or None when unset; loopback and wildcard addresses are refused."""
+    if not value:
+        return None
+    message = (
+        "MODEL3D_LAN_HOST must be this machine's network IP address, like 192.168.90.10; "
+        f"got '{value}'"
+    )
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError as error:
+        raise ValueError(message) from error
+    if address.is_loopback or address.is_unspecified:
+        raise ValueError(message)
+    return str(address)
+
+
 def normalize_origin(origin: str) -> str:
     return origin.strip().rstrip("/").lower()
 
@@ -88,7 +121,8 @@ def load_settings(env: Mapping[str, str] | None = None, repo_root: Path | None =
         generator=generator,
         trellis_dir=Path(trellis_dir).expanduser() if trellis_dir else repo_root / "vendor/TRELLIS.2",
         host=env.get("MODEL3D_HOST", "127.0.0.1"),
-        port=int(env.get("MODEL3D_PORT", "8765")),
+        port=_parse_port(env.get("MODEL3D_PORT", "8765")),
+        lan_host=_parse_lan_host(env.get("MODEL3D_LAN_HOST")),
         shape_bus=normalize_bus_id(shape_bus) if shape_bus is not None else None,
         paint_bus=normalize_bus_id(paint_bus) if paint_bus is not None else None,
         mode=mode,

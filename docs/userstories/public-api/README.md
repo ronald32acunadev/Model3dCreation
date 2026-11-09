@@ -1,0 +1,119 @@
+# Public API
+
+Status: approved 2026-11-08 ("Approve, all stories"), execution mode: all stories. US-01 complete; US-02 next. Branch: `feat/public-api-voice` (from `exp/kit-assembly`, which holds the head pass).
+
+Implementer route: LM Studio and Ollama had no model loaded on 2026-11-08, so code goes to a lightweight hosted implementer (haiku subagent), per `AGENTS.md`.
+
+## Context
+
+Request (verbatim): "necesito que el app que creamos funciones mediante un api publico tanto para utilizar desde otro proyecto que se va ejecutar en un puerto dispinible quiero utilziar FASTApi , quiero agregar en este API las funciones que hemos creado en la aplicacion".
+
+Decisions in chat (2026-11-08):
+
+- Consumers run on the same machine and on the LAN ("1,2"); not on the internet.
+- Every app function goes in the API ("Todas por favor"): generate, rig, Detailed face, export formats, walk animation, library.
+- Approach A: the engine itself grows these functions, and the desktop app uses the same endpoints; no separate gateway.
+- No `0.0.0.0`: "quiero la ip de red algo formato 192.168.90.10". The engine always listens on `127.0.0.1` (the desktop app and the Blender add-on use it) and also on the configured LAN address.
+
+Existing facts: the engine is already FastAPI (`engine/src/model3d_engine/api/app.py`) with `/v1/jobs`, `/v1/rig-jobs`, `/v1/health` and WebSocket events, guarded by `LoopbackGuard` (loopback `Host` only). The head pass (`scripts/kit_assembly/run.py`), export (`client/.../services/convert_model.py`) and walk (`client/.../services/animate_rig.py`) already run with `engine/.venv/bin/python`, launched by the client.
+
+Assumptions (to confirm at approval):
+
+- API keys come from `MODEL3D_API_KEYS` (comma-separated) and travel only in `Authorization: Bearer <key>`, also on the WebSocket; never in the URL.
+- The library stays at `$MODEL3D_HOME/library` with its current layout; the API reads it and can save a finished job into it.
+
+Out of scope: internet exposure, HTTPS, user accounts, rate limits.
+
+## Proposed revision (2026-11-08, waiting for approval)
+
+Found while preparing US-03..US-05; US-01 and US-02 are unaffected.
+
+- R1 (US-03 / AC-02): the head-pass tools never use the GPU themselves; their GPU work is sub-jobs sent to the engine (`/v1/jobs`, `/v1/rig-jobs`). Holding a card while they run would deadlock, so the pass runs without a card and its sub-jobs follow the one-task-per-card rule like any job. The job reports a new state `detailing` (stage `face`) between `rigging` and `succeeded`.
+- R2 (US-04, US-05): in the app, export and walk act on library entries, not jobs (walk makes a new `"<name> (walk)"` entry). The endpoints move to the library so the app can use them in US-07: `POST /v1/library/{id}/exports` + `GET /v1/library/{id}/exports/{format}`, `GET /v1/library/{id}/body` (detected body type) and `POST /v1/library/{id}/walk` (answers the new entry). US-06 comes before US-04 and US-05; the library entry model moves to `contracts/`.
+
+## US-01: The engine listens on the LAN address and a free port
+
+As a developer of another project, I want the engine reachable at my machine's LAN address on an available port, so that a program on my network can use it.
+
+- US-01 / AC-01: With `MODEL3D_LAN_HOST=192.168.90.10`, the engine answers `GET /v1/health` on both `127.0.0.1:<port>` and `192.168.90.10:<port>`.
+- US-01 / AC-02: Without `MODEL3D_LAN_HOST`, it listens only on `127.0.0.1`, as today.
+- US-01 / AC-03: When the LAN address is not assigned to any local interface, the engine exits with an error naming the address and listens nowhere.
+- US-01 / AC-04: With `MODEL3D_PORT=auto`, it binds a free port; with a fixed port that is busy, it exits with an error naming the port.
+- US-01 / AC-05: After binding, it writes `$MODEL3D_HOME/engine.json` with `{"port", "hosts"}` and logs the URLs. The desktop app starts its engine on the port it polls (its `EngineApi` URL), whatever `MODEL3D_PORT` the shell sets; `engine.json` is for other programs. (Changed during implementation: reading the file in the app would move the app and the Blender add-on off their fixed `127.0.0.1:8765`.)
+- US-01 / AC-06: The `Host` check accepts the configured LAN address as well as loopback names.
+
+## US-02: LAN clients need an API key
+
+As the machine's owner, I want LAN clients to present a key, so that nobody else on the network can use my GPUs.
+
+- US-02 / AC-01: A request reaching the LAN address without a valid `Authorization: Bearer <key>` gets 401 with `{"error": {"code": "unauthorized", ...}}`; a WebSocket is closed before accept.
+- US-02 / AC-02: Requests on `127.0.0.1` need no key (the desktop app and Blender add-on work unchanged).
+- US-02 / AC-03: With `MODEL3D_LAN_HOST` set and `MODEL3D_API_KEYS` empty, the engine refuses to start and says why.
+- US-02 / AC-04: The existing Origin (CSRF) check still applies to both addresses.
+
+## US-03: Detailed face through the API
+
+As an API client, I want to ask for the Detailed face option when I submit an image, so that I get the sculpted head without the desktop app.
+
+- US-03 / AC-01: `POST /v1/jobs` accepts `detailed_face: true` (requires `rig: true`, the TRELLIS.2 generator, and the head-pass tools); otherwise it answers 422 with a code naming the missing requirement.
+- US-03 / AC-02: The scheduler runs the head pass as a stage after rigging, on a card under the existing one-task-per-card rule, and publishes its progress as events.
+- US-03 / AC-03: When the pass applies, `/v1/jobs/{id}/result` is the head-pass model and `/v1/jobs/{id}/result?variant=original` the plain one; when it does not apply, the job succeeds with the plain model and a reason in the record.
+- US-03 / AC-04: Cancel during the pass stops it and keeps the plain model.
+- US-03 / AC-05: `/v1/health` reports whether Detailed face is available and, if not, why.
+
+## US-04: Export a model to another format
+
+As an API client, I want to convert a finished model to another format, so that I can use it in tools that do not read GLB.
+
+- US-04 / AC-01: `POST /v1/jobs/{id}/exports` with `{"format": <one of the app's formats>}` starts an export task and answers 202; an unknown format answers 422 listing the valid ones.
+- US-04 / AC-02: When it finishes, `GET /v1/jobs/{id}/exports/{format}` returns the file (a zip when the format has several files, as in the app).
+- US-04 / AC-03: An export of a job that has not succeeded answers 409.
+
+## US-05: Add a walk animation
+
+As an API client, I want a rigged model with a walk cycle, so that I can animate it without Blender.
+
+- US-05 / AC-01: `POST /v1/jobs/{id}/walk` with `{"body": <one of the app's body types>}` on a rigged job starts the walk task; on an unrigged job it answers 409.
+- US-05 / AC-02: When the rig has no legs the app can detect, the task fails with the same reason the app shows.
+- US-05 / AC-03: When it finishes, `GET /v1/jobs/{id}/walk` returns the animated GLB.
+
+## US-06: Library through the API
+
+As an API client, I want to list, save and download library models, so that the other project sees the same models as the app.
+
+- US-06 / AC-01: `GET /v1/library` lists entries (id, name, created, files); `GET /v1/library/{id}` returns one; an unknown id answers 404.
+- US-06 / AC-02: `GET /v1/library/{id}/files/{name}` returns a file of the entry; a name outside the entry (for example `../x`) answers 404.
+- US-06 / AC-03: `POST /v1/library` with `{"job_id", "name"}` saves a finished job the way the app does, and the app shows it.
+
+## US-07: The desktop app uses the engine's endpoints
+
+As a user, I want the app to do Detailed face, export and walk through the engine, so that the app and the API cannot drift apart.
+
+- US-07 / AC-01: The app no longer launches `run.py`, `convert_model.py` or `animate_rig.py` itself; it calls US-03..US-06 and shows the same progress, errors and results as before.
+- US-07 / AC-02: The existing client tests for these flows pass against the fake engine, updated to the new endpoints.
+
+## US-08: API documentation
+
+As a developer of another project, I want accurate documentation, so that I can integrate without reading the engine's code.
+
+- US-08 / AC-01: `/docs` and `/openapi.json` describe every endpoint, request and error code (served on loopback; on the LAN they need the key).
+- US-08 / AC-02: `docs/api.md` explains the variables, the key, and a curl example per endpoint, and each example was run against a real engine.
+
+## Dependencies
+
+US-01 → US-02 → (US-03, US-04, US-05, US-06 in any order) → US-07 → US-08.
+
+## Verification mapping
+
+| Story / criterion | Check | Observed result |
+| --- | --- | --- |
+| US-01 / AC-01..AC-06 | `engine/tests/test_network.py` (5 tests), `test_config.py` (port and LAN host cases), `test_main.py::test_main_serves_on_loopback_and_writes_engine_info`, `test_main_exits_when_lan_address_is_missing`, `test_api.py::test_lan_host_header_is_allowed`; engine suite 221 passed | Passed |
+| US-01 / AC-01, AC-03..AC-05 | Real engine run, `MODEL3D_LAN_HOST=192.168.90.10 MODEL3D_PORT=auto` | Passed: `engine.json` `{"port": 41353, "hosts": ["127.0.0.1", "192.168.90.10"]}`, `/v1/health` 200 on both addresses, two `Listening on` lines; `MODEL3D_LAN_HOST=192.0.2.1` → `192.0.2.1 is not an address of this machine`, exit 2; busy 8765 → `Port 8765 is already in use on 127.0.0.1`, exit 2 |
+| US-01 / AC-05 (app) | `client/tests/test_supervisor.py::test_engine_listens_on_the_polled_port` (RED without the change, then GREEN); client suite 291 passed | Passed |
+| US-02 / AC-01..AC-04 | `engine/tests/test_auth.py` (no key, wrong key, valid key, loopback without key, WebSocket, empty keys refuse start, Origin) | Pending |
+| US-03 / AC-01..AC-05 | `engine/tests/test_scheduler.py` and `test_api.py` with a fake head-pass stage; one real run (GPU) | Pending |
+| US-04 / AC-01..AC-03 | `engine/tests/test_exports.py` with a fake converter; one real FBX export | Pending |
+| US-05 / AC-01..AC-03 | `engine/tests/test_walk.py` with a fake animator; one real walk on a rigged job | Pending |
+| US-06 / AC-01..AC-03 | `engine/tests/test_library.py` on a temp `MODEL3D_HOME` | Pending |
+| US-07 / AC-01..AC-02 | client `uv run pytest`; one generation with Detailed face, one export and one walk in the running app | Pending |
+| US-08 / AC-01..AC-02 | `test_api.py` checks the OpenAPI paths; curl examples run against the real engine | Pending |

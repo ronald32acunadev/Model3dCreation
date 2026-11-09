@@ -60,6 +60,7 @@ def make_client(
     texture_available=True,
     rig=None,
     max_model_bytes: int = 1024 * 1024,
+    lan_host=None,
 ) -> TestClient:
     settings = Settings(
         home=tmp_path,
@@ -67,6 +68,7 @@ def make_client(
         max_image_bytes=max_image_bytes,
         allowed_origins=allowed_origins,
         max_model_bytes=max_model_bytes,
+        lan_host=lan_host,
     )
     store, bus = JobStore(settings.jobs_dir), EventBus()
     scheduler = Scheduler(store, bus, shape or FakeRunner("shape.glb"), paint or FakeRunner("model.glb"), rig=rig)
@@ -83,6 +85,12 @@ def make_client(
     client = ReadyClient(app, base_url="http://127.0.0.1:8765")
     client.wait_ready = wait_ready
     return client
+
+
+def test_lan_host_header_is_allowed(tmp_path):
+    with make_client(tmp_path, lan_host="192.168.90.10") as client:
+        assert client.get("/v1/health", headers={"Host": "192.168.90.10:8765"}).status_code == 200
+        assert_error(client.get("/v1/health", headers={"Host": "192.168.90.11:8765"}), 403, "forbidden_origin")
 
 
 def post_job(client, data: bytes | None = None, options: dict | None = None, filename: str = "in.png"):

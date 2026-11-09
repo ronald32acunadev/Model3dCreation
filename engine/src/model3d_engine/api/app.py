@@ -93,20 +93,22 @@ def _host_name(host: str) -> str:
 
 
 class LoopbackGuard:
-    """Blocks browser pages from driving the engine: rejects a Host that is not loopback
-    (DNS rebinding) and a POST or DELETE whose Origin is not allowed (CSRF).
+    """Blocks browser pages from driving the engine: rejects a Host that is neither loopback nor
+    the LAN address (DNS rebinding) and a POST or DELETE whose Origin is not allowed (CSRF).
 
     Clients that send no Origin header, like curl and the desktop app, are not affected.
     """
 
-    def __init__(self, app: ASGIApp, allowed_origins: tuple[str, ...]):
+    def __init__(self, app: ASGIApp, allowed_origins: tuple[str, ...], allowed_hosts: tuple[str, ...] = ()):
         self.app = app
         self.allowed_origins = {normalize_origin(origin) for origin in allowed_origins}
+        self.allowed_hosts = {host.lower() for host in allowed_hosts}
 
     def _rejection(self, scope: Scope) -> str | None:
         headers = Headers(scope=scope)
-        if not is_loopback_host(_host_name(headers.get("host", ""))):
-            return "The Host header must name a loopback address"
+        host = _host_name(headers.get("host", ""))
+        if not (is_loopback_host(host) or host in self.allowed_hosts):
+            return "The Host header must name a loopback address or the LAN address"
         origin = headers.get("origin")
         if scope["type"] == "http" and scope["method"] in _STATE_CHANGING and origin is not None:
             if normalize_origin(origin) not in self.allowed_origins:
@@ -159,7 +161,11 @@ def create_app(
         await scheduler.stop()
 
     app = FastAPI(title="model3d engine", lifespan=lifespan)
-    app.add_middleware(LoopbackGuard, allowed_origins=settings.allowed_origins)
+    app.add_middleware(
+        LoopbackGuard,
+        allowed_origins=settings.allowed_origins,
+        allowed_hosts=(settings.lan_host,) if settings.lan_host else (),
+    )
     app.state.bus = bus
 
     @app.exception_handler(ApiError)

@@ -22,6 +22,7 @@ from model3d_engine.gpu.modes import (
 )
 from model3d_engine.gpu.probe import Inventory, probe_gpus
 from model3d_engine.gpu.topology import normalize_bus_id
+from model3d_engine.net import BindError, bind_sockets, listen_hosts, write_engine_info
 from model3d_engine.jobs.events import EventBus
 from model3d_engine.jobs.scheduler import Scheduler
 from model3d_engine.jobs.store import JobStore
@@ -165,13 +166,23 @@ def build_engine(
 
 
 def main() -> None:
-    """Serve the engine on the configured loopback host and port."""
+    """Serve the engine on loopback and, when configured, the LAN address, on one port."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = load_settings()
     if not is_loopback_host(settings.host):
         print("MODEL3D_HOST must be a loopback address", file=sys.stderr)
         raise SystemExit(2)
-    uvicorn.run(build_engine(settings), host=settings.host, port=settings.port)
+    hosts = listen_hosts(settings)
+    try:
+        sockets = bind_sockets(hosts, settings.port)
+    except BindError as error:
+        print(error, file=sys.stderr)
+        raise SystemExit(2) from error
+    port = sockets[0].getsockname()[1]
+    write_engine_info(settings.home, port, hosts)
+    for host in hosts:
+        logger.info("Listening on %s", f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}")
+    uvicorn.Server(uvicorn.Config(build_engine(settings))).run(sockets=sockets)
 
 
 if __name__ == "__main__":
