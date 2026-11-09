@@ -133,7 +133,8 @@ def main(argv: list[str]) -> int:
     for name, glb in (("current", run / "mold.glb"), ("kit", run / "model.glb")):
         (renders / name).mkdir(parents=True, exist_ok=True)
         render_model(bpy, glb, views, renders / name)
-    render_exploded(bpy, run, rig, (views["front"][0], views["front"][1] * 1.2), run / "exploded.png")
+    if all((run / "pieces" / f"{name}.glb").exists() for name in rig["parts"]):  # the head swap makes no pieces
+        render_exploded(bpy, run, rig, (views["front"][0], views["front"][1] * 1.2), run / "exploded.png")
 
     image = Image.open(run / "input.png").convert("RGBA")
     flat = Image.new("RGBA", image.size, (204, 204, 204, 255))

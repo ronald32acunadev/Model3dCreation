@@ -221,7 +221,11 @@ def main(argv: list[str]) -> int:
         kit = json.loads((run / "kit.json").read_text())
         applied = "skipped" not in kit
         if applied:
-            step("render the comparison", [tool("compare"), str(run)], run / "compare.json", log)
+            try:
+                step("render the comparison", [tool("compare"), str(run)], run / "compare.json", log)
+            except StepFailed as error:
+                # Review renders only; the model is already made.
+                print(f"[warn] {error.args[0].splitlines()[0]}", flush=True)
             final = run / "final.glb"
             if (job / "rig_input.glb").exists() and not final.exists():
                 ensure_engine()
