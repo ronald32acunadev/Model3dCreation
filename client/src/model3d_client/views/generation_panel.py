@@ -75,6 +75,12 @@ class GenerationPanel(QWidget):
         self.rig_hint = QLabel()  # why skeletons are unavailable, shown under the option
         self.rig_hint.setWordWrap(True)
         self.rig_hint.setStyleSheet("color: palette(placeholder-text);")
+        self.detail_check = QCheckBox()
+        self.detail_check.setChecked(vm.detailed_face)
+        self.detail_check.toggled.connect(vm.set_detailed_face)
+        self.notice_label = QLabel()  # why the last detailed face was not applied
+        self.notice_label.setWordWrap(True)
+        self.notice_label.setStyleSheet("color: #b9770e;")
         self.quality_combo = QComboBox()
         self.quality_combo.addItem("", Quality.draft)
         self.quality_combo.addItem("", Quality.final)
@@ -100,8 +106,9 @@ class GenerationPanel(QWidget):
         self.reset_camera_button.clicked.connect(self.reset_camera_requested)
 
         layout = QVBoxLayout(self)
-        for widget in (self.source_tabs, self.texture_check, self.rig_check, self.rig_hint, self.quality_combo, self.generate_button,
-                       self.progress_bar, self.stage_label, self.error_label, self.save_button,
+        for widget in (self.source_tabs, self.texture_check, self.rig_check, self.rig_hint, self.detail_check,
+                       self.quality_combo, self.generate_button,
+                       self.progress_bar, self.stage_label, self.error_label, self.notice_label, self.save_button,
                        self.show_texture_check, self.reset_camera_button):
             layout.addWidget(widget)
         layout.addStretch(1)
@@ -126,6 +133,7 @@ class GenerationPanel(QWidget):
         self.choose_button.setText(self.tr("Choose image…"))
         self.texture_check.setText(self.tr("Texture"))
         self.rig_check.setText(self.tr("With skeleton"))
+        self.detail_check.setText(self.tr("Detailed face"))
         self.quality_combo.setItemText(0, self.tr("Quality: draft"))
         self.quality_combo.setItemText(1, self.tr("Quality: final"))
         self.quality_combo.setItemText(2, self.tr("Quality: high detail"))
@@ -158,6 +166,20 @@ class GenerationPanel(QWidget):
         # Only when the engine said why; before its first health answer there is nothing to explain.
         self.rig_hint.setText(vm.rig_reason or "")
         self.rig_hint.setVisible(not rig_available and bool(vm.rig_reason))
+        detail_reason = vm.detail_reason
+        self.detail_check.setEnabled(detail_reason is None and vm.phase == Phase.idle)
+        detail_reasons = {
+            None: self.tr(
+                "Sculpts the head and shoulders again on their own for a sharper face, then puts the head on the "
+                "body and adds the skeleton. About 8 minutes more per model."
+            ),
+            "missing_tools": self.tr("The head-pass tools are not installed (scripts/kit_assembly)."),
+            "no_rig": self.tr("The detailed face needs skeletons, which this engine cannot add."),
+            "not_trellis": self.tr("The detailed face needs the TRELLIS.2 generator."),
+        }
+        self.detail_check.setToolTip(detail_reasons[detail_reason])
+        self.notice_label.setText(self._notice_text())
+        self.notice_label.setVisible(bool(vm.notice))
         self.quality_combo.setEnabled(vm.phase == Phase.idle)
         if vm.phase == Phase.idle:
             self.generate_button.setText(self.tr("Generate"))
@@ -177,11 +199,22 @@ class GenerationPanel(QWidget):
             Phase.shaping: self.tr("Building the shape"),
             Phase.painting: self.tr("Painting the texture"),
             Phase.rigging: self.tr("Adding skeleton…"),
+            Phase.detailing: self.tr("Sculpting the face…"),
             Phase.cancelling: self.tr("Cancelling: the engine finishes the current stage first…"),
         }
         stage = phases[vm.phase]
         self.stage_label.setText(f"{stage} — {vm.message}" if stage and vm.message else stage)
         self.error_label.setText(self._problem_text())
+
+    def _notice_text(self) -> str:
+        notice = self.vm.notice
+        if not notice:
+            return ""
+        if notice == "cancelled":
+            return self.tr("Detailed face cancelled; the model is the regular one.")
+        return self.tr("The detailed face was not applied; the model is the regular one. Reason: {reason}").format(
+            reason=notice
+        )
 
     def _problem_text(self) -> str:
         problems = {

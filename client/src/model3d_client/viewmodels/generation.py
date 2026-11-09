@@ -1,7 +1,9 @@
 """The generation panel's state: from an input image to a finished library entry."""
 
 import logging
+import os
 import secrets
+import shutil
 from enum import Enum
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from model3d_contracts.jobs import Job, JobError, JobOptions, JobState, Quality
 from PySide6.QtCore import QObject, Signal
 
 from model3d_client.services.engine_api import ApiError, EngineApi, EventStream
+from model3d_client.services.head_pass import HeadPass
 from model3d_client.services.library import Entry, Library, Outcome
 from model3d_client.services.settings import Settings
 from model3d_client.services.supervisor import EngineState, EngineSupervisor
@@ -18,6 +21,12 @@ from model3d_client.services.supervisor import EngineState, EngineSupervisor
 logger = logging.getLogger(__name__)
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # the engine's limit (docs/api.md)
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
+ORIGINAL_MODEL = "model_original.glb"  # the job's own model, kept when the head pass replaces it
+# The head pass's steps in order, as scripts/kit_assembly/run.py names them, for the progress bar.
+DETAIL_STEPS = (
+    "read the skeleton", "crop the parts", "sculpt the head", "align the head",
+    "cut the head and blend the neck", "paint each piece", "render the comparison", "add the skeleton",
+)
 
 
 class Phase(str, Enum):
@@ -27,6 +36,7 @@ class Phase(str, Enum):
     shaping = "shaping"
     painting = "painting"
     rigging = "rigging"
+    detailing = "detailing"  # the head pass sculpts the face after the job finished
     cancelling = "cancelling"
 
 
@@ -36,16 +46,27 @@ class GenerationViewModel(QObject):
     library_changed = Signal()
 
     def __init__(self, api: EngineApi, library: Library, supervisor: EngineSupervisor, settings: Settings,
-                 parent: QObject | None = None):
+                 head_pass: HeadPass | None = None, parent: QObject | None = None):
         super().__init__(parent)
         self._api = api
         self._library = library
         self._supervisor = supervisor
+        self._head_pass = head_pass
+        if head_pass is not None:
+            head_pass.step.connect(self._on_detail_step)
+            head_pass.finished.connect(self._on_detail_finished)
+            head_pass.skipped.connect(self._on_detail_skipped)
+            head_pass.failed.connect(self._on_detail_failed)
         self.image: Path | None = None
         self.image_problem: str | None = None
         self.texture = settings.default_texture
         self.quality = settings.default_quality
         self.rig = False
+        self.detailed_face = False
+        self.notice: str | None = None  # why the last detailed face was not applied
+        self._detail = False  # the running generation ends with a head pass
+        self._detailing = False  # the head pass is running
+        self._detail_stats = None
         self.phase = Phase.idle
         self.progress = 0.0
         self.message = ""
@@ -72,6 +93,18 @@ class GenerationViewModel(QObject):
     def rig_reason(self) -> str | None:
         health: Health | None = self._supervisor.health
         return health.rig_reason if health is not None else None
+
+    @property
+    def detail_reason(self) -> str | None:
+        """Why the detailed face is unavailable ('missing_tools', 'no_rig', 'not_trellis'), or None."""
+        if self._head_pass is None or not self._head_pass.installed:
+            return "missing_tools"
+        if not self.rig_available:
+            return "no_rig"
+        health: Health | None = self._supervisor.health
+        if health is None or "TRELLIS.2" not in health.mode.reason:
+            return "not_trellis"
+        return None
 
     def can_add_skeleton(self, entry: Entry) -> bool:
         return (
@@ -100,7 +133,8 @@ class GenerationViewModel(QObject):
 
     @property
     def can_cancel(self) -> bool:
-        return self.phase in (Phase.submitting, Phase.queued, Phase.shaping, Phase.painting, Phase.rigging)
+        return self.phase in (Phase.submitting, Phase.queued, Phase.shaping, Phase.painting, Phase.rigging,
+                              Phase.detailing)
 
     def set_image(self, path: Path) -> None:
         self.image = path
@@ -126,14 +160,22 @@ class GenerationViewModel(QObject):
         self.quality = quality
         self.changed.emit()
 
+    def set_detailed_face(self, detailed: bool) -> None:
+        self.detailed_face = detailed
+        self.changed.emit()
+
     def generate(self) -> None:
         if not self.can_generate:
             return
+        detail = self.detailed_face and self.detail_reason is None
         options = JobOptions(
-            texture=self.texture and self.texture_available, quality=self.quality, rig=self.rig and self.rig_available
+            texture=self.texture and self.texture_available, quality=self.quality,
+            # The head pass finds the head through the skeleton, and returns a rigged model.
+            rig=(self.rig or detail) and self.rig_available,
         )
         self.entry = self._library.create(self.image, options)
         self._start()
+        self._detail = detail
         self._api.submit(self.image, options, self._on_submitted)
 
     def add_skeleton(self, entry_id: str) -> None:
@@ -166,6 +208,9 @@ class GenerationViewModel(QObject):
     def _start(self) -> None:
         self.library_changed.emit()
         self.error = None
+        self.notice = None
+        self._detail = False
+        self._detailing = False
         self._cancel_pending = False
         self._reconnected = False
         self._set_phase(Phase.submitting, 0.0, "")
@@ -173,7 +218,9 @@ class GenerationViewModel(QObject):
     def cancel(self) -> None:
         if not self.can_cancel:
             return
-        if self.phase == Phase.submitting:
+        if self.phase == Phase.detailing:
+            self._head_pass.cancel()  # the job's own model stays in the library
+        elif self.phase == Phase.submitting:
             self._cancel_pending = True  # sent once the engine returns the job id
         else:
             self._api.cancel(self.entry.job_id, self._on_cancel_answer)
@@ -218,7 +265,8 @@ class GenerationViewModel(QObject):
 
     def _on_closed(self) -> None:
         # A socket that closes before a final event means the engine went away or dropped us.
-        if self.entry is not None and not self._downloading:
+        # Once the head pass runs, the job is over and its socket closing means nothing.
+        if self.entry is not None and not self._downloading and not self._detailing:
             self._api.job(self.entry.job_id, self._on_job_after_close)
 
     def _on_job_after_close(self, result: Job | ApiError) -> None:
@@ -247,10 +295,58 @@ class GenerationViewModel(QObject):
             self._downloading = False
             if isinstance(result, ApiError):
                 self._finish(Outcome.failed, JobError(code=result.code, message=result.message))
+            elif self._detail and self.phase != Phase.cancelling:
+                self._start_detail(stats)
             else:
                 self._finish(Outcome.succeeded, stats=stats)
 
         self._api.download_result(self.entry.job_id, target, done)
+
+    def _start_detail(self, stats) -> None:
+        """The job's model is in the library; sculpt the face and swap it in when that works."""
+        self._detail_stats = stats
+        self._detailing = True
+        if self._stream is not None:
+            self._stream.close()
+            self._stream = None
+        self._set_phase(Phase.detailing, 0.0, "")
+        self._head_pass.start(self.entry.job_id)
+
+    def _on_detail_step(self, step: str) -> None:
+        if not self._detailing or self.phase == Phase.cancelling:
+            return
+        done = DETAIL_STEPS.index(step) / len(DETAIL_STEPS) if step in DETAIL_STEPS else self.progress
+        self._set_phase(Phase.detailing, done, step)
+
+    def _on_detail_finished(self, model: Path) -> None:
+        if not self._detailing:
+            return
+        target = self._library.model_path(self.entry.entry_id)
+        try:
+            shutil.copyfile(target, target.with_name(ORIGINAL_MODEL))
+            part = target.with_suffix(".part")
+            shutil.copyfile(model, part)
+            os.replace(part, target)
+        except OSError as error:
+            self._end_detail(f"Could not save the detailed model: {error}")
+            return
+        self._end_detail(None)
+
+    def _on_detail_skipped(self, reason: str) -> None:
+        if self._detailing:
+            self._end_detail(reason)
+
+    def _on_detail_failed(self, reason: str) -> None:
+        if self._detailing:
+            logger.warning("Head pass failed: %s", reason)
+            self._end_detail(reason)
+
+    def _end_detail(self, notice: str | None) -> None:
+        """The entry succeeds either way: with the head-pass model, or with the job's own model and a notice."""
+        self._detailing = False
+        self._finish(Outcome.succeeded, stats=self._detail_stats)
+        self.notice = notice
+        self.changed.emit()
 
     def _finish(self, outcome: Outcome, error: JobError | None = None, stats=None) -> None:
         if self.entry is None:
