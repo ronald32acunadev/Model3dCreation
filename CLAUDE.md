@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-Model3D: a local, GPU-only pipeline that turns an image into a textured (optionally rigged) GLB with Hunyuan3D 2.1 and UniRig, plus two clients for it. Target hardware is two RTX 5070 (12 GB) cards on Linux x86_64. The phase specs live in `Fases/` (Spanish).
+Model3D: a local, GPU-only pipeline that turns an image into a textured (optionally rigged) GLB with Hunyuan3D 2.1 and UniRig, plus two clients for it. Target hardware is two RTX 5070 (12 GB) cards on Linux x86_64. Feature backlogs and their results live in `docs/userstories/`.
 
 Five independent `uv` projects, each with its own `pyproject.toml`, lockfile and `.venv`:
 

@@ -101,7 +101,7 @@ Model3dCreation/
 ├── blender/                 # Blender 4.2+ add-on (blender/model3d/) and test suite
 ├── packaging/               # Debian package build scripts (packaging/deb/build.sh)
 ├── scripts/                 # Setup scripts, GPU verification, VRAM benchmarks, and utility helpers
-└── Fases/                   # Architectural phase specifications (Spanish)
+└── docs/userstories/        # Feature backlogs, acceptance criteria, and recorded results
 ```
 
 ### Runtime & Configuration Paths
