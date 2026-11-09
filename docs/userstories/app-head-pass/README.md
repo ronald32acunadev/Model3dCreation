@@ -23,11 +23,15 @@ As a user, I want to tick "Detailed face" before generating, so that the model i
 - US-02 / AC-03: Cancel during the pass stops it and keeps the job's model.
 - US-02 / AC-04: The option is disabled, with the reason, when the engine cannot rig, does not generate with TRELLIS.2, or the head-pass tools are not installed.
 
+## Log
+
+- 2026-11-08: the first real run stopped at the comparison renders (they drew pieces the head swap does not make); the exploded view is skipped without pieces, and a failed review render no longer stops the pass.
+
 ## Verification mapping
 
 | Story / criterion | Check | Observed result |
 | --- | --- | --- |
-| US-01 / AC-01..AC-03 | Real run on a rigged job; rigged output opens in Blender with an armature | Pending |
-| US-02 / AC-01..AC-03 | `client/tests/test_generation_vm.py` with a fake head pass | Pending |
-| US-02 / AC-04 | `client/tests/test_main_window.py`: option disabled with reason | Pending |
-| US-02 / AC-01 | One generation in the running app | Pending |
+| US-01 / AC-01..AC-03 | Real run on job 01M6YT0WEV02XG6KCDT2GHRZ6W (second dog) | Passed: `final.glb` has 1 skin with 34 joints over the body and head meshes, rigged in 96 s through `/v1/rig-jobs`; last line `MODEL3D_HEAD_PASS {"applied": true, ...}`. SIGTERM handling covered by code review only, not exercised |
+| US-02 / AC-01..AC-03 | `test_generation_vm.py`: `test_detailed_face_replaces_the_model_and_keeps_the_original`, `test_detailed_face_not_applied_keeps_the_job_model_with_a_notice`, `test_failed_head_pass_keeps_the_job_model`, `test_cancel_during_the_head_pass_keeps_the_job_model` | Passed (client suite 290 passed); written after the code, so no RED was observed |
+| US-02 / AC-04 | `test_generation_vm.py`: `test_detailed_face_needs_trellis`, `test_detailed_face_needs_the_tools_and_skeletons` | Passed |
+| US-02 / AC-01 | One generation in the running app | Pending: the user's latest dog was run by hand and swapped into its library entry (`model_original.glb` kept); a generation with the option ticked in the app has not run yet |
