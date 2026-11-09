@@ -23,6 +23,8 @@ from model3d_engine.stages.protocol import (
 
 logger = logging.getLogger(__name__)
 
+STATS_FILE = "stats.json"  # the library save endpoint reads this file
+
 
 class Scheduler:
     """Moves jobs through shape then paint, so one job paints while the next shapes.
@@ -156,6 +158,7 @@ class Scheduler:
             textured=textured,
             duration_s=(record.finished_at - record.created_at).total_seconds(),
         )
+        (record.dir / STATS_FILE).write_text(stats.model_dump_json())
         self._bus.publish(
             CompletedEvent(
                 job_id=record.job_id, ts=utcnow(), result_url=f"/v1/jobs/{record.job_id}/result", stats=stats

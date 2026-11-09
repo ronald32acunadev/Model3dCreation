@@ -23,3 +23,5 @@ Paste this list into the system message of every code request to a local model. 
 - 3D grids: build per-axis index ranges, combine them with `np.meshgrid(..., indexing="ij")`, and reshape values to the grid's shape before indexing it with three indices.
 - Signed distances: union is `np.minimum`, intersection is `np.maximum`, subtraction is `np.maximum(a, -b)`; follow the formula the brief gives.
 - Build expensive objects (scenes, trees, models) once in `__init__`, never inside a per-call loop.
+- `model_dump_json()` returns `str`: write it with `write_text`, never `write_bytes`.
+- Change a pydantic model with `model.model_copy(update={...})`, never by assigning its fields.

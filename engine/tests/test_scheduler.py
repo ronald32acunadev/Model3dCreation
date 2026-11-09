@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from model3d_contracts.events import ResultStats
 from model3d_contracts.jobs import JobOptions, JobState
 from model3d_engine.jobs.events import EventBus
 from model3d_engine.jobs.scheduler import Scheduler
@@ -671,3 +672,14 @@ async def test_textured_shape_result_skips_paint(tmp_path):
     assert paint.runs == []
     assert (record.dir / "model.glb").exists()
     assert received[-1].stats.textured is True
+
+
+async def test_succeeded_job_writes_its_stats(tmp_path):
+    scheduler, store, bus, _, _ = await make(tmp_path)
+    record, events = await submit(scheduler, store, bus)
+    await wait_final(record)
+    received = await drain(events)
+    await scheduler.stop()
+
+    assert record.state == JobState.succeeded
+    assert ResultStats.model_validate_json((record.dir / "stats.json").read_bytes()) == received[-1].stats

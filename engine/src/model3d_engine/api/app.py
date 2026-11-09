@@ -19,6 +19,10 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from model3d_contracts.health import Health
 from model3d_contracts.jobs import ErrorBody, Job, JobError, JobOptions, JobState
 
+from model3d_contracts.library import Library
+
+from model3d_engine.api.errors import ApiError
+from model3d_engine.api.library import library_router
 from model3d_engine.config import Settings, is_loopback_host, normalize_origin
 from model3d_engine.jobs.events import EventBus
 from model3d_engine.jobs.scheduler import Scheduler
@@ -28,16 +32,6 @@ from model3d_engine.stages.protocol import MODEL_OUTPUT
 _SUFFIXES = {"PNG": ".png", "JPEG": ".jpg"}
 _STATE_CHANGING = {"POST", "DELETE"}
 logger = logging.getLogger(__name__)
-
-
-class ApiError(Exception):
-    """An error answered with an ErrorBody and an HTTP status."""
-
-    def __init__(self, status: int, code: str, message: str):
-        super().__init__(message)
-        self.status = status
-        self.code = code
-        self.message = message
 
 
 def _check_image(data: bytes) -> str:
@@ -197,6 +191,7 @@ def create_app(
         api_keys=settings.api_keys,
     )
     app.state.bus = bus
+    app.include_router(library_router(Library(settings.home / "library", recover=False), store))
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:
