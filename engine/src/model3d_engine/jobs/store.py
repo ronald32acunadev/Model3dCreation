@@ -41,7 +41,8 @@ _ALLOWED: dict[JobState, frozenset[JobState]] = {
         {JobState.painting, JobState.rigging, JobState.succeeded, JobState.failed, JobState.cancelled}
     ),
     JobState.painting: frozenset({JobState.rigging, JobState.succeeded, JobState.failed, JobState.cancelled}),
-    JobState.rigging: frozenset({JobState.succeeded, JobState.failed, JobState.cancelled}),
+    JobState.rigging: frozenset({JobState.detailing, JobState.succeeded, JobState.failed, JobState.cancelled}),
+    JobState.detailing: frozenset({JobState.succeeded, JobState.failed, JobState.cancelled}),
     JobState.succeeded: frozenset(),
     JobState.failed: frozenset(),
     JobState.cancelled: frozenset(),
@@ -63,6 +64,7 @@ class JobRecord:
     finished_at: datetime | None = None
     error: JobError | None = None
     cancel_requested: bool = False
+    notice: str | None = None
 
     def transition(self, new: JobState, *, error: JobError | None = None) -> None:
         """Move to a new state, or raise InvalidTransition."""
@@ -75,6 +77,8 @@ class JobRecord:
             self.stage, self.progress = "paint", 0.0
         elif new == JobState.rigging:
             self.stage, self.progress = "rig", 0.0
+        elif new == JobState.detailing:
+            self.stage, self.progress = "face", 0.0
         elif new in FINAL_STATES:
             self.stage = None
             self.finished_at = datetime.now(UTC)
@@ -98,6 +102,7 @@ class JobRecord:
             created_at=self.created_at,
             finished_at=self.finished_at,
             error=self.error,
+            notice=self.notice,
             links=JobLinks(self=base, events=f"{base}/events", result=f"{base}/result"),
         )
 

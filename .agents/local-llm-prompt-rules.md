@@ -25,3 +25,5 @@ Paste this list into the system message of every code request to a local model. 
 - Build expensive objects (scenes, trees, models) once in `__init__`, never inside a per-call loop.
 - `model_dump_json()` returns `str`: write it with `write_text`, never `write_bytes`.
 - Change a pydantic model with `model.model_copy(update={...})`, never by assigning its fields.
+- Keep every non-empty output line (step and tag lines included) in the failure tail; `from __future__ import annotations` is forbidden even when type hints look forward-referencing.
+- Engine API tests: enter the client with `with make_client(...) as client:`, use `/v1/health`, read `response.json()["job_id"]`, and put a bare `assert` on every checked value.

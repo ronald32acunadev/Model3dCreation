@@ -33,3 +33,5 @@ class Health(BaseModel):
     error: JobError | None
     rig: bool = False  # whether jobs may ask for a skeleton
     rig_reason: str | None = None  # why rigging is unavailable
+    detailed_face: bool = False  # whether jobs may ask for a detailed face
+    detailed_face_reason: str | None = None  # why Detailed face is unavailable

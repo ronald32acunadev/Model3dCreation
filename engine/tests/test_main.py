@@ -9,6 +9,7 @@ from model3d_engine.__main__ import build_engine, main
 from model3d_engine.config import Settings
 from model3d_engine.gpu.probe import GpuInfo, Inventory
 
+from .fakes import FakeHeadPass, FakeRunner
 from .test_api import post_job
 
 RTX = "NVIDIA GeForce RTX 5070"
@@ -127,6 +128,8 @@ def test_build_engine_dual_gpu_health(tmp_path):
             "error": None,
             "rig": False,
             "rig_reason": "UniRig is not installed in vendor/UniRig (see docs/setup.md)",
+            "detailed_face": False,
+            "detailed_face_reason": "Detailed face needs MODEL3D_GENERATOR=trellis2",
         }
         job_id = run_job(client, {"texture": False})
         assert client.get(f"/v1/jobs/{job_id}/result").content[:4] == b"glTF"
@@ -320,3 +323,68 @@ def test_single_gpu_resident_uses_the_swap_loop(tmp_path, monkeypatch):
     settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", mode="single_gpu_resident")
     build_engine(settings, inventory=roomy, shape_factory=STUB, paint_factory=STUB, memory_reader=dict)
     assert seen["swap"] is True
+
+
+def test_hunyuan_engine_has_no_detailed_face(tmp_path):
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", unirig_dir=tmp_path / "UniRig")
+    app = build_engine(settings, inventory=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=dict, rig_runner=FakeRunner("model.glb"))
+    assert app.state.head_pass is None
+    with TestClient(app, base_url=BASE_URL) as client:
+        health = wait_ready(client)
+    assert (health["detailed_face"], health["detailed_face_reason"]) == (False, "Detailed face needs MODEL3D_GENERATOR=trellis2")
+
+
+def test_trellis_engine_with_head_pass_reports_detailed_face(tmp_path):
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", generator="trellis2", trellis_dir=tmp_path / "t2")
+    app = build_engine(settings, inventory=REAL, generator_factory=STUB, memory_reader=dict, rig_runner=FakeRunner("model.glb"), head_pass=FakeHeadPass(tmp_path))
+    with TestClient(app, base_url=BASE_URL) as client:
+        health = wait_ready(client)
+    assert (health["detailed_face"], health["detailed_face_reason"]) == (True, None)
+
+
+def test_default_head_pass_uses_the_engine_port(tmp_path):
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", generator="trellis2", trellis_dir=tmp_path / "t2", port=9123)
+    app = build_engine(settings, inventory=REAL, generator_factory=STUB, memory_reader=dict, rig_runner=FakeRunner("model.glb"))
+    assert app.state.head_pass._engine_url == "http://127.0.0.1:9123"
+
+
+def test_trellis_engine_without_rig_names_the_rig_reason(tmp_path):
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", generator="trellis2", trellis_dir=tmp_path / "t2", unirig_dir=tmp_path / "UniRig")
+    app = build_engine(settings, inventory=REAL, generator_factory=STUB, memory_reader=dict)
+    assert app.state.head_pass is None
+    with TestClient(app, base_url=BASE_URL) as client:
+        health = wait_ready(client)
+    assert health["detailed_face_reason"] == "UniRig is not installed in vendor/UniRig (see docs/setup.md)"
+    assert health["detailed_face"] is False
+
+
+def test_main_builds_the_engine_with_the_bound_port(tmp_path, monkeypatch):
+    served = {}
+
+    class FakeServer:
+        def __init__(self, config):
+            self.config = config
+
+        def run(self, sockets):
+            for sock in sockets:
+                served["port"] = sock.getsockname()[1]
+                sock.close()
+
+    built = []
+
+    def fake_build_engine(settings):
+        built.append(settings)
+        return "app"
+
+    monkeypatch.delenv("MODEL3D_HOST", raising=False)
+    monkeypatch.delenv("MODEL3D_LAN_HOST", raising=False)
+    monkeypatch.delenv("MODEL3D_API_KEYS", raising=False)
+    monkeypatch.setenv("MODEL3D_HOME", str(tmp_path))
+    monkeypatch.setenv("MODEL3D_PORT", "auto")
+    monkeypatch.setattr(entry, "build_engine", fake_build_engine)
+    monkeypatch.setattr(entry.uvicorn, "Server", FakeServer)
+
+    main()
+
+    assert built[0].port == served["port"]
+    assert served["port"] != 0

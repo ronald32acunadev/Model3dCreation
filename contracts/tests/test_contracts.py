@@ -110,3 +110,25 @@ def test_rigging_state_and_rig_stage():
     )
     assert job.state == JobState.rigging
     assert job.stage == "rig"
+
+
+def test_detailed_face_needs_rig():
+    with pytest.raises(ValidationError) as excinfo:
+        JobOptions(detailed_face=True)
+    assert "detailed_face needs rig: true" in str(excinfo.value)
+    assert JobOptions(detailed_face=True, rig=True).detailed_face is True
+    assert JobOptions().detailed_face is False
+
+
+def test_detailing_state_is_not_final():
+    assert JobState.detailing.value == "detailing"
+    assert JobState.detailing not in FINAL_STATES
+
+
+def test_job_notice_defaults_to_none():
+    from model3d_contracts.jobs import JobLinks
+
+    job = Job(job_id="j1", state=JobState.queued, seed=1, created_at=TS, links=JobLinks(self="/a", events="/b", result="/c"))
+    assert job.notice is None
+    job2 = Job(job_id="j1", state=JobState.queued, seed=1, created_at=TS, links=JobLinks(self="/a", events="/b", result="/c"), notice="Detailed face was cancelled")
+    assert job2.notice == "Detailed face was cancelled"

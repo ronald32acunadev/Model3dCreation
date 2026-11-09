@@ -111,3 +111,38 @@ def test_create_rig_writes_input_and_options(tmp_path):
     assert (record.dir / "rig_input.glb").read_bytes() == b"glTF-bytes"
     assert record.options == JobOptions(rig=True, texture=True)
     assert record.state == JobState.queued
+
+
+def test_detailing_follows_rigging(tmp_path):
+    store = make_store(tmp_path)
+    record = store.create(JobOptions(rig=True, detailed_face=True), b"png", ".png")
+    record.transition(JobState.shaping)
+    record.transition(JobState.painting)
+    record.transition(JobState.rigging)
+    record.transition(JobState.detailing)
+    assert record.stage == "face"
+    assert record.progress == 0.0
+    record.transition(JobState.succeeded)
+    assert record.state == JobState.succeeded
+    assert record.stage is None
+
+
+def test_detailing_is_only_reachable_from_rigging(tmp_path):
+    store = make_store(tmp_path)
+    record = store.create(JobOptions(rig=True, detailed_face=True), b"png", ".png")
+    assert record.notice is None
+    with pytest.raises(InvalidTransition):
+        record.transition(JobState.detailing)
+    record.transition(JobState.shaping)
+    with pytest.raises(InvalidTransition):
+        record.transition(JobState.detailing)
+    record.transition(JobState.painting)
+    record.transition(JobState.rigging)
+    record.transition(JobState.detailing)
+    record.transition(JobState.failed)
+    record2 = store.create(JobOptions(rig=True, detailed_face=True), b"png", ".png")
+    record2.transition(JobState.shaping)
+    record2.transition(JobState.painting)
+    record2.transition(JobState.rigging)
+    record2.transition(JobState.detailing)
+    record2.transition(JobState.cancelled)

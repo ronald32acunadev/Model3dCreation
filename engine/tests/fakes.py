@@ -2,9 +2,12 @@
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 import trimesh
 
+from model3d_engine.stages.head_pass import HeadPassFailed, HeadPassResult
 from model3d_engine.stages.protocol import ProgressCallback, StageError, StageResult, StageTask
 
 
@@ -53,3 +56,39 @@ class FakeRunner:
         on_progress(1.0, "done")
         self.runs.append((task.job_id, start, time.monotonic()))
         return StageResult(output=output, vertices=len(mesh.vertices), faces=len(mesh.faces))
+
+
+class FakeHeadPass:
+    reason = None
+
+    def __init__(
+        self,
+        model_dir: Path,
+        mode: str = "applied",
+        during: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None:
+        self.model = model_dir / "head_model.glb"
+        self.mode = mode
+        self.during = during
+        self.calls: list[str] = []
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def run(self, job_id: str, on_step: Callable[[str], None]) -> HeadPassResult:
+        self.calls.append(job_id)
+        self.started.set()
+        on_step("step one")
+        if self.during is not None:
+            await self.during(job_id)
+        if self.mode == "wait":
+            await self.cancelled.wait()
+            raise HeadPassFailed("terminated")
+        if self.mode == "fail":
+            raise HeadPassFailed("boom: bad thing\nmore output")
+        if self.mode == "skipped":
+            return HeadPassResult(False, None, "no usable head")
+        trimesh.creation.icosphere().export(self.model)
+        return HeadPassResult(True, self.model, None)
+
+    async def cancel(self, job_id: str) -> None:
+        self.cancelled.set()

@@ -25,7 +25,7 @@ from model3d_engine.api.errors import ApiError
 from model3d_engine.api.library import library_router
 from model3d_engine.config import Settings, is_loopback_host, normalize_origin
 from model3d_engine.jobs.events import EventBus
-from model3d_engine.jobs.scheduler import Scheduler
+from model3d_engine.jobs.scheduler import ORIGINAL_OUTPUT, Scheduler
 from model3d_engine.jobs.store import JobRecord, JobStore
 from model3d_engine.stages.protocol import MODEL_OUTPUT
 
@@ -161,12 +161,14 @@ def create_app(
     health: Callable[[], dict],
     texture_available: bool = True,
     rig_reason: Callable[[], str | None] = lambda: None,
+    detailed_face_reason: Callable[[], str | None] = lambda: "Detailed face is not set up",
 ) -> FastAPI:
     """Build the API around an existing scheduler, store, and event bus.
 
     `health` returns the body of GET /v1/health without its `error`, which comes from the
     scheduler; `texture_available` is false when the run mode has no paint stage; `rig_reason`
-    explains why rigging is unavailable.
+    explains why rigging is unavailable; `detailed_face_reason` explains why Detailed face is
+    unavailable (None when it is available).
     """
 
     @asynccontextmanager
@@ -217,6 +219,8 @@ def create_app(
             raise ApiError(400, "texture_unavailable", 'This engine runs without the paint stage: send "texture": false')
         if job_options.rig:
             _check_rig()
+        if job_options.detailed_face and (reason := detailed_face_reason()) is not None:
+            raise ApiError(400, "detailed_face_unavailable", reason)
         _check_ready()
         record = store.create(job_options, data, suffix)
         scheduler.submit(record)
@@ -251,10 +255,15 @@ def create_app(
         return _record(job_id).to_job(scheduler.queue_position(job_id))
 
     @app.get("/v1/jobs/{job_id}/result")
-    async def get_result(job_id: str) -> FileResponse:
+    async def get_result(job_id: str, variant: str | None = None) -> FileResponse:
         record = _record(job_id)
         if record.state != JobState.succeeded:
             raise ApiError(409, "job_not_finished", f"Job {job_id} is {record.state.value}")
+        if variant == "original":
+            original = record.dir / ORIGINAL_OUTPUT
+            if not original.is_file():
+                raise ApiError(404, "result_not_found", f"Job {job_id} has no original model")
+            return FileResponse(original, media_type="model/gltf-binary", filename="model_original.glb")
         return FileResponse(record.dir / MODEL_OUTPUT, media_type="model/gltf-binary", filename="model.glb")
 
     @app.delete("/v1/jobs/{job_id}", status_code=202, response_model=Job)

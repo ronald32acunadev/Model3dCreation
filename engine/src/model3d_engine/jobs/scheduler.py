@@ -3,6 +3,7 @@ plus an optional rig stage that adds a skeleton to finished models."""
 
 import asyncio
 import logging
+import shutil
 from collections.abc import Awaitable, Callable
 
 from model3d_contracts.events import CancelledEvent, CompletedEvent, FailedEvent, ProgressEvent, ResultStats
@@ -10,6 +11,7 @@ from model3d_contracts.jobs import JobError, JobState
 
 from model3d_engine.jobs.events import EventBus, utcnow
 from model3d_engine.jobs.store import JobRecord, JobStore
+from model3d_engine.stages.head_pass import HeadPassFailed, HeadPassResult, HeadPassRunner
 from model3d_engine.stages.protocol import (
     MODEL_OUTPUT,
     RIG_INPUT,
@@ -24,6 +26,7 @@ from model3d_engine.stages.protocol import (
 logger = logging.getLogger(__name__)
 
 STATS_FILE = "stats.json"  # the library save endpoint reads this file
+ORIGINAL_OUTPUT = "model_original.glb"  # the rigged model a head pass replaced
 
 
 class Scheduler:
@@ -49,15 +52,20 @@ class Scheduler:
         swap: bool = False,
         rig: StageRunner | None = None,
         cards: dict[str, str] | None = None,
+        head_pass: HeadPassRunner | None = None,
     ):
         self._store = store
         self._bus = bus
         self._shape = shape
         self._paint = paint
         self._rig = rig
+        self._head_pass = head_pass
         self._shape_queue: asyncio.Queue[str] = asyncio.Queue()
         self._paint_queue: asyncio.Queue[str] = asyncio.Queue()
         self._rig_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._face_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._face_results: dict[str, StageResult] = {}
+        self._background: set[asyncio.Task] = set()
         locks: dict[str, asyncio.Lock] = {}
         cards = cards or {}
         # One lock per device; without a device each stage gets its own lock.
@@ -84,9 +92,9 @@ class Scheduler:
         if self._rig is not None:
             await self._rig.start()
         if self._swap:
-            self._tasks = [asyncio.create_task(self._swap_loop())]
+            self._tasks = [asyncio.create_task(self._swap_loop()), asyncio.create_task(self._face_loop())]
         else:
-            loops = [self._shape_loop(), self._paint_loop(), self._rig_loop()]
+            loops = [self._shape_loop(), self._paint_loop(), self._rig_loop(), self._face_loop()]
             self._tasks = [asyncio.create_task(loop) for loop in loops]
         self._started = True
 
@@ -128,6 +136,10 @@ class Scheduler:
             self._cancel(record)
         else:
             record.cancel_requested = True
+            if record.state == JobState.detailing and self._head_pass is not None:
+                task = asyncio.get_running_loop().create_task(self._head_pass.cancel(job_id))
+                self._background.add(task)
+                task.add_done_callback(self._background.discard)
         return True
 
     def _progress(self, record: JobRecord, stage: str) -> ProgressCallback:
@@ -298,8 +310,45 @@ class Scheduler:
             return
         if record.cancel_requested:
             self._cancel(record)
+        elif record.options.detailed_face and self._head_pass is not None:
+            self._face_results[job_id] = result
+            self._face_queue.put_nowait(job_id)
+            self._work.set()
         else:
             self._succeed(record, result, record.options.texture)
+
+    async def _face_job(self, job_id: str) -> None:
+        record = self._store.get(job_id)
+        result = self._face_results.pop(job_id, None)
+        if record is None or record.is_final or result is None or self._head_pass is None:
+            return
+        if record.cancel_requested:
+            record.notice = "Detailed face was cancelled"
+            self._succeed(record, result, record.options.texture)
+            return
+        self._begin(record, JobState.detailing, "face")
+        progress = self._progress(record, "face")
+
+        def on_step(step: str) -> None:
+            progress(record.progress, step)
+
+        outcome: HeadPassResult | None = None
+        failure = ""
+        try:
+            outcome = await self._head_pass.run(job_id, on_step)
+        except HeadPassFailed as error:
+            failure = str(error).splitlines()[0] if str(error) else "unknown error"
+        if record.cancel_requested:
+            record.notice = "Detailed face was cancelled"
+        elif outcome is None:
+            record.notice = f"Detailed face failed: {failure}"
+        elif outcome.applied and outcome.model is not None:
+            model = record.dir / MODEL_OUTPUT
+            model.replace(record.dir / ORIGINAL_OUTPUT)
+            shutil.copyfile(outcome.model, model)
+        else:
+            record.notice = outcome.reason
+        self._succeed(record, result, record.options.texture)
 
     async def _guarded(self, job: Callable[[str], Awaitable[None]], job_id: str) -> None:
         """Run one job step; an unexpected error fails that job instead of ending its stage loop."""
@@ -326,6 +375,10 @@ class Scheduler:
     async def _rig_loop(self) -> None:
         while True:
             await self._guarded(self._rig_job, await self._rig_queue.get())
+
+    async def _face_loop(self) -> None:
+        while True:
+            await self._guarded(self._face_job, await self._face_queue.get())
 
     def _needs_run(self, job_id: str) -> bool:
         record = self._store.get(job_id)

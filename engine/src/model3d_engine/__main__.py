@@ -1,15 +1,17 @@
 """Engine entry point: python -m model3d_engine."""
 
+import dataclasses
 import logging
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
 
 from model3d_engine.api.app import create_app
-from model3d_engine.config import Settings, is_loopback_host, load_settings
+from model3d_engine.config import REPO_ROOT, Settings, is_loopback_host, load_settings
 from model3d_contracts.jobs import JobError
 
 from model3d_engine.gpu.modes import (
@@ -26,6 +28,7 @@ from model3d_engine.net import BindError, bind_sockets, listen_hosts, write_engi
 from model3d_engine.jobs.events import EventBus
 from model3d_engine.jobs.scheduler import Scheduler
 from model3d_engine.jobs.store import JobStore
+from model3d_engine.stages.head_pass import HeadPassRunner
 from model3d_engine.stages.hunyuan import stage_env
 from model3d_engine.stages.process import ProcessStageRunner
 from model3d_engine.stages.protocol import NoStage
@@ -57,6 +60,7 @@ def build_engine(
     generator_factory: str = TRELLIS_FACTORY,
     memory_reader: Callable[[], dict[str, tuple[int, int]]] = read_memory,
     rig_runner: RigRunner | None = None,
+    head_pass: HeadPassRunner | None = None,
 ) -> FastAPI:
     """Pick the run mode for the detected GPUs and wire workers, scheduler, store, and bus into the API."""
     inventory = probe_gpus() if inventory is None else inventory
@@ -119,9 +123,17 @@ def build_engine(
         cards = {"shape": devices.shape, "paint": devices.shape, "rig": devices.shape}
     else:
         cards = {"shape": devices.shape, "paint": devices.paint, "rig": devices.paint if plan.texture else devices.shape}
+    if head_pass is None and trellis and rig is not None and (rig.ready or getattr(rig, "reason", None) is None):
+        candidate = HeadPassRunner(
+            Path(sys.executable),
+            REPO_ROOT / "scripts/kit_assembly/run.py",
+            settings.home,
+            f"http://127.0.0.1:{settings.port}",
+        )
+        head_pass = candidate if candidate.reason is None else None
     store, bus = JobStore(settings.jobs_dir), EventBus()
     swap = plan.name in (ModeName.single_gpu_swap, ModeName.single_gpu_resident, ModeName.shape_only)
-    scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=cards)
+    scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=cards, head_pass=head_pass)
     if plan.name == ModeName.unsupported:
         scheduler.start_error = JobError(code=ModeUnavailable.code, message=plan.reason)
 
@@ -151,6 +163,8 @@ def build_engine(
             "gpus": [gpu_entry(gpu, memory) for gpu in inventory.gpus],
             "rig": scheduler.rig_available,
             "rig_reason": rig_reason(),
+            "detailed_face": detailed_face_reason() is None,
+            "detailed_face_reason": detailed_face_reason(),
         }
 
     def rig_reason() -> str | None:
@@ -158,10 +172,20 @@ def build_engine(
             return "Rigging needs a usable GPU"
         return None if rig.ready else getattr(rig, "reason", None)
 
+    def detailed_face_reason() -> str | None:
+        if not trellis:
+            return "Detailed face needs MODEL3D_GENERATOR=trellis2"
+        if (reason := rig_reason()) is not None:
+            return reason
+        if head_pass is None:
+            return "The head-pass tools are not installed"
+        return head_pass.reason
+
     # Only shape_only refuses textured jobs; with no usable GPU every job gets 503 and the cause.
     texture_available = plan.name != ModeName.shape_only
-    app = create_app(settings, scheduler, store, bus, health, texture_available=texture_available, rig_reason=rig_reason)
+    app = create_app(settings, scheduler, store, bus, health, texture_available=texture_available, rig_reason=rig_reason, detailed_face_reason=detailed_face_reason)
     app.state.rig = rig
+    app.state.head_pass = head_pass
     return app
 
 
@@ -185,7 +209,7 @@ def main() -> None:
     write_engine_info(settings.home, port, hosts)
     for host in hosts:
         logger.info("Listening on %s", f"http://[{host}]:{port}" if ":" in host else f"http://{host}:{port}")
-    uvicorn.Server(uvicorn.Config(build_engine(settings))).run(sockets=sockets)
+    uvicorn.Server(uvicorn.Config(build_engine(dataclasses.replace(settings, port=port)))).run(sockets=sockets)
 
 
 if __name__ == "__main__":

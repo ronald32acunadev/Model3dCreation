@@ -14,7 +14,7 @@ from model3d_engine.jobs.scheduler import Scheduler
 from model3d_engine.jobs.store import JobStore
 from model3d_engine.stages.protocol import StageError
 
-from .fakes import FakeRunner
+from .fakes import FakeHeadPass, FakeRunner
 
 
 class FailingStart(FakeRunner):
@@ -63,6 +63,8 @@ def make_client(
     lan_host=None,
     api_keys=(),
     base_url="http://127.0.0.1:8765",
+    head_pass=None,
+    detailed_face_reason: str | None = "Detailed face is not set up",
 ) -> TestClient:
     settings = Settings(
         home=tmp_path,
@@ -74,16 +76,17 @@ def make_client(
         api_keys=api_keys,
     )
     store, bus = JobStore(settings.jobs_dir), EventBus()
-    scheduler = Scheduler(store, bus, shape or FakeRunner("shape.glb"), paint or FakeRunner("model.glb"), rig=rig)
+    scheduler = Scheduler(store, bus, shape or FakeRunner("shape.glb"), paint or FakeRunner("model.glb"), rig=rig, head_pass=head_pass)
     reason = None if rig is not None else "UniRig is not installed in vendor/UniRig (see docs/setup.md)"
     app = create_app(
         settings,
         scheduler,
         store,
         bus,
-        health=lambda: {"ready": scheduler.ready, "mode": MODE, "gpus": [], "rig": scheduler.rig_available, "rig_reason": reason},
+        health=lambda: {"ready": scheduler.ready, "mode": MODE, "gpus": [], "rig": scheduler.rig_available, "rig_reason": reason, "detailed_face": detailed_face_reason is None, "detailed_face_reason": detailed_face_reason},
         texture_available=texture_available,
         rig_reason=lambda: reason,
+        detailed_face_reason=lambda: detailed_face_reason,
     )
     client = ReadyClient(app, base_url=base_url)
     client.wait_ready = wait_ready
@@ -236,6 +239,8 @@ def test_health_reports_injected_status(tmp_path):
             "error": None,
             "rig": False,
             "rig_reason": "UniRig is not installed in vendor/UniRig (see docs/setup.md)",
+            "detailed_face": False,
+            "detailed_face_reason": "Detailed face is not set up",
         }
 
 
@@ -342,3 +347,54 @@ def test_health_reports_rig_availability(tmp_path):
     with make_client(tmp_path, rig=FakeRunner("model.glb")) as client:
         health = client.get("/v1/health").json()
         assert (health["rig"], health["rig_reason"]) == (True, None)
+
+
+def test_detailed_face_without_rig_is_invalid_options(tmp_path):
+    with make_client(tmp_path) as client:
+        error = assert_error(post_job(client, options={"detailed_face": True}), 400, "invalid_options")
+        assert error["message"] == "detailed_face needs rig: true"
+
+
+def test_detailed_face_unavailable_names_the_reason(tmp_path):
+    with make_client(tmp_path, rig=FakeRunner("model.glb"), detailed_face_reason="Detailed face needs MODEL3D_GENERATOR=trellis2") as client:
+        error = assert_error(post_job(client, options={"rig": True, "detailed_face": True}), 400, "detailed_face_unavailable")
+        assert error["message"] == "Detailed face needs MODEL3D_GENERATOR=trellis2"
+
+
+def test_health_reports_detailed_face_availability(tmp_path):
+    with make_client(tmp_path, rig=FakeRunner("model.glb"), head_pass=FakeHeadPass(tmp_path), detailed_face_reason=None) as client:
+        health = client.get("/v1/health").json()
+        assert (health["detailed_face"], health["detailed_face_reason"]) == (True, None)
+
+
+def test_original_variant_is_served_after_a_head_pass(tmp_path):
+    with make_client(tmp_path, rig=FakeRunner("model.glb"), head_pass=FakeHeadPass(tmp_path), detailed_face_reason=None) as client:
+        response = post_job(client, options={"rig": True, "detailed_face": True, "texture": False})
+        assert response.status_code == 202
+        job_id = response.json()["job_id"]
+        wait_state(client, job_id, "succeeded")
+        plain = client.get(f"/v1/jobs/{job_id}/result?variant=original")
+        assert plain.status_code == 200
+        assert plain.content.startswith(b"glTF")
+        final = client.get(f"/v1/jobs/{job_id}/result")
+        assert final.status_code == 200
+        assert final.content != plain.content
+
+
+def test_original_variant_is_404_without_a_head_pass(tmp_path):
+    with make_client(tmp_path) as client:
+        response = post_job(client, options={"texture": False})
+        assert response.status_code == 202
+        job_id = response.json()["job_id"]
+        wait_state(client, job_id, "succeeded")
+        assert_error(client.get(f"/v1/jobs/{job_id}/result?variant=original"), 404, "result_not_found")
+        assert client.get(f"/v1/jobs/{job_id}/result").status_code == 200
+
+
+def test_detailed_face_job_reports_its_notice(tmp_path):
+    with make_client(tmp_path, rig=FakeRunner("model.glb"), head_pass=FakeHeadPass(tmp_path, mode="skipped"), detailed_face_reason=None) as client:
+        response = post_job(client, options={"rig": True, "detailed_face": True, "texture": False})
+        assert response.status_code == 202
+        job_id = response.json()["job_id"]
+        wait_state(client, job_id, "succeeded")
+        assert client.get(f"/v1/jobs/{job_id}").json()["notice"] == "no usable head"
