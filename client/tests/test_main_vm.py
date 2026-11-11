@@ -343,3 +343,49 @@ def test_add_walk_rejected_by_the_engine_reports_failure(qtbot, with_engine, png
     assert blocker.args == ["no_skeleton"]
     assert len(library.entries()) == 1
     assert not vm.animating
+
+
+def character_json(character_id="C7"):
+    return {"character_id": character_id, "name": "Pingu", "created_at": "2026-11-01T12:00:00Z",
+            "input_file": "input.png", "versions": [character_id], "voice_id": None, "phrase_count": 0}
+
+
+def test_export_character_writes_the_package_and_signals(qtbot, tmp_path, with_engine):
+    vm, _, engine = with_engine
+    engine.controller.voice_files["GET /v1/characters/C1/package"] = b"PK package"
+    target = tmp_path / "pingu.m3dchar"
+    with qtbot.waitSignal(vm.character_exported, timeout=5000) as blocker:
+        vm.export_character("C1", target)
+    assert blocker.args == [target]
+    assert target.read_bytes() == b"PK package"
+
+
+def test_export_character_failure_signals_the_reason(qtbot, tmp_path, with_engine):
+    vm, _, engine = with_engine
+    engine.controller.voice_answers["GET /v1/characters/C1/package"] = (404, error_body("character_not_found", "No such character"))
+    with qtbot.waitSignal(vm.character_failed, timeout=5000) as blocker:
+        vm.export_character("C1", tmp_path / "x.m3dchar")
+    assert blocker.args == ["No such character"]
+
+
+def test_import_character_refreshes_the_entries_and_signals(qtbot, tmp_path, with_engine):
+    vm, _, engine = with_engine
+    engine.controller.voice_answers["POST /v1/characters/import"] = (201, character_json("C7"))
+    package = tmp_path / "pingu.m3dchar"
+    package.write_bytes(b"PK data")
+    refreshed = []
+    vm.entries_changed.connect(lambda: refreshed.append(True))
+    with qtbot.waitSignal(vm.character_imported, timeout=5000) as blocker:
+        vm.import_character(package)
+    assert blocker.args[0].character_id == "C7"
+    assert refreshed == [True]
+
+
+def test_import_character_failure_signals_the_reason(qtbot, tmp_path, with_engine):
+    vm, _, engine = with_engine
+    engine.controller.voice_answers["POST /v1/characters/import"] = (422, error_body("invalid_package", "Not a package"))
+    package = tmp_path / "bad.m3dchar"
+    package.write_bytes(b"nope")
+    with qtbot.waitSignal(vm.character_failed, timeout=5000) as blocker:
+        vm.import_character(package)
+    assert blocker.args == ["Not a package"]

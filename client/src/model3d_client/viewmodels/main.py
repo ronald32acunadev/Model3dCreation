@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from model3d_contracts.characters import Character
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 
 from model3d_client.paths import AppPaths
@@ -15,6 +16,7 @@ from model3d_client.services.formats import CONVERTED, KEEPS_SKELETON, KEEPS_TEX
 from model3d_client.services.library import Entry, Library, Outcome
 from model3d_client.services.settings import Settings
 from model3d_client.services.supervisor import EngineState, EngineSupervisor
+from model3d_client.viewmodels.characters import export_character, import_character
 from model3d_client.viewmodels.generation import GenerationViewModel, Phase
 
 BODIES = ("biped", "quadruped")
@@ -69,6 +71,9 @@ class MainViewModel(QObject):
     walk_added = Signal(object)  # the new Entry
     walk_failed = Signal(str)  # the reason
     animation_state_changed = Signal()
+    character_exported = Signal(object)  # the written package Path
+    character_imported = Signal(object)  # the imported Character
+    character_failed = Signal(str)  # the reason
 
     def __init__(
         self,
@@ -104,6 +109,27 @@ class MainViewModel(QObject):
 
     def entries(self) -> list[Entry]:
         return self.library.entries()
+
+    def export_character(self, character_id: str, target: Path) -> None:
+        """Write the character's package; the outcome comes back as character_exported or character_failed."""
+        export_character(self.api, character_id, target, self._on_character_exported)
+
+    def import_character(self, package: Path) -> None:
+        """Add the package's character to the library, then refresh the entries."""
+        import_character(self.api, package, self._on_character_imported)
+
+    def _on_character_exported(self, result: Path | ApiError) -> None:
+        if isinstance(result, ApiError):
+            self.character_failed.emit(result.message)
+        else:
+            self.character_exported.emit(result)
+
+    def _on_character_imported(self, result: Character | ApiError) -> None:
+        if isinstance(result, ApiError):
+            self.character_failed.emit(result.message)
+            return
+        self.entries_changed.emit()
+        self.character_imported.emit(result)
 
     def refresh_entries(self) -> None:
         """Read the library again: another program (the Blender add-on) may have added entries."""

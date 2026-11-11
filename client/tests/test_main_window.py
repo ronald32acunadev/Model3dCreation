@@ -99,10 +99,10 @@ def test_quality_combo_sets_view_model(window):
 def test_library_lists_entries_and_click_selects(window, png):
     entry = add_succeeded(window.vm.library, png, "Robot")
     window.vm.entries_changed.emit()
-    items = window.library_panel.list
-    assert items.count() == 1
-    assert "Robot" in items.item(0).text()
-    items.setCurrentRow(0)
+    tree = window.library_panel.tree
+    assert tree.topLevelItemCount() == 1
+    assert "Robot" in tree.topLevelItem(0).child(0).text(0)
+    tree.setCurrentItem(tree.topLevelItem(0).child(0))
     assert window.vm.selected.entry_id == entry.entry_id
 
 
@@ -232,14 +232,14 @@ def test_add_skeleton_disabled_for_rigged_entry(qtbot, tmp_path, make_api, png):
     win.vm.entries_changed.emit()
     menu = win.library_panel.build_menu(rigged)
     assert not next(a for a in menu.actions() if a.objectName() == "add_skeleton").isEnabled()
-    assert "skeleton" in win.library_panel.list.item(0).text()
+    assert "skeleton" in win.library_panel.tree.topLevelItem(0).child(0).text(0)
 
 
 def test_library_rescans_when_app_becomes_active(qtbot, window, png, qapp):
     add_succeeded(Library(window.vm.library.root), png, "From Blender")
-    assert window.library_panel.list.count() == 0
+    assert window.library_panel.tree.topLevelItemCount() == 0
     qapp.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
-    assert window.library_panel.list.count() == 1
+    assert window.library_panel.tree.topLevelItemCount() == 1
 
 
 def test_half_written_entry_is_skipped(qtbot, window, png, qapp):
@@ -248,7 +248,7 @@ def test_half_written_entry_is_skipped(qtbot, window, png, qapp):
     broken.mkdir()
     (broken / "entry.json").write_text('{"entry_id": "20261022T1200')
     qapp.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
-    assert window.library_panel.list.count() == 1
+    assert window.library_panel.tree.topLevelItemCount() == 1
 
 
 def test_rig_reason_is_visible_text_and_menu_tooltip(qtbot, tmp_path, make_api, png):
@@ -397,3 +397,58 @@ def test_failed_detection_shows_warning(qtbot, tmp_path, make_api, png, monkeypa
     assert len(warnings) == 1
     assert "Could not add the walk animation" in warnings[0][2] and "broken" in warnings[0][2]
     assert win.vm.library.entries() and len(win.vm.library.entries()) == 1
+
+
+def add_rigged_version(library, root, name="Robot rigged"):
+    derived = library.create_derived(root.entry_id)
+    library.model_path(derived.entry_id).write_bytes(b"glTF")
+    derived = derived.model_copy(update={"outcome": Outcome.succeeded, "name": name, "options": JobOptions(rig=True)})
+    library.update(derived)
+    return derived
+
+
+def test_library_groups_versions_under_one_character(window, png):
+    root = add_succeeded(window.vm.library, png, "Robot")
+    derived = add_rigged_version(window.vm.library, root)
+    window.vm.entries_changed.emit()
+    tree = window.library_panel.tree
+    assert tree.topLevelItemCount() == 1
+    top = tree.topLevelItem(0)
+    assert top.text(0).startswith("Robot\n")
+    assert top.childCount() == 2
+    assert [top.child(i).data(0, Qt.ItemDataRole.UserRole) for i in range(2)] == [root.entry_id, derived.entry_id]
+    assert "skeleton" in top.child(1).text(0)
+
+
+def test_selecting_a_version_shows_its_model(window, png):
+    root = add_succeeded(window.vm.library, png, "Robot")
+    derived = add_rigged_version(window.vm.library, root)
+    window.vm.entries_changed.emit()
+    top = window.library_panel.tree.topLevelItem(0)
+    window.library_panel.tree.setCurrentItem(top.child(0))
+    assert window.vm.selected.entry_id == root.entry_id
+    assert window.viewer.shown == window.vm.library.model_path(root.entry_id)
+    tree = window.library_panel.tree
+    tree.setCurrentItem(tree.topLevelItem(0).child(1))
+    assert window.vm.selected.entry_id == derived.entry_id
+    assert window.viewer.shown == window.vm.library.model_path(derived.entry_id)
+
+
+def test_selecting_a_character_selects_its_newest_finished_version(window, png):
+    root = add_succeeded(window.vm.library, png, "Robot")
+    derived = add_rigged_version(window.vm.library, root)
+    window.vm.entries_changed.emit()
+    window.library_panel.tree.setCurrentItem(window.library_panel.tree.topLevelItem(0))
+    assert window.vm.selected.entry_id == derived.entry_id
+
+
+def test_character_menu_has_its_four_actions(window, png):
+    add_succeeded(window.vm.library, png, "Robot")
+    window.vm.entries_changed.emit()
+    names = [a.objectName() for a in window.library_panel.build_character_menu().actions()]
+    assert names == ["voice_phrases", "export_character", "rename", "delete"]
+
+
+def test_import_button_emits_its_signal(qtbot, window):
+    with qtbot.waitSignal(window.library_panel.import_character_requested, timeout=1000):
+        window.library_panel.import_button.click()
