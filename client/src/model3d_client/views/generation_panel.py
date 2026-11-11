@@ -168,16 +168,14 @@ class GenerationPanel(QWidget):
         self.rig_hint.setVisible(not rig_available and bool(vm.rig_reason))
         detail_reason = vm.detail_reason
         self.detail_check.setEnabled(detail_reason is None and vm.phase == Phase.idle)
-        detail_reasons = {
-            None: self.tr(
+        if detail_reason is None:
+            detail_tip = self.tr(
                 "Sculpts the head and shoulders again on their own for a sharper face, then puts the head on the "
                 "body and adds the skeleton. About 8 minutes more per model."
-            ),
-            "missing_tools": self.tr("The head-pass tools are not installed (scripts/kit_assembly)."),
-            "no_rig": self.tr("The detailed face needs skeletons, which this engine cannot add."),
-            "not_trellis": self.tr("The detailed face needs the TRELLIS.2 generator."),
-        }
-        self.detail_check.setToolTip(detail_reasons[detail_reason])
+            )
+        else:
+            detail_tip = detail_reason  # the engine's own explanation
+        self.detail_check.setToolTip(detail_tip)
         self.notice_label.setText(self._notice_text())
         self.notice_label.setVisible(bool(vm.notice))
         self.quality_combo.setEnabled(vm.phase == Phase.idle)

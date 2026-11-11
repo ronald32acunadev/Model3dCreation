@@ -14,11 +14,13 @@ class FakeSupervisor(QObject):
     state_changed = Signal(object)
     health_changed = Signal(object)
 
-    def __init__(self, state=EngineState.ready, texture=True, rig=True, rig_reason=None):
+    def __init__(self, state=EngineState.ready, texture=True, rig=True, rig_reason=None, detailed_face=False,
+                 detailed_face_reason="Detailed face needs the TRELLIS.2 generator"):
         super().__init__()
         self.state = state
         self.health = Health.model_validate(
-            make_health(ready=state == EngineState.ready, texture=texture, rig=rig, rig_reason=rig_reason)
+            make_health(ready=state == EngineState.ready, texture=texture, rig=rig, rig_reason=rig_reason,
+                        detailed_face=detailed_face, detailed_face_reason=detailed_face_reason)
         )
         self.failure = None
         self.owned = True

@@ -1,11 +1,12 @@
+import json
+
 import pytest
 from model3d_contracts.events import ResultStats
-from model3d_contracts.jobs import JobOptions
+from model3d_contracts.jobs import JobError, JobOptions
 
+from fake_engine import FakeEngine, error_body
 from fakes import FakeSupervisor
 from model3d_client.paths import AppPaths
-from model3d_client.services.converter import ModelConverter
-from model3d_client.services.animator import RigAnimator
 from model3d_client.services.diagnostics import Check, CheckId
 from model3d_client.services.library import Library, Outcome
 from model3d_client.services.settings import Settings
@@ -127,22 +128,20 @@ def test_restart_engine(setup):
     assert supervisor.restarted == 1
 
 
-OK_PYTHON = '#!/bin/sh\nprintf data > "$3"\nexit 0\n'
-
-
 @pytest.fixture
-def converting(tmp_path, make_api):
-    python = tmp_path / "python"
-    python.write_text(OK_PYTHON)
-    python.chmod(0o755)
+def with_engine(tmp_path, make_api):
+    engine = FakeEngine()
+    engine.start()
     paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
     library = Library(paths.library)
     supervisor = FakeSupervisor()
-    api = make_api("http://127.0.0.1:9")
+    api = make_api(engine.url)
     generation = GenerationViewModel(api, library, supervisor, Settings())
-    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(),
-                       checks=lambda _paths: [], converter=ModelConverter(python))
-    return vm, library
+    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(), checks=lambda _paths: [])
+    vm.poll_ms = 20
+    engine.controller.library_dir = paths.library
+    yield vm, library, engine
+    engine.stop()
 
 
 def rigged(library, png):
@@ -154,23 +153,72 @@ def rigged(library, png):
     return entry
 
 
-def test_export_fbx_converts_and_reports(qtbot, converting, png, tmp_path):
-    vm, library = converting
+def test_export_fbx_downloads_the_finished_file_to_the_target(qtbot, tmp_path, with_engine, png):
+    vm, library, engine = with_engine
     entry = succeeded(library, png)
     vm.select(entry.entry_id)
+    engine.controller.export_answers = [(409, error_body("export_not_ready", "Export fbx is running"))]
+    engine.controller.export_file = b"fbx data"
     target = tmp_path / "out" / "penguin.fbx"
-    target.parent.mkdir()
+    target.parent.mkdir(parents=True, exist_ok=True)
     states = []
     vm.export_state_changed.connect(lambda: states.append(vm.exporting))
     with qtbot.waitSignal(vm.export_finished, timeout=5000) as blocker:
         vm.export(target)
     assert blocker.args == [target]
-    assert target.read_bytes() == b"data"
-    assert states and states[-1] is False
+    assert target.read_bytes() == b"fbx data"
+    assert engine.controller.export_posts == [(entry.entry_id, "fbx")]
+    assert len(engine.controller.export_gets) == 2
+    assert states[0] is True and states[-1] is False
+    assert vm.exporting is False
 
 
-def test_export_drops_follow_format(converting, png):
-    vm, library = converting
+def test_failed_export_reports_the_engine_message(qtbot, tmp_path, with_engine, png):
+    vm, library, engine = with_engine
+    entry = succeeded(library, png)
+    vm.select(entry.entry_id)
+    engine.controller.export_answers = [(409, error_body("export_not_ready", "Export stl failed: Could not write /x/model.stl"))]
+    target = tmp_path / "out" / "penguin.stl"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with qtbot.waitSignal(vm.export_failed, timeout=5000) as blocker:
+        vm.export(target)
+    assert blocker.args == ["Could not write /x/model.stl"]
+    assert not target.exists()
+    assert vm.exporting is False
+
+
+def test_export_rejected_by_the_engine_reports_failure(qtbot, tmp_path, with_engine, png):
+    vm, library, engine = with_engine
+    entry = succeeded(library, png)
+    vm.select(entry.entry_id)
+    engine.controller.export_start = (409, error_body("entry_busy", "A tool is already running for this entry"))
+    target = tmp_path / "out" / "penguin.fbx"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with qtbot.waitSignal(vm.export_failed, timeout=5000) as blocker:
+        vm.export(target)
+    assert blocker.args == ["A tool is already running for this entry"]
+    assert vm.exporting is False
+    assert engine.controller.export_gets == []
+
+
+def test_export_zip_is_extracted_next_to_the_target(qtbot, tmp_path, with_engine, png):
+    vm, library, engine = with_engine
+    entry = succeeded(library, png)
+    vm.select(entry.entry_id)
+    engine.controller.export_zip = {"model.obj": b"mtllib model.mtl\no a\n", "model.mtl": b"newmtl a\n", "tex.png": b"png"}
+    target = tmp_path / "out" / "robot.obj"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with qtbot.waitSignal(vm.export_finished, timeout=5000) as blocker:
+        vm.export(target)
+    assert blocker.args == [target]
+    assert target.read_bytes() == b"mtllib robot.mtl\no a\n"
+    assert (tmp_path / "out" / "robot.mtl").read_bytes() == b"newmtl a\n"
+    assert (tmp_path / "out" / "tex.png").read_bytes() == b"png"
+    assert not (tmp_path / "out" / "model.obj").exists()
+
+
+def test_export_drops_follow_format(with_engine, png):
+    vm, library, _ = with_engine
     vm.select(rigged(library, png).entry_id)
     assert vm.export_drops(".obj") == {"skeleton"}
     assert vm.export_drops(".stl") == {"skeleton", "texture"}
@@ -179,40 +227,16 @@ def test_export_drops_follow_format(converting, png):
     assert vm.export_drops(".glb") == set()
 
 
-def test_export_drops_empty_without_selection(converting):
-    vm, _ = converting
+def test_export_drops_empty_without_selection(with_engine):
+    vm, _, _ = with_engine
     assert vm.export_drops(".stl") == set()
 
 
-def test_export_unsupported_suffix_raises(converting, png, tmp_path):
-    vm, library = converting
+def test_export_unsupported_suffix_raises(with_engine, png, tmp_path):
+    vm, library, _ = with_engine
     vm.select(succeeded(library, png).entry_id)
     with pytest.raises(ValueError):
         vm.export(tmp_path / "penguin.png")
-
-
-ANIMATE_OK = """case "$2" in
-detect) echo 'MODEL3D_RESULT {"body": "biped", "legs": [], "arms": [], "up": 1}' ;;
-walk) printf data > "$4"; echo 'MODEL3D_RESULT {"body": "biped"}' ;;
-esac
-exit 0
-"""
-ANIMATE_FAIL = "echo broken >&2\nexit 1\n"
-ANIMATE_SLOW = "sleep 0.5\necho 'MODEL3D_RESULT {\"body\": \"biped\"}'\nexit 0\n"
-
-
-def animating_vm(tmp_path, make_api, body):
-    python = tmp_path / "python"
-    python.write_text("#!/bin/sh\n" + body)
-    python.chmod(0o755)
-    paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
-    library = Library(paths.library)
-    supervisor = FakeSupervisor()
-    api = make_api("http://127.0.0.1:9")
-    generation = GenerationViewModel(api, library, supervisor, Settings())
-    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(),
-                       checks=lambda _paths: [], animator=RigAnimator(python))
-    return vm, library
 
 
 def test_can_add_walk_needs_a_rigged_succeeded_model(setup, png):
@@ -229,8 +253,8 @@ def test_can_add_walk_false_without_model_file(setup, png):
     assert not vm.can_add_walk(entry)
 
 
-def test_detect_body_emits_body_detected(qtbot, tmp_path, make_api, png):
-    vm, library = animating_vm(tmp_path, make_api, ANIMATE_OK)
+def test_detect_body_emits_body_detected(qtbot, with_engine, png):
+    vm, library, engine = with_engine
     entry = rigged(library, png)
     with qtbot.waitSignal(vm.body_detected, timeout=5000) as blocker:
         vm.detect_body(entry.entry_id)
@@ -238,38 +262,84 @@ def test_detect_body_emits_body_detected(qtbot, tmp_path, make_api, png):
     assert not vm.animating
 
 
-def test_animating_blocks_add_walk_and_state_is_reported(qtbot, tmp_path, make_api, png):
-    vm, library = animating_vm(tmp_path, make_api, ANIMATE_SLOW)
+def test_detect_body_failure_emits_walk_failed(qtbot, with_engine, png):
+    vm, library, engine = with_engine
+    entry = rigged(library, png)
+    engine.controller.body_answer = (409, error_body("no_skeleton", "Library entry has no skeleton"))
+    with qtbot.waitSignal(vm.walk_failed, timeout=5000) as blocker:
+        vm.detect_body(entry.entry_id)
+    assert blocker.args == ["Library entry has no skeleton"]
+    assert not vm.animating
+
+
+def test_animating_blocks_add_walk_and_state_is_reported(qtbot, with_engine, png):
+    vm, library, engine = with_engine
     entry = rigged(library, png)
     states = []
     vm.animation_state_changed.connect(lambda: states.append(vm.animating))
     with qtbot.waitSignal(vm.body_detected, timeout=5000):
         vm.detect_body(entry.entry_id)
-        assert vm.animating and not vm.can_add_walk(entry)
+        assert vm.animating is True
+        assert not vm.can_add_walk(entry)
     assert states == [True, False]
 
 
-def test_add_walk_creates_named_entry_and_selects_it(qtbot, tmp_path, make_api, png):
-    vm, library = animating_vm(tmp_path, make_api, ANIMATE_OK)
+def test_add_walk_creates_named_entry_and_selects_it(qtbot, with_engine, png):
+    vm, library, engine = with_engine
     source = rigged(library, png)
+    created = []
+
+    def handler(entry_id, body):
+        derived = library.create_derived(entry_id, suffix=" (walk)")
+        created.append(derived)
+        return (202, {**json.loads(derived.model_dump_json()), "files": []})
+
+    engine.controller.walk = handler
     vm.select(source.entry_id)
     with qtbot.waitSignal(vm.walk_added, timeout=5000) as blocker:
         vm.add_walk(source.entry_id, "biped")
+        qtbot.waitUntil(lambda: len(created) > 0, timeout=5000)
+        library.model_path(created[0].entry_id).write_bytes(b"walk data")
+        library.update(created[0].model_copy(update={"outcome": Outcome.succeeded, "stats": source.stats, "seed": source.seed, "options": source.options}))
     added = blocker.args[0]
-    assert added.name == "penguin (walk)" and added.outcome == Outcome.succeeded
+    assert added.name == "penguin (walk)"
+    assert added.outcome == Outcome.succeeded
     assert added.source_entry_id == source.entry_id
     assert vm.selected.entry_id == added.entry_id
-    assert library.model_path(added.entry_id).read_bytes() == b"data"
-    kept = next(e for e in library.entries() if e.entry_id == source.entry_id)
-    assert kept == source and len(library.entries()) == 2
+    assert library.model_path(added.entry_id).read_bytes() == b"walk data"
+    assert engine.controller.walk_posts == [(source.entry_id, "biped")]
+    assert source in library.entries()
+    assert len(library.entries()) == 2
     assert not vm.animating
 
 
-def test_add_walk_failure_leaves_no_entry(qtbot, tmp_path, make_api, png):
-    vm, library = animating_vm(tmp_path, make_api, ANIMATE_FAIL)
+def test_add_walk_failure_removes_the_new_entry(qtbot, with_engine, png):
+    vm, library, engine = with_engine
     source = rigged(library, png)
+    created = []
+
+    def handler(entry_id, body):
+        derived = library.create_derived(entry_id, suffix=" (walk)")
+        created.append(derived)
+        return (202, {**json.loads(derived.model_dump_json()), "files": []})
+
+    engine.controller.walk = handler
+    vm.select(source.entry_id)
     with qtbot.waitSignal(vm.walk_failed, timeout=5000) as blocker:
-        vm.add_walk(source.entry_id, "quadruped")
-    assert "broken" in blocker.args[0]
+        vm.add_walk(source.entry_id, "biped")
+        qtbot.waitUntil(lambda: len(created) > 0, timeout=5000)
+        library.update(created[0].model_copy(update={"outcome": Outcome.failed, "error": JobError(code="walk_failed", message="The rig has no legs")}))
+    assert blocker.args == ["The rig has no legs"]
     assert [e.entry_id for e in library.entries()] == [source.entry_id]
+    assert not vm.animating
+
+
+def test_add_walk_rejected_by_the_engine_reports_failure(qtbot, with_engine, png):
+    vm, library, engine = with_engine
+    source = rigged(library, png)
+    vm.select(source.entry_id)
+    with qtbot.waitSignal(vm.walk_failed, timeout=5000) as blocker:
+        vm.add_walk(source.entry_id, "biped")
+    assert blocker.args == ["no_skeleton"]
+    assert len(library.entries()) == 1
     assert not vm.animating

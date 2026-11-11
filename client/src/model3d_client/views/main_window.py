@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from model3d_client.services.converter import FORMATS
+from model3d_client.services.formats import FORMATS
 from model3d_client.viewmodels.main import CloseDecision, MainViewModel
 from model3d_client.views.diagnostics_panel import DiagnosticsPanel
 from model3d_client.views.generation_panel import GenerationPanel

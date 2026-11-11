@@ -157,173 +157,158 @@
         <translation>Vuelve a esculpir la cabeza y los hombros por separado para una cara más nítida, luego coloca la cabeza en el cuerpo y agrega el esqueleto. Unos 8 minutos más por modelo.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="176"/>
-        <source>The head-pass tools are not installed (scripts/kit_assembly).</source>
-        <translation>Las herramientas de la pasada de cabeza no están instaladas (scripts/kit_assembly).</translation>
-    </message>
-    <message>
-        <location filename="../views/generation_panel.py" line="177"/>
-        <source>The detailed face needs skeletons, which this engine cannot add.</source>
-        <translation>La cara detallada necesita esqueletos, y este motor no puede agregarlos.</translation>
-    </message>
-    <message>
-        <location filename="../views/generation_panel.py" line="178"/>
-        <source>The detailed face needs the TRELLIS.2 generator.</source>
-        <translation>La cara detallada necesita el generador TRELLIS.2.</translation>
-    </message>
-    <message>
-        <location filename="../views/generation_panel.py" line="185"/>
+        <location filename="../views/generation_panel.py" line="183"/>
         <source>Generate</source>
         <translation>Generar</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="188"/>
+        <location filename="../views/generation_panel.py" line="186"/>
         <source>Cancelling…</source>
         <translation>Cancelando…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="191"/>
+        <location filename="../views/generation_panel.py" line="189"/>
         <source>Cancel</source>
         <translation>Cancelar</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="197"/>
+        <location filename="../views/generation_panel.py" line="195"/>
         <source>Sending the image…</source>
         <translation>Enviando la imagen…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="198"/>
+        <location filename="../views/generation_panel.py" line="196"/>
         <source>Waiting in the queue…</source>
         <translation>Esperando en la cola…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="199"/>
+        <location filename="../views/generation_panel.py" line="197"/>
         <source>Building the shape</source>
         <translation>Construyendo la forma</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="200"/>
+        <location filename="../views/generation_panel.py" line="198"/>
         <source>Painting the texture</source>
         <translation>Pintando la textura</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="201"/>
+        <location filename="../views/generation_panel.py" line="199"/>
         <source>Adding skeleton…</source>
         <translation>Agregando esqueleto…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="202"/>
+        <location filename="../views/generation_panel.py" line="200"/>
         <source>Sculpting the face…</source>
         <translation>Esculpiendo la cara…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="203"/>
+        <location filename="../views/generation_panel.py" line="201"/>
         <source>Cancelling: the engine finishes the current stage first…</source>
         <translation>Cancelando: el motor termina primero la etapa actual…</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="214"/>
+        <location filename="../views/generation_panel.py" line="212"/>
         <source>Detailed face cancelled; the model is the regular one.</source>
         <translation>Cara detallada cancelada; el modelo es el normal.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="215"/>
+        <location filename="../views/generation_panel.py" line="213"/>
         <source>The detailed face was not applied; the model is the regular one. Reason: {reason}</source>
         <translation>No se aplicó la cara detallada; el modelo es el normal. Motivo: {reason}</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="221"/>
+        <location filename="../views/generation_panel.py" line="219"/>
         <source>Use a PNG or JPEG image.</source>
         <translation>Use una imagen PNG o JPEG.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="222"/>
-        <location filename="../views/generation_panel.py" line="233"/>
+        <location filename="../views/generation_panel.py" line="220"/>
+        <location filename="../views/generation_panel.py" line="231"/>
         <source>The image is larger than 20 MB.</source>
         <translation>La imagen supera los 20 MB.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="223"/>
+        <location filename="../views/generation_panel.py" line="221"/>
         <source>The image file no longer exists.</source>
         <translation>El archivo de la imagen ya no existe.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="232"/>
+        <location filename="../views/generation_panel.py" line="230"/>
         <source>The engine could not read this image.</source>
         <translation>El motor no pudo leer esta imagen.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="234"/>
+        <location filename="../views/generation_panel.py" line="232"/>
         <source>The engine is not ready yet.</source>
         <translation>El motor todavía no está listo.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="235"/>
+        <location filename="../views/generation_panel.py" line="233"/>
         <source>This engine runs without the paint stage; turn Texture off.</source>
         <translation>Este motor funciona sin la etapa de pintura; desactive Textura.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="236"/>
+        <location filename="../views/generation_panel.py" line="234"/>
         <source>This engine cannot add skeletons; see the setup guide.</source>
         <translation>Este motor no puede agregar esqueletos; consulta la guía de instalación.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="237"/>
+        <location filename="../views/generation_panel.py" line="235"/>
         <source>Adding the skeleton failed. The job folder has rig.log with the details.</source>
         <translation>No se pudo agregar el esqueleto. La carpeta del trabajo tiene rig.log con los detalles.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="238"/>
+        <location filename="../views/generation_panel.py" line="236"/>
         <source>The engine could not read this model.</source>
         <translation>El motor no pudo leer este modelo.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="239"/>
+        <location filename="../views/generation_panel.py" line="237"/>
         <source>The model is too large to add a skeleton to.</source>
         <translation>El modelo es demasiado grande para agregarle un esqueleto.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="240"/>
+        <location filename="../views/generation_panel.py" line="238"/>
         <source>The engine ran out of GPU memory. Close other programs that use the GPU and try again.</source>
         <translation>El motor se quedó sin memoria de GPU. Cierre otros programas que usen la GPU e inténtelo de nuevo.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="241"/>
+        <location filename="../views/generation_panel.py" line="239"/>
         <source>A GPU worker crashed; it restarts on its own. Try again.</source>
         <translation>Un proceso de GPU falló; se reinicia solo. Inténtelo de nuevo.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="242"/>
+        <location filename="../views/generation_panel.py" line="240"/>
         <source>A GPU worker could not be started. Restart the engine.</source>
         <translation>No se pudo iniciar un proceso de GPU. Reinicie el motor.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="243"/>
+        <location filename="../views/generation_panel.py" line="241"/>
         <source>A stage took too long and was stopped. Try again.</source>
         <translation>Una etapa tardó demasiado y se detuvo. Inténtelo de nuevo.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="244"/>
+        <location filename="../views/generation_panel.py" line="242"/>
         <source>The engine stopped answering during the generation.</source>
         <translation>El motor dejó de responder durante la generación.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="245"/>
+        <location filename="../views/generation_panel.py" line="243"/>
         <source>The engine does not answer.</source>
         <translation>El motor no responde.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="246"/>
+        <location filename="../views/generation_panel.py" line="244"/>
         <source>The engine hit an internal error. See the engine log.</source>
         <translation>El motor tuvo un error interno. Consulte el registro del motor.</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="257"/>
+        <location filename="../views/generation_panel.py" line="255"/>
         <source>Choose image</source>
         <translation>Elegir imagen</translation>
     </message>
     <message>
-        <location filename="../views/generation_panel.py" line="257"/>
+        <location filename="../views/generation_panel.py" line="255"/>
         <source>Images (*.png *.jpg *.jpeg)</source>
         <translation>Imágenes (*.png *.jpg *.jpeg)</translation>
     </message>
