@@ -39,6 +39,8 @@ class Settings:
     generator: str = "hunyuan"
     # TRELLIS.2's clone with its own .venv; jobs fail with a clear error when it is missing.
     trellis_dir: Path = REPO_ROOT / "vendor/TRELLIS.2"
+    # Qwen3-TTS's clone with its own .venv; speech jobs are unavailable when it is missing.
+    qwen_tts_dir: Path = REPO_ROOT / "vendor/Qwen3-TTS"
 
     @property
     def jobs_dir(self) -> Path:
@@ -118,6 +120,7 @@ def load_settings(env: Mapping[str, str] | None = None, repo_root: Path | None =
     if generator not in GENERATORS:
         raise ValueError(f"MODEL3D_GENERATOR must be one of {', '.join(GENERATORS)}; got {generator!r}")
     trellis_dir = env.get("MODEL3D_TRELLIS_DIR")
+    qwen_tts_dir = env.get("MODEL3D_QWEN_TTS_DIR")
     if generator == "trellis2" and any(env.get(name) is not None for name in ("MODEL3D_MODE", "MODEL3D_SHAPE_BUS", "MODEL3D_PAINT_BUS")):
         raise ValueError("MODEL3D_MODE, MODEL3D_SHAPE_BUS and MODEL3D_PAINT_BUS apply only to MODEL3D_GENERATOR=hunyuan")
     return Settings(
@@ -126,6 +129,7 @@ def load_settings(env: Mapping[str, str] | None = None, repo_root: Path | None =
         unirig_dir=Path(unirig_dir).expanduser() if unirig_dir else repo_root / "vendor/UniRig",
         generator=generator,
         trellis_dir=Path(trellis_dir).expanduser() if trellis_dir else repo_root / "vendor/TRELLIS.2",
+        qwen_tts_dir=Path(qwen_tts_dir).expanduser() if qwen_tts_dir else repo_root / "vendor/Qwen3-TTS",
         host=env.get("MODEL3D_HOST", "127.0.0.1"),
         port=_parse_port(env.get("MODEL3D_PORT", "8765")),
         lan_host=_parse_lan_host(env.get("MODEL3D_LAN_HOST")),

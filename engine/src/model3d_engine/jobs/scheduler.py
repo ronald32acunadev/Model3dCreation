@@ -39,7 +39,8 @@ class Scheduler:
     With swap=True both stages share one GPU and one loop runs them: the loaded stage drains its
     queue, then the card swaps to the other stage if it has work.
 
-    Jobs with a skeleton go through `rig` last. `cards` maps "shape", "paint", and "rig" to a
+    Jobs with a skeleton go through `rig` last. Speech jobs run only on `voice`, whose worker loads
+    for its task like shape and paint. `cards` maps "shape", "paint", "rig", and "voice" to a
     device; stages on the same device take turns, one task at a time.
     """
 
@@ -53,23 +54,28 @@ class Scheduler:
         rig: StageRunner | None = None,
         cards: dict[str, str] | None = None,
         head_pass: HeadPassRunner | None = None,
+        voice: StageRunner | None = None,
     ):
         self._store = store
         self._bus = bus
         self._shape = shape
         self._paint = paint
         self._rig = rig
+        self._voice = voice
         self._head_pass = head_pass
         self._shape_queue: asyncio.Queue[str] = asyncio.Queue()
         self._paint_queue: asyncio.Queue[str] = asyncio.Queue()
         self._rig_queue: asyncio.Queue[str] = asyncio.Queue()
         self._face_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._voice_queue: asyncio.Queue[str] = asyncio.Queue()
         self._face_results: dict[str, StageResult] = {}
         self._background: set[asyncio.Task] = set()
         locks: dict[str, asyncio.Lock] = {}
         cards = cards or {}
         # One lock per device; without a device each stage gets its own lock.
-        self._card_lock = {name: locks.setdefault(cards.get(name, name), asyncio.Lock()) for name in ("shape", "paint", "rig")}
+        self._card_lock = {
+            name: locks.setdefault(cards.get(name, name), asyncio.Lock()) for name in ("shape", "paint", "rig", "voice")
+        }
         self._waiting: list[str] = []
         self._tasks: list[asyncio.Task] = []
         self._started = False
@@ -87,6 +93,11 @@ class Scheduler:
         """Whether jobs may ask for a skeleton."""
         return self._rig is not None and self._rig.ready
 
+    @property
+    def voice_available(self) -> bool:
+        """Whether speech jobs may run. The voice worker loads for its first task, so it is not ready yet."""
+        return self._voice is not None
+
     async def start(self) -> None:
         """Start the stage loops. No model is loaded until a task needs it."""
         if self._rig is not None:
@@ -94,7 +105,7 @@ class Scheduler:
         if self._swap:
             self._tasks = [asyncio.create_task(self._swap_loop()), asyncio.create_task(self._face_loop())]
         else:
-            loops = [self._shape_loop(), self._paint_loop(), self._rig_loop(), self._face_loop()]
+            loops = [self._shape_loop(), self._paint_loop(), self._rig_loop(), self._face_loop(), self._voice_loop()]
             self._tasks = [asyncio.create_task(loop) for loop in loops]
         self._started = True
 
@@ -107,6 +118,8 @@ class Scheduler:
         await self._paint.stop()
         if self._rig is not None:
             await self._rig.stop()
+        if self._voice is not None:
+            await self._voice.stop()
 
     def submit(self, record: JobRecord) -> None:
         """Queue a new job for the shape stage."""
@@ -119,6 +132,12 @@ class Scheduler:
         """Queue a rig-only job: its model is already in RIG_INPUT."""
         self._store.persist(record)
         self._rig_queue.put_nowait(record.job_id)
+        self._work.set()
+
+    def submit_speech(self, record: JobRecord) -> None:
+        """Queue a speech job: its request is already in the job folder."""
+        self._store.persist(record)
+        self._voice_queue.put_nowait(record.job_id)
         self._work.set()
 
     def queue_position(self, job_id: str) -> int | None:
@@ -199,8 +218,8 @@ class Scheduler:
 
     async def _free_card(self, stage: str) -> None:
         """Called holding the card: unload whatever else is loaded on it, so `stage` gets all of it."""
-        for name, runner in (("shape", self._shape), ("paint", self._paint)):
-            if name != stage and runner.ready and self._shares_card(stage, name):
+        for name, runner in (("shape", self._shape), ("paint", self._paint), ("voice", self._voice)):
+            if runner is not None and name != stage and runner.ready and self._shares_card(stage, name):
                 await runner.unload()
 
     async def _on_card(self, record: JobRecord, runner: StageRunner, stage: str) -> StageResult | None:
@@ -350,6 +369,32 @@ class Scheduler:
             record.notice = outcome.reason
         self._succeed(record, result, record.options.texture)
 
+    def _succeed_speech(self, record: JobRecord) -> None:
+        record.transition(JobState.succeeded)
+        self._store.persist(record)
+        self._bus.publish(
+            CompletedEvent(job_id=record.job_id, ts=utcnow(), result_url=f"/v1/speech-jobs/{record.job_id}/result")
+        )
+
+    async def _voice_job(self, job_id: str) -> None:
+        record = self._store.get(job_id)
+        if record is None or record.is_final:
+            return
+        if record.cancel_requested:
+            self._cancel(record)
+            return
+        if self._voice is None:
+            self._fail(record, "voice_unavailable", "This engine has no voice stage")
+            return
+        self._begin(record, JobState.speaking, "voice")
+        result = await self._on_card(record, self._voice, "voice")
+        if result is None:
+            return
+        if record.cancel_requested:
+            self._cancel(record)
+        else:
+            self._succeed_speech(record)
+
     async def _guarded(self, job: Callable[[str], Awaitable[None]], job_id: str) -> None:
         """Run one job step; an unexpected error fails that job instead of ending its stage loop."""
         try:
@@ -376,6 +421,12 @@ class Scheduler:
         while True:
             await self._guarded(self._rig_job, await self._rig_queue.get())
 
+    async def _voice_loop(self) -> None:
+        while True:
+            await self._guarded(self._voice_job, await self._voice_queue.get())
+            if self._voice is not None:
+                await self._release(self._voice, self._voice_queue, "voice")
+
     async def _face_loop(self) -> None:
         while True:
             await self._guarded(self._face_job, await self._face_queue.get())
@@ -399,13 +450,21 @@ class Scheduler:
             (self._shape, self._shape_queue, self._shape_job, "shape"),
             (self._paint, self._paint_queue, self._paint_job, "paint"),
         )
+        if self._voice is not None:
+            stages += ((self._voice, self._voice_queue, self._voice_job, "voice"),)
         while True:
-            for queue, job in ((self._shape_queue, self._shape_job), (self._paint_queue, self._paint_job), (self._rig_queue, self._rig_job)):
+            for queue, job in (
+                (self._shape_queue, self._shape_job),
+                (self._paint_queue, self._paint_job),
+                (self._voice_queue, self._voice_job),
+                (self._rig_queue, self._rig_job),
+            ):
                 for settled in self._settle_queue(queue, job):
                     await settled
             for runner, queue, _job, stage in stages:
                 await self._release(runner, queue, stage)
-            if self._shape_queue.empty() and self._paint_queue.empty() and self._rig_queue.empty():
+            queues = (self._shape_queue, self._paint_queue, self._voice_queue, self._rig_queue)
+            if all(queue.empty() for queue in queues):
                 self._work.clear()
                 await self._work.wait()
                 continue

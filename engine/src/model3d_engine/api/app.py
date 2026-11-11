@@ -25,6 +25,7 @@ from model3d_contracts.library import Library
 
 from model3d_engine.api.errors import ApiError
 from model3d_engine.api.library import library_router
+from model3d_engine.api.speech import speech_result, speech_router
 from model3d_engine.api.tasks import ToolTasks
 from model3d_engine.api.voices import voices_router
 from model3d_engine.config import Settings, is_loopback_host, normalize_origin
@@ -169,13 +170,15 @@ def create_app(
     rig_reason: Callable[[], str | None] = lambda: None,
     detailed_face_reason: Callable[[], str | None] = lambda: "Detailed face is not set up",
     tool_tasks: ToolTasks | None = None,
+    voice_reason: Callable[[], str | None] = lambda: "Voice generation is not set up",
 ) -> FastAPI:
     """Build the API around an existing scheduler, store, and event bus.
 
     `health` returns the body of GET /v1/health without its `error`, which comes from the
     scheduler; `texture_available` is false when the run mode has no paint stage; `rig_reason`
     explains why rigging is unavailable; `detailed_face_reason` explains why Detailed face is
-    unavailable (None when it is available); `tool_tasks` runs the export and walk scripts (the
+    unavailable (None when it is available); `voice_reason` explains why speech jobs are unavailable;
+    `tool_tasks` runs the export and walk scripts (the
     engine's own Python and `tools/` by default).
     """
 
@@ -203,7 +206,9 @@ def create_app(
     app.state.bus = bus
     tasks = tool_tasks or ToolTasks(sys.executable, TOOLS_DIR)
     app.include_router(library_router(Library(settings.home / "library", recover=False), store, tasks))
-    app.include_router(voices_router(VoiceStore(settings.voices_dir)))
+    voices = VoiceStore(settings.voices_dir)
+    app.include_router(voices_router(voices))
+    app.include_router(speech_router(scheduler, store, voices, voice_reason))
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:
@@ -269,6 +274,8 @@ def create_app(
         record = _record(job_id)
         if record.state != JobState.succeeded:
             raise ApiError(409, "job_not_finished", f"Job {job_id} is {record.state.value}")
+        if record.kind == "speech":
+            return speech_result(record)
         if variant == "original":
             original = record.dir / ORIGINAL_OUTPUT
             if not original.is_file():

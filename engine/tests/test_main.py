@@ -114,7 +114,7 @@ def test_main_exits_when_lan_address_is_missing(monkeypatch, capsys, tmp_path):
 
 
 def test_build_engine_dual_gpu_health(tmp_path):
-    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", unirig_dir=tmp_path / "UniRig")
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", unirig_dir=tmp_path / "UniRig", qwen_tts_dir=tmp_path / "Qwen")
     memory = {"0000:25:00.0": (100, 12227), "0000:29:00.0": (200, 12227)}
     app = build_engine(settings, inventory=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=lambda: memory)
     with TestClient(app, base_url=BASE_URL) as client:
@@ -130,6 +130,8 @@ def test_build_engine_dual_gpu_health(tmp_path):
             "rig_reason": "UniRig is not installed in vendor/UniRig (see docs/setup.md)",
             "detailed_face": False,
             "detailed_face_reason": "Detailed face needs MODEL3D_GENERATOR=trellis2",
+            "voice": False,
+            "voice_reason": f"Qwen3-TTS is not installed in {tmp_path / 'Qwen'}",
         }
         job_id = run_job(client, {"texture": False})
         assert client.get(f"/v1/jobs/{job_id}/result").content[:4] == b"glTF"
@@ -215,7 +217,7 @@ def test_build_engine_passes_stage_timeout(tmp_path, monkeypatch):
         return real(*args, **kwargs)
 
     monkeypatch.setattr(entry, "ProcessStageRunner", capture)
-    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", stage_timeout_s=42.0)
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", stage_timeout_s=42.0, qwen_tts_dir=tmp_path / "Qwen")
     build_engine(settings, inventory=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=dict)
     assert timeouts == [42.0, 42.0]
 
@@ -242,7 +244,7 @@ def test_uvicorn_can_serve_websockets():
 
 
 def test_build_engine_wires_rig_on_paint_card(tmp_path):
-    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", unirig_dir=tmp_path / "UniRig")
+    settings = Settings(home=tmp_path, hunyuan_dir=tmp_path / "hy", unirig_dir=tmp_path / "UniRig", qwen_tts_dir=tmp_path / "Qwen")
     memory = {"0000:25:00.0": (4000, 12227), "0000:29:00.0": (200, 12227)}
     app = build_engine(settings, inventory=REAL, shape_factory=STUB, paint_factory=STUB, memory_reader=lambda: memory)
     rig = app.state.rig

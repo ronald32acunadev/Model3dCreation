@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+import wave
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -56,6 +57,30 @@ class FakeRunner:
         on_progress(1.0, "done")
         self.runs.append((task.job_id, start, time.monotonic()))
         return StageResult(output=output, vertices=len(mesh.vertices), faces=len(mesh.faces))
+
+
+class FakeVoiceRunner(FakeRunner):
+    """Writes a short silent 24 kHz mono WAV named speech.wav and reports progress 0.5 and 1.0."""
+
+    def __init__(self, delay: float = 0.0, fail_with: StageError | None = None, log: list[tuple[str, str]] | None = None):
+        super().__init__("speech.wav", delay=delay, fail_with=fail_with, log=log)
+
+    async def run(self, task: StageTask, on_progress: ProgressCallback) -> StageResult:
+        start = time.monotonic()
+        on_progress(0.5, "sentence 1 of 2")
+        await asyncio.sleep(self.delay)
+        if self.fail_with is not None:
+            self.runs.append((task.job_id, start, time.monotonic()))
+            raise self.fail_with
+        output = task.job_dir / self.output_name
+        with wave.open(str(output), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(24000)
+            wav.writeframes(b"\x00\x00" * 2400)
+        on_progress(1.0, "sentence 2 of 2")
+        self.runs.append((task.job_id, start, time.monotonic()))
+        return StageResult(output=output, vertices=0, faces=0)
 
 
 class FakeHeadPass:

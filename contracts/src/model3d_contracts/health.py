@@ -35,3 +35,5 @@ class Health(BaseModel):
     rig_reason: str | None = None  # why rigging is unavailable
     detailed_face: bool = False  # whether jobs may ask for a detailed face
     detailed_face_reason: str | None = None  # why Detailed face is unavailable
+    voice: bool = False  # whether speech jobs may run
+    voice_reason: str | None = None  # why voice generation is unavailable

@@ -31,12 +31,13 @@ from model3d_engine.jobs.store import JobStore
 from model3d_engine.stages.head_pass import HeadPassRunner
 from model3d_engine.stages.hunyuan import stage_env
 from model3d_engine.stages.process import ProcessStageRunner
-from model3d_engine.stages.protocol import NoStage
+from model3d_engine.stages.protocol import NoStage, StageRunner
 from model3d_engine.stages.rig import RigRunner
 
 SHAPE_FACTORY = "model3d_engine.stages.hunyuan:make_shape_stage"
 PAINT_FACTORY = "model3d_engine.stages.hunyuan:make_paint_stage"
 TRELLIS_FACTORY = "model3d_engine.stages.trellis:make_trellis_stage"
+VOICE_FACTORY = "model3d_engine.stages.voice:make_voice_stage"
 logger = logging.getLogger(__name__)
 MEMORY_COMMAND = ["nvidia-smi", "--query-gpu=pci.bus_id,memory.used,memory.total", "--format=csv,noheader,nounits"]
 
@@ -61,6 +62,8 @@ def build_engine(
     memory_reader: Callable[[], dict[str, tuple[int, int]]] = read_memory,
     rig_runner: RigRunner | None = None,
     head_pass: HeadPassRunner | None = None,
+    voice_runner: StageRunner | None = None,
+    voice_factory: str = VOICE_FACTORY,
 ) -> FastAPI:
     """Pick the run mode for the detected GPUs and wire workers, scheduler, store, and bus into the API."""
     inventory = probe_gpus() if inventory is None else inventory
@@ -131,9 +134,21 @@ def build_engine(
             f"http://127.0.0.1:{settings.port}",
         )
         head_pass = candidate if candidate.reason is None else None
+    # Speech runs on the shape card, taking turns with the 3D stages; it needs the Qwen3-TTS clone and its venv.
+    voice = voice_runner
+    voice_gpu = devices.shape if plan.name != ModeName.unsupported else None
+    if voice is None and voice_gpu is not None and (settings.qwen_tts_dir / ".venv/bin/python").is_file():
+        voice = ProcessStageRunner(
+            voice_factory,
+            {"qwen_dir": str(settings.qwen_tts_dir), "device": voice_gpu, "hf_home": str(settings.hf_home)},
+            env,
+            name="voice",
+            task_timeout_s=settings.stage_timeout_s,
+        )
+    cards["voice"] = devices.shape
     store, bus = JobStore(settings.jobs_dir), EventBus()
     swap = plan.name in (ModeName.single_gpu_swap, ModeName.single_gpu_resident, ModeName.shape_only)
-    scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=cards, head_pass=head_pass)
+    scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=cards, head_pass=head_pass, voice=voice)
     if plan.name == ModeName.unsupported:
         scheduler.start_error = JobError(code=ModeUnavailable.code, message=plan.reason)
 
@@ -165,12 +180,21 @@ def build_engine(
             "rig_reason": rig_reason(),
             "detailed_face": detailed_face_reason() is None,
             "detailed_face_reason": detailed_face_reason(),
+            "voice": scheduler.voice_available,
+            "voice_reason": voice_reason(),
         }
 
     def rig_reason() -> str | None:
         if rig is None:
             return "Rigging needs a usable GPU"
         return None if rig.ready else getattr(rig, "reason", None)
+
+    def voice_reason() -> str | None:
+        if voice is not None:
+            return None
+        if voice_gpu is None:
+            return "Voice generation needs a usable GPU"
+        return f"Qwen3-TTS is not installed in {settings.qwen_tts_dir}"
 
     def detailed_face_reason() -> str | None:
         if not trellis:
@@ -183,8 +207,9 @@ def build_engine(
 
     # Only shape_only refuses textured jobs; with no usable GPU every job gets 503 and the cause.
     texture_available = plan.name != ModeName.shape_only
-    app = create_app(settings, scheduler, store, bus, health, texture_available=texture_available, rig_reason=rig_reason, detailed_face_reason=detailed_face_reason)
+    app = create_app(settings, scheduler, store, bus, health, texture_available=texture_available, rig_reason=rig_reason, detailed_face_reason=detailed_face_reason, voice_reason=voice_reason)
     app.state.rig = rig
+    app.state.voice = voice
     app.state.head_pass = head_pass
     return app
 

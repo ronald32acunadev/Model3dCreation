@@ -15,6 +15,7 @@ class JobState(str, Enum):
     painting = "painting"
     rigging = "rigging"
     detailing = "detailing"
+    speaking = "speaking"
     succeeded = "succeeded"
     failed = "failed"
     cancelled = "cancelled"
@@ -88,13 +89,15 @@ class ErrorBody(BaseModel):
     error: JobError
 
 
-Stage = Literal["shape", "paint", "rig", "face"]
+Stage = Literal["shape", "paint", "rig", "face", "voice"]
+JobKind = Literal["model", "speech"]
 
 
 class Job(BaseModel):
     """A generation job as returned by the API."""
 
     job_id: str
+    kind: JobKind = "model"
     state: JobState
     stage: Stage | None = None
     progress: float = 0.0

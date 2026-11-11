@@ -241,6 +241,8 @@ def test_health_reports_injected_status(tmp_path):
             "rig_reason": "UniRig is not installed in vendor/UniRig (see docs/setup.md)",
             "detailed_face": False,
             "detailed_face_reason": "Detailed face is not set up",
+            "voice": False,
+            "voice_reason": None,
         }
 
 

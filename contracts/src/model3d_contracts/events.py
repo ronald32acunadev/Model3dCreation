@@ -44,7 +44,7 @@ class CompletedEvent(_EventBase):
 
     type: Literal["completed"] = "completed"
     result_url: str
-    stats: ResultStats
+    stats: ResultStats | None = None  # speech jobs have no model statistics
 
 
 class FailedEvent(_EventBase):
