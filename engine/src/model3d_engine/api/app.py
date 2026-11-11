@@ -211,7 +211,7 @@ def create_app(
     app.include_router(library_router(library, store, tasks))
     characters = Characters(library)
     voices = VoiceStore(settings.voices_dir)
-    app.include_router(characters_router(characters, voices, store, scheduler, voice_reason))
+    app.include_router(characters_router(library, characters, voices, store, scheduler, voice_reason))
     app.include_router(voices_router(voices, characters))
 
     def keep_phrase(record: JobRecord) -> None:

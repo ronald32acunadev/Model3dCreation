@@ -3,19 +3,22 @@
 import re
 from collections.abc import Callable
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict
 
 from model3d_contracts.characters import Character, CharacterData, Characters, Phrase
 from model3d_contracts.jobs import Job
+from model3d_contracts.library import Library
 from model3d_engine.api.errors import ApiError
 from model3d_engine.api.speech import check_voice_ready, clean_text, submit_speak_job
 from model3d_engine.jobs.scheduler import Scheduler
 from model3d_engine.jobs.store import JobStore
+from model3d_engine.packages import MAX_PACKAGE_BYTES, PACKAGE_SUFFIX, PackageError, export_package, import_package
 from model3d_engine.voices import Language, VoiceStore
 
 _CHARACTER_ID = re.compile(r"[0-9A-Za-z][0-9A-Za-z-]*")
+_UNSAFE_FILENAME = re.compile(r"[^0-9A-Za-z _.-]")
 
 
 class RenameRequest(BaseModel):
@@ -35,6 +38,7 @@ class CharacterSpeechRequest(BaseModel):
 
 
 def characters_router(
+    library: Library,
     characters: Characters,
     voices: VoiceStore,
     store: JobStore,
@@ -52,6 +56,28 @@ def characters_router(
     @router.get("/v1/characters", response_model=list[Character])
     async def list_characters() -> list[Character]:
         return characters.characters()
+
+    @router.post("/v1/characters/import", status_code=201, response_model=Character)
+    async def import_character(package: UploadFile | None = File(None)) -> Character:
+        if package is None:
+            raise ApiError(400, "invalid_package", "Missing package file")
+        data = await package.read(MAX_PACKAGE_BYTES + 1)
+        if len(data) > MAX_PACKAGE_BYTES:
+            raise ApiError(413, "package_too_large", f"Packages are limited to {MAX_PACKAGE_BYTES} bytes")
+        try:
+            return import_package(data, library, characters, voices)
+        except PackageError as error:
+            raise ApiError(400, "invalid_package", str(error)) from error
+
+    @router.get("/v1/characters/{character_id}/package")
+    async def package_character(character_id: str) -> Response:
+        character = _find(character_id)
+        name = _UNSAFE_FILENAME.sub("", character.name).strip() or "character"
+        return Response(
+            export_package(character_id, library, characters, voices),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{name}{PACKAGE_SUFFIX}"'},
+        )
 
     @router.get("/v1/characters/{character_id}", response_model=Character)
     async def get_character(character_id: str) -> Character:
