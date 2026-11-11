@@ -2,6 +2,55 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="es" sourcelanguage="en">
 <context>
+    <name>CharacterDialog</name>
+    <message>
+        <location filename="../views/character_dialog.py" line="91"/>
+        <source>Voice and phrases</source>
+        <translation>Voz y frases</translation>
+    </message>
+    <message>
+        <location filename="../views/character_dialog.py" line="92"/>
+        <source>Voice:</source>
+        <translation>Voz:</translation>
+    </message>
+    <message>
+        <location filename="../views/character_dialog.py" line="93"/>
+        <source>Say</source>
+        <translation>Decir</translation>
+    </message>
+    <message>
+        <location filename="../views/character_dialog.py" line="94"/>
+        <source>What should the character say?</source>
+        <translation>¿Qué debe decir el personaje?</translation>
+    </message>
+    <message>
+        <location filename="../views/character_dialog.py" line="95"/>
+        <source>Phrases</source>
+        <translation>Frases</translation>
+    </message>
+    <message>
+        <location filename="../views/character_dialog.py" line="96"/>
+        <source>Play</source>
+        <translation>Reproducir</translation>
+    </message>
+    <message>
+        <location filename="../views/character_dialog.py" line="97"/>
+        <location filename="../views/character_dialog.py" line="160"/>
+        <source>Delete</source>
+        <translation>Eliminar</translation>
+    </message>
+    <message>
+        <location filename="../views/character_dialog.py" line="108"/>
+        <source>No voice</source>
+        <translation>Sin voz</translation>
+    </message>
+    <message>
+        <location filename="../views/character_dialog.py" line="160"/>
+        <source>Delete this phrase?</source>
+        <translation>¿Eliminar esta frase?</translation>
+    </message>
+</context>
+<context>
     <name>DiagnosticsPanel</name>
     <message>
         <location filename="../views/diagnostics_panel.py" line="37"/>
@@ -316,82 +365,115 @@
 <context>
     <name>LibraryPanel</name>
     <message>
-        <location filename="../views/library_panel.py" line="60"/>
+        <location filename="../views/library_panel.py" line="102"/>
         <source>Library</source>
         <translation>Biblioteca</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="71"/>
+        <location filename="../views/library_panel.py" line="103"/>
+        <source>Import character…</source>
+        <translation>Importar personaje…</translation>
+    </message>
+    <message>
+        <location filename="../views/library_panel.py" line="119"/>
+        <source>versions: %1</source>
+        <translation>versiones: %1</translation>
+    </message>
+    <message>
+        <location filename="../views/library_panel.py" line="122"/>
+        <source>voice</source>
+        <translation>voz</translation>
+    </message>
+    <message>
+        <location filename="../views/library_panel.py" line="127"/>
         <source>generating</source>
         <translation>generando</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="72"/>
+        <location filename="../views/library_panel.py" line="128"/>
         <source>ready</source>
         <translation>listo</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="73"/>
+        <location filename="../views/library_panel.py" line="129"/>
         <source>failed</source>
         <translation>falló</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="74"/>
+        <location filename="../views/library_panel.py" line="130"/>
         <source>cancelled</source>
         <translation>cancelado</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="75"/>
+        <location filename="../views/library_panel.py" line="131"/>
         <source>interrupted</source>
         <translation>interrumpido</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="82"/>
+        <location filename="../views/library_panel.py" line="138"/>
         <source>skeleton</source>
         <translation>esqueleto</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="89"/>
+        <location filename="../views/library_panel.py" line="145"/>
+        <location filename="../views/library_panel.py" line="165"/>
         <source>Rename…</source>
         <translation>Renombrar…</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="90"/>
+        <location filename="../views/library_panel.py" line="146"/>
+        <location filename="../views/library_panel.py" line="166"/>
         <source>Delete…</source>
         <translation>Eliminar…</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="91"/>
+        <location filename="../views/library_panel.py" line="147"/>
         <source>Add skeleton</source>
         <translation>Agregar esqueleto</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="96"/>
+        <location filename="../views/library_panel.py" line="152"/>
         <source>Add walk animation</source>
         <translation>Agregar animación de caminar</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="99"/>
+        <location filename="../views/library_panel.py" line="155"/>
         <source>Regenerate with new seed</source>
         <translation>Regenerar con otra semilla</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="132"/>
+        <location filename="../views/library_panel.py" line="163"/>
+        <source>Voice and phrases…</source>
+        <translation>Voz y frases…</translation>
+    </message>
+    <message>
+        <location filename="../views/library_panel.py" line="164"/>
+        <source>Export character…</source>
+        <translation>Exportar personaje…</translation>
+    </message>
+    <message>
+        <location filename="../views/library_panel.py" line="219"/>
+        <source>Delete &quot;%1&quot; with all its versions and files?</source>
+        <translation>¿Eliminar &quot;%1&quot; con todas sus versiones y archivos?</translation>
+    </message>
+    <message>
+        <location filename="../views/library_panel.py" line="228"/>
         <source>Rename</source>
         <translation>Renombrar</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="132"/>
+        <location filename="../views/library_panel.py" line="228"/>
         <source>Name:</source>
         <translation>Nombre:</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="137"/>
+        <location filename="../views/library_panel.py" line="218"/>
+        <location filename="../views/library_panel.py" line="247"/>
         <source>Delete</source>
         <translation>Eliminar</translation>
     </message>
     <message>
-        <location filename="../views/library_panel.py" line="137"/>
+        <location filename="../views/library_panel.py" line="247"/>
         <source>Delete &quot;%1&quot; and its files?</source>
         <translation>¿Eliminar «%1» y sus archivos?</translation>
     </message>
@@ -399,133 +481,164 @@
 <context>
     <name>MainWindow</name>
     <message>
-        <location filename="../views/main_window.py" line="96"/>
+        <location filename="../views/main_window.py" line="116"/>
         <source>Close Model3D</source>
         <translation>Cerrar Model3D</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="97"/>
+        <location filename="../views/main_window.py" line="117"/>
         <source>A model is being generated. Close anyway?</source>
         <translation>Se está generando un modelo. ¿Cerrar de todos modos?</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="119"/>
+        <location filename="../views/main_window.py" line="139"/>
         <source>Stopping the engine…</source>
         <translation>Deteniendo el motor…</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="150"/>
+        <location filename="../views/main_window.py" line="170"/>
         <source>The 3D viewer could not start WebGL on this system.</source>
         <translation>El visor 3D no pudo iniciar WebGL en este sistema.</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="156"/>
+        <location filename="../views/main_window.py" line="176"/>
         <source>FBX (*.fbx)</source>
         <translation>FBX (*.fbx)</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="157"/>
+        <location filename="../views/main_window.py" line="177"/>
         <source>Wavefront OBJ (*.obj)</source>
         <translation>Wavefront OBJ (*.obj)</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="158"/>
+        <location filename="../views/main_window.py" line="178"/>
         <source>STL (*.stl)</source>
         <translation>STL (*.stl)</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="159"/>
+        <location filename="../views/main_window.py" line="179"/>
         <source>USDZ (*.usdz)</source>
         <translation>USDZ (*.usdz)</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="161"/>
-        <location filename="../views/main_window.py" line="169"/>
-        <location filename="../views/main_window.py" line="188"/>
-        <location filename="../views/main_window.py" line="242"/>
+        <location filename="../views/main_window.py" line="181"/>
+        <location filename="../views/main_window.py" line="189"/>
+        <location filename="../views/main_window.py" line="208"/>
+        <location filename="../views/main_window.py" line="262"/>
         <source>Export model</source>
         <translation>Exportar modelo</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="166"/>
+        <location filename="../views/main_window.py" line="186"/>
         <source>This format does not keep the skeleton.</source>
         <translation>Este formato no conserva el esqueleto.</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="168"/>
+        <location filename="../views/main_window.py" line="188"/>
         <source>This format does not keep the texture.</source>
         <translation>Este formato no conserva la textura.</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="188"/>
-        <location filename="../views/main_window.py" line="242"/>
+        <location filename="../views/main_window.py" line="208"/>
+        <location filename="../views/main_window.py" line="262"/>
         <source>Could not export the model: %1</source>
         <translation>No se pudo exportar el modelo: %1</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="192"/>
+        <location filename="../views/main_window.py" line="212"/>
         <source>Exporting the model…</source>
         <translation>Exportando el modelo…</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="201"/>
+        <location filename="../views/main_window.py" line="221"/>
         <source>Biped (two legs)</source>
         <translation>Bípedo (dos piernas)</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="201"/>
+        <location filename="../views/main_window.py" line="221"/>
         <source>Quadruped (four legs)</source>
         <translation>Cuadrúpedo (cuatro patas)</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="204"/>
-        <location filename="../views/main_window.py" line="207"/>
+        <location filename="../views/main_window.py" line="224"/>
+        <location filename="../views/main_window.py" line="227"/>
         <source>Detected body type: %1. Animate it as:</source>
         <translation>Tipo de cuerpo detectado: %1. Animarlo como:</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="204"/>
+        <location filename="../views/main_window.py" line="224"/>
         <source>Biped</source>
         <translation>Bípedo</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="207"/>
+        <location filename="../views/main_window.py" line="227"/>
         <source>Quadruped</source>
         <translation>Cuadrúpedo</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="210"/>
+        <location filename="../views/main_window.py" line="230"/>
         <source>Body type not detected. Animate it as:</source>
         <translation>No se detectó el tipo de cuerpo. Animarlo como:</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="212"/>
-        <location filename="../views/main_window.py" line="234"/>
+        <location filename="../views/main_window.py" line="232"/>
+        <location filename="../views/main_window.py" line="254"/>
         <source>Add walk animation</source>
         <translation>Agregar animación de caminar</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="224"/>
+        <location filename="../views/main_window.py" line="244"/>
         <source>Adding the walk animation…</source>
         <translation>Agregando la animación de caminar…</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="230"/>
+        <location filename="../views/main_window.py" line="250"/>
         <source>Added %1</source>
         <translation>Agregado: %1</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="235"/>
+        <location filename="../views/main_window.py" line="255"/>
         <source>Could not add the walk animation: %1</source>
         <translation>No se pudo agregar la animación de caminar: %1</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="238"/>
+        <location filename="../views/main_window.py" line="258"/>
         <source>Exported %1</source>
         <translation>Exportado: %1</translation>
     </message>
     <message>
-        <location filename="../views/main_window.py" line="155"/>
+        <location filename="../views/main_window.py" line="280"/>
+        <source>Export character</source>
+        <translation>Exportar personaje</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="280"/>
+        <location filename="../views/main_window.py" line="291"/>
+        <source>Character packages (*.m3dchar)</source>
+        <translation>Paquetes de personaje (*.m3dchar)</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="290"/>
+        <source>Import character</source>
+        <translation>Importar personaje</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="296"/>
+        <source>Character exported to %1</source>
+        <translation>Personaje exportado a %1</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="299"/>
+        <source>Imported %1</source>
+        <translation>Importado: %1</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="302"/>
+        <source>Character</source>
+        <translation>Personaje</translation>
+    </message>
+    <message>
+        <location filename="../views/main_window.py" line="175"/>
         <source>glTF binary (*.glb)</source>
         <translation>glTF binario (*.glb)</translation>
     </message>
@@ -876,54 +989,323 @@
 <context>
     <name>TopBar</name>
     <message>
-        <location filename="../views/top_bar.py" line="39"/>
+        <location filename="../views/top_bar.py" line="55"/>
+        <source>3D models</source>
+        <translation>Modelos 3D</translation>
+    </message>
+    <message>
+        <location filename="../views/top_bar.py" line="56"/>
+        <source>Voice</source>
+        <translation>Voz</translation>
+    </message>
+    <message>
+        <location filename="../views/top_bar.py" line="57"/>
         <source>Settings</source>
         <translation>Configuración</translation>
     </message>
     <message>
-        <location filename="../views/top_bar.py" line="49"/>
+        <location filename="../views/top_bar.py" line="67"/>
         <source>● Engine stopped</source>
         <translation>● Motor detenido</translation>
     </message>
     <message>
-        <location filename="../views/top_bar.py" line="50"/>
+        <location filename="../views/top_bar.py" line="68"/>
         <source>● Starting engine…</source>
         <translation>● Iniciando el motor…</translation>
     </message>
     <message>
-        <location filename="../views/top_bar.py" line="51"/>
+        <location filename="../views/top_bar.py" line="69"/>
         <source>● Loading models…</source>
         <translation>● Cargando modelos…</translation>
     </message>
     <message>
-        <location filename="../views/top_bar.py" line="52"/>
+        <location filename="../views/top_bar.py" line="70"/>
         <source>● Engine ready</source>
         <translation>● Motor listo</translation>
     </message>
     <message>
-        <location filename="../views/top_bar.py" line="53"/>
+        <location filename="../views/top_bar.py" line="71"/>
         <source>● Engine error</source>
         <translation>● Error del motor</translation>
     </message>
     <message>
-        <location filename="../views/top_bar.py" line="54"/>
+        <location filename="../views/top_bar.py" line="72"/>
         <source>● Engine stopped unexpectedly</source>
         <translation>● El motor se detuvo inesperadamente</translation>
     </message>
     <message>
-        <location filename="../views/top_bar.py" line="64"/>
+        <location filename="../views/top_bar.py" line="82"/>
         <source>Mode: %1</source>
         <translation>Modo: %1</translation>
     </message>
     <message>
-        <location filename="../views/top_bar.py" line="69"/>
+        <location filename="../views/top_bar.py" line="87"/>
         <source>GPU %1: %2</source>
         <translation>GPU %1: %2</translation>
     </message>
     <message>
-        <location filename="../views/top_bar.py" line="71"/>
+        <location filename="../views/top_bar.py" line="89"/>
         <source>%1 MiB free</source>
         <translation>%1 MiB libres</translation>
+    </message>
+</context>
+<context>
+    <name>VoicePanel</name>
+    <message>
+        <location filename="../views/voice_panel.py" line="198"/>
+        <source>My voices</source>
+        <translation>Mis voces</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="199"/>
+        <location filename="../views/voice_panel.py" line="220"/>
+        <source>Play</source>
+        <translation>Reproducir</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="200"/>
+        <source>Rename…</source>
+        <translation>Renombrar…</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="201"/>
+        <source>Delete…</source>
+        <translation>Eliminar…</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="202"/>
+        <source>Describe</source>
+        <translation>Describir</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="203"/>
+        <location filename="../views/voice_panel.py" line="281"/>
+        <source>Record</source>
+        <translation>Grabar</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="204"/>
+        <location filename="../views/voice_panel.py" line="219"/>
+        <source>Generate</source>
+        <translation>Generar</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="205"/>
+        <source>Describe the voice</source>
+        <translation>Describa la voz</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="206"/>
+        <source>A deep, calm voice of an old dwarf</source>
+        <translation>Una voz grave y tranquila de un enano anciano</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="207"/>
+        <source>Sample text</source>
+        <translation>Texto de muestra</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="208"/>
+        <source>What the preview says</source>
+        <translation>Lo que dice la vista previa</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="209"/>
+        <source>Preview</source>
+        <translation>Vista previa</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="210"/>
+        <source>Play preview</source>
+        <translation>Reproducir vista previa</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="211"/>
+        <location filename="../views/voice_panel.py" line="213"/>
+        <source>Voice name</source>
+        <translation>Nombre de la voz</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="212"/>
+        <location filename="../views/voice_panel.py" line="214"/>
+        <source>Save voice</source>
+        <translation>Guardar voz</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="215"/>
+        <source>Play take</source>
+        <translation>Reproducir toma</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="216"/>
+        <source>Re-record</source>
+        <translation>Volver a grabar</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="217"/>
+        <source>Voice</source>
+        <translation>Voz</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="218"/>
+        <source>Text to speak</source>
+        <translation>Texto a decir</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="221"/>
+        <source>Save as WAV…</source>
+        <translation>Guardar como WAV…</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="222"/>
+        <source>History</source>
+        <translation>Historial</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="223"/>
+        <source>Play clip</source>
+        <translation>Reproducir clip</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="224"/>
+        <source>Delete clip</source>
+        <translation>Eliminar clip</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="226"/>
+        <source>Language</source>
+        <translation>Idioma</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="228"/>
+        <source>Spanish</source>
+        <translation>Español</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="229"/>
+        <source>English</source>
+        <translation>Inglés</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="281"/>
+        <source>Stop</source>
+        <translation>Detener</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="284"/>
+        <source>%1 s of %2 s</source>
+        <translation>%1 s de %2 s</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="290"/>
+        <source>Transcribing…</source>
+        <translation>Transcribiendo…</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="292"/>
+        <source>Transcript: %1</source>
+        <translation>Transcripción: %1</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="301"/>
+        <source>Generating the speech…</source>
+        <translation>Generando el audio…</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="330"/>
+        <location filename="../views/voice_panel.py" line="351"/>
+        <source>The engine is not ready yet.</source>
+        <translation>El motor todavía no está listo.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="331"/>
+        <source>Voice generation is not available.</source>
+        <translation>La generación de voz no está disponible.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="336"/>
+        <source>Designing the voice…</source>
+        <translation>Diseñando la voz…</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="338"/>
+        <source>Preview ready. Name it and save the voice.</source>
+        <translation>Vista previa lista. Póngale un nombre y guarde la voz.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="345"/>
+        <source>Describe the voice first.</source>
+        <translation>Primero describa la voz.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="346"/>
+        <source>The text is empty or too long.</source>
+        <translation>El texto está vacío o es demasiado largo.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="347"/>
+        <source>Give the voice a name.</source>
+        <translation>Póngale un nombre a la voz.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="348"/>
+        <source>The recording is too short, too long or unreadable (3 to 60 seconds).</source>
+        <translation>La grabación es demasiado corta, demasiado larga o ilegible (de 3 a 60 segundos).</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="349"/>
+        <source>That voice no longer exists.</source>
+        <translation>Esa voz ya no existe.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="350"/>
+        <source>The engine does not answer.</source>
+        <translation>El motor no responde.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="352"/>
+        <source>The engine stopped answering during the job.</source>
+        <translation>El motor dejó de responder durante el trabajo.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="353"/>
+        <source>The engine ran out of GPU memory. Close other programs that use the GPU and try again.</source>
+        <translation>El motor se quedó sin memoria de GPU. Cierre otros programas que usen la GPU e inténtelo de nuevo.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="354"/>
+        <source>A GPU worker crashed; it restarts on its own. Try again.</source>
+        <translation>Un proceso de GPU falló; se reinicia solo. Inténtelo de nuevo.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="368"/>
+        <source>Delete voice</source>
+        <translation>Eliminar voz</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="369"/>
+        <source>Delete the voice %1? This cannot be undone.</source>
+        <translation>¿Eliminar la voz %1? No se puede deshacer.</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="373"/>
+        <source>Save as WAV</source>
+        <translation>Guardar como WAV</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="373"/>
+        <source>WAV audio (*.wav)</source>
+        <translation>Audio WAV (*.wav)</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="381"/>
+        <source>Rename voice</source>
+        <translation>Renombrar voz</translation>
+    </message>
+    <message>
+        <location filename="../views/voice_panel.py" line="381"/>
+        <source>New name:</source>
+        <translation>Nuevo nombre:</translation>
     </message>
 </context>
 </TS>
