@@ -28,3 +28,6 @@ Paste this list into the system message of every code request to a local model. 
 - Keep every non-empty output line (step and tag lines included) in the failure tail; `from __future__ import annotations` is forbidden even when type hints look forward-referencing.
 - Engine API tests: enter the client with `with make_client(...) as client:`, use `/v1/health`, read `response.json()["job_id"]`, and put a bare `assert` on every checked value.
 - A `finally` belongs to one `try` that wraps the whole body; never put `finally:` after an `if/else`.
+- Client tests: a library `Entry` has no model or folder attribute; use `library.model_path(entry.entry_id)` and `library.folder(entry.entry_id)`; connect a signal collector before the action that triggers the signal.
+- Tests: when told to keep existing tests unchanged, copy them verbatim from the given code; every test that uses `tmp_path` lists it as a parameter; never invent tests that were not requested.
+- Pytest fixtures: keep the `@pytest.fixture` decorator line above every fixture function in the answer.
