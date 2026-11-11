@@ -1,11 +1,12 @@
 import json
 import logging
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from model3d_contracts.characters import CHARACTER_FILE, PHRASES_DIR, CharacterData, Characters
+from model3d_contracts.characters import CHARACTER_FILE, PHRASES_DIR, CharacterData, Characters, Phrase
 from model3d_contracts.jobs import JobOptions
 from model3d_contracts.library import Entry, Library
 
@@ -192,3 +193,116 @@ def test_rename_rejects_blank_names_and_unknown_ids(tmp_path):
         characters.rename(rigged.entry_id, "Ana")
     with pytest.raises(KeyError):
         characters.data("missing")
+
+
+def make_phrase(phrase_id: str, minutes: int, text: str = "Hello") -> Phrase:
+    return Phrase(phrase_id=phrase_id, text=text, language="en", created_at=BASE + timedelta(minutes=minutes))
+
+
+def test_phrases_round_trip_newest_first_and_count(tmp_path):
+    library = make_library(tmp_path)
+    root = new_root(library, tmp_path, "hero", 0)
+    characters = Characters(library)
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF-a")
+
+    characters.add_phrase(root.entry_id, make_phrase("OLD", 1), wav)
+    characters.add_phrase(root.entry_id, make_phrase("NEW", 2, "Newer"), wav)
+
+    assert [(p.phrase_id, p.text, p.language) for p in characters.phrases(root.entry_id)] == [
+        ("NEW", "Newer", "en"),
+        ("OLD", "Hello", "en"),
+    ]
+    audio = characters.phrase_audio(root.entry_id, "NEW")
+    assert audio == library.folder(root.entry_id) / PHRASES_DIR / "NEW.wav"
+    assert audio.read_bytes() == b"RIFF-a"
+    assert characters.get(root.entry_id).phrase_count == 2
+
+
+def test_add_phrase_writes_json_after_the_audio(tmp_path, monkeypatch):
+    library = make_library(tmp_path)
+    root = new_root(library, tmp_path, "hero", 0)
+    characters = Characters(library)
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF-a")
+
+    real_replace = os.replace
+
+    def broken_replace(source, target):
+        if str(target).endswith(".json"):
+            raise OSError("disk full")
+        return real_replace(source, target)
+
+    monkeypatch.setattr("model3d_contracts.characters.os.replace", broken_replace)
+    with pytest.raises(OSError):
+        characters.add_phrase(root.entry_id, make_phrase("P1", 1), wav)
+
+    assert characters.get(root.entry_id).phrase_count == 0
+    assert characters.phrases(root.entry_id) == []
+    assert characters.phrase_audio(root.entry_id, "P1") is None
+
+
+def test_delete_phrase_removes_both_files_and_reports_missing(tmp_path):
+    library = make_library(tmp_path)
+    root = new_root(library, tmp_path, "hero", 0)
+    characters = Characters(library)
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF-a")
+    characters.add_phrase(root.entry_id, make_phrase("P1", 1), wav)
+
+    assert characters.delete_phrase(root.entry_id, "P1") is True
+    assert characters.delete_phrase(root.entry_id, "P1") is False
+    folder = library.folder(root.entry_id) / PHRASES_DIR
+    assert list(folder.iterdir()) == []
+
+
+def test_phrase_ids_are_validated_before_touching_disk(tmp_path):
+    library = make_library(tmp_path)
+    root = new_root(library, tmp_path, "hero", 0)
+    characters = Characters(library)
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF-a")
+    outside = library.folder(root.entry_id) / "secret.json"
+    outside.write_text("{}")
+
+    with pytest.raises(ValueError):
+        characters.add_phrase(root.entry_id, make_phrase("../x", 1), wav)
+    assert characters.phrase_audio(root.entry_id, "../secret") is None
+    assert characters.delete_phrase(root.entry_id, "../secret") is False
+    assert outside.exists()
+
+
+def test_unreadable_phrase_is_skipped_with_a_warning(tmp_path, caplog):
+    library = make_library(tmp_path)
+    root = new_root(library, tmp_path, "hero", 0)
+    characters = Characters(library)
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF-a")
+    characters.add_phrase(root.entry_id, make_phrase("GOOD", 1), wav)
+    (library.folder(root.entry_id) / PHRASES_DIR / "bad.json").write_text("{not json")
+
+    with caplog.at_level(logging.WARNING):
+        listed = characters.phrases(root.entry_id)
+
+    assert [p.phrase_id for p in listed] == ["GOOD"]
+    assert "Ignoring unreadable phrase" in caplog.text
+
+
+def test_clear_voice_unlinks_only_the_characters_using_it(tmp_path):
+    library = make_library(tmp_path)
+    one = new_root(library, tmp_path, "one", 0)
+    two = new_root(library, tmp_path, "two", 1)
+    three = new_root(library, tmp_path, "three", 2)
+    characters = Characters(library)
+    characters.save_data(one.entry_id, CharacterData(voice_id="v1"))
+    characters.save_data(two.entry_id, CharacterData(voice_id="v1"))
+    characters.save_data(three.entry_id, CharacterData(voice_id="v2"))
+
+    cleared = characters.clear_voice("v1")
+
+    assert sorted(cleared) == sorted([one.entry_id, two.entry_id])
+    assert characters.get(one.entry_id).voice_id is None
+    assert characters.get(two.entry_id).voice_id is None
+    assert characters.get(three.entry_id).voice_id == "v2"
+    assert not (library.folder(one.entry_id) / CHARACTER_FILE).exists()
+    assert characters.clear_voice("v1") == []

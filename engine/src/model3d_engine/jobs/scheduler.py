@@ -55,7 +55,9 @@ class Scheduler:
         cards: dict[str, str] | None = None,
         head_pass: HeadPassRunner | None = None,
         voice: StageRunner | None = None,
+        on_speech_succeeded: Callable[[JobRecord], None] | None = None,
     ):
+        self.on_speech_succeeded = on_speech_succeeded
         self._store = store
         self._bus = bus
         self._shape = shape
@@ -372,6 +374,11 @@ class Scheduler:
     def _succeed_speech(self, record: JobRecord) -> None:
         record.transition(JobState.succeeded)
         self._store.persist(record)
+        if self.on_speech_succeeded is not None:
+            try:
+                self.on_speech_succeeded(record)
+            except Exception:
+                logger.exception("Speech hook failed for job %s", record.job_id)
         self._bus.publish(
             CompletedEvent(job_id=record.job_id, ts=utcnow(), result_url=f"/v1/speech-jobs/{record.job_id}/result")
         )

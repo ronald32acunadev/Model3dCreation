@@ -21,19 +21,19 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from model3d_contracts.health import Health
 from model3d_contracts.jobs import ErrorBody, Job, JobError, JobOptions, JobState
 
-from model3d_contracts.characters import Characters
+from model3d_contracts.characters import Characters, Phrase
 from model3d_contracts.library import Library
 
 from model3d_engine.api.characters import characters_router
 from model3d_engine.api.errors import ApiError
 from model3d_engine.api.library import library_router
-from model3d_engine.api.speech import speech_result, speech_router
+from model3d_engine.api.speech import SPEECH_OUTPUT, speech_result, speech_router
 from model3d_engine.api.tasks import ToolTasks
 from model3d_engine.api.voices import voices_router
 from model3d_engine.config import Settings, is_loopback_host, normalize_origin
-from model3d_engine.jobs.events import EventBus
+from model3d_engine.jobs.events import EventBus, utcnow
 from model3d_engine.jobs.scheduler import ORIGINAL_OUTPUT, Scheduler
-from model3d_engine.jobs.store import JobRecord, JobStore
+from model3d_engine.jobs.store import REQUEST_FILE, JobRecord, JobStore
 from model3d_engine.stages.protocol import MODEL_OUTPUT
 from model3d_engine.voices import VoiceStore
 
@@ -209,9 +209,25 @@ def create_app(
     tasks = tool_tasks or ToolTasks(sys.executable, TOOLS_DIR)
     library = Library(settings.home / "library", recover=False)
     app.include_router(library_router(library, store, tasks))
-    app.include_router(characters_router(Characters(library)))
+    characters = Characters(library)
     voices = VoiceStore(settings.voices_dir)
-    app.include_router(voices_router(voices))
+    app.include_router(characters_router(characters, voices, store, scheduler, voice_reason))
+    app.include_router(voices_router(voices, characters))
+
+    def keep_phrase(record: JobRecord) -> None:
+        request = json.loads((record.dir / REQUEST_FILE).read_text(encoding="utf-8"))
+        character_id = request.get("character_id")
+        if character_id is None:
+            return
+        phrase = Phrase(
+            phrase_id=record.job_id, text=request["text"], language=request["language"], created_at=utcnow()
+        )
+        try:
+            characters.add_phrase(character_id, phrase, record.dir / SPEECH_OUTPUT)
+        except KeyError:
+            logger.warning("Character %s no longer exists; phrase %s not kept", character_id, record.job_id)
+
+    scheduler.on_speech_succeeded = keep_phrase
     app.include_router(speech_router(scheduler, store, voices, voice_reason))
 
     @app.exception_handler(ApiError)

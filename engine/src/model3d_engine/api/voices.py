@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict
 
+from model3d_contracts.characters import Characters
 from model3d_engine.api.errors import ApiError
 from model3d_engine.voices import SAMPLE_FILE, VOICE_ID, Voice, VoiceStore
 
@@ -13,7 +14,7 @@ class RenameRequest(BaseModel):
     name: str
 
 
-def voices_router(store: VoiceStore) -> APIRouter:
+def voices_router(store: VoiceStore, characters: Characters) -> APIRouter:
     router = APIRouter()
 
     def _find(voice_id: str) -> Voice:
@@ -48,6 +49,7 @@ def voices_router(store: VoiceStore) -> APIRouter:
     @router.delete("/v1/voices/{voice_id}", status_code=204)
     async def delete_voice(voice_id: str) -> Response:
         _find(voice_id)
+        characters.clear_voice(voice_id)
         store.delete(voice_id)
         return Response(status_code=204)
 

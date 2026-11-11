@@ -71,6 +71,50 @@ def speech_result(record: JobRecord) -> FileResponse:
     return FileResponse(record.dir / SPEECH_OUTPUT, media_type="audio/wav", filename=SPEECH_OUTPUT)
 
 
+def clean_text(text: str) -> str:
+    """The stripped text of a speech request, or 400 invalid_text."""
+    text = text.strip()
+    if not text:
+        raise ApiError(400, "invalid_text", "Text must not be empty")
+    if len(text) > MAX_TEXT_CHARS:
+        raise ApiError(400, "invalid_text", f"Text is limited to {MAX_TEXT_CHARS} characters")
+    return text
+
+
+def check_voice_ready(scheduler: Scheduler, voice_reason: Callable[[], str | None]) -> None:
+    if not scheduler.voice_available:
+        raise ApiError(400, "voice_unavailable", voice_reason() or "Voice generation is not available")
+    if scheduler.start_error is not None:
+        raise ApiError(503, "engine_not_ready", f"The engine failed to start: {scheduler.start_error.message}")
+    if not scheduler.ready:
+        raise ApiError(503, "engine_not_ready", "The engine is still loading its models")
+
+
+def submit_speak_job(
+    scheduler: Scheduler,
+    store: JobStore,
+    voices: VoiceStore,
+    voice: Voice,
+    text: str,
+    language: Language,
+    character_id: str | None = None,
+) -> Job:
+    """Queue a speech job that speaks `text` with a saved voice."""
+    request = {
+        "type": SPEAK,
+        "text": text,
+        "language": language,
+        "ref_audio": str(voices.sample_path(voice.voice_id).resolve()),
+        "ref_text": voice.transcript,
+        "instruct": None,
+    }
+    if character_id is not None:
+        request["character_id"] = character_id
+    record = store.create_speech(request)
+    scheduler.submit_speech(record)
+    return record.to_job(None)
+
+
 def _clean_name(name: str) -> str:
     cleaned = name.strip()
     if not cleaned:
@@ -87,37 +131,14 @@ def speech_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    def check_voice_ready() -> None:
-        if not scheduler.voice_available:
-            raise ApiError(400, "voice_unavailable", voice_reason() or "Voice generation is not available")
-        if scheduler.start_error is not None:
-            raise ApiError(503, "engine_not_ready", f"The engine failed to start: {scheduler.start_error.message}")
-        if not scheduler.ready:
-            raise ApiError(503, "engine_not_ready", "The engine is still loading its models")
-
     @router.post("/v1/speech-jobs", status_code=202, response_model=Job)
     async def submit_speech(body: SpeechRequest) -> Job:
-        text = body.text.strip()
-        if not text:
-            raise ApiError(400, "invalid_text", "Text must not be empty")
-        if len(text) > MAX_TEXT_CHARS:
-            raise ApiError(400, "invalid_text", f"Text is limited to {MAX_TEXT_CHARS} characters")
+        text = clean_text(body.text)
         voice = voices.get(body.voice_id)
         if voice is None:
             raise ApiError(404, "voice_not_found", f"No voice {body.voice_id}")
-        check_voice_ready()
-        record = store.create_speech(
-            {
-                "type": SPEAK,
-                "text": text,
-                "language": body.language,
-                "ref_audio": str(voices.sample_path(voice.voice_id).resolve()),
-                "ref_text": voice.transcript,
-                "instruct": None,
-            }
-        )
-        scheduler.submit_speech(record)
-        return record.to_job(None)
+        check_voice_ready(scheduler, voice_reason)
+        return submit_speak_job(scheduler, store, voices, voice, text, body.language)
 
     @router.post("/v1/voice-previews", status_code=202, response_model=Job)
     async def submit_preview(body: PreviewRequest) -> Job:
@@ -127,7 +148,7 @@ def speech_router(
         text = body.sample_text.strip()
         if not 1 <= len(text) <= MAX_SAMPLE_TEXT_CHARS:
             raise ApiError(400, "invalid_text", f"Sample text must be 1 to {MAX_SAMPLE_TEXT_CHARS} characters")
-        check_voice_ready()
+        check_voice_ready(scheduler, voice_reason)
         record = store.create_speech(
             {"type": DESIGN, "text": text, "language": body.language, "ref_audio": None, "ref_text": None, "instruct": description}
         )
@@ -174,7 +195,7 @@ def speech_router(
         data = await audio.read(MAX_AUDIO_BYTES + 1)
         if len(data) > MAX_AUDIO_BYTES:
             raise ApiError(413, "audio_too_large", f"Recordings are limited to {MAX_AUDIO_BYTES} bytes")
-        check_voice_ready()
+        check_voice_ready(scheduler, voice_reason)
         record = store.create_transcription(language, f"reference_upload{suffix}", data)
         scheduler.submit_speech(record)
         deadline = time.monotonic() + transcribe_timeout_s

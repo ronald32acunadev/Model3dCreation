@@ -2,8 +2,11 @@
 
 import logging
 import os
+import re
+import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -12,12 +15,22 @@ from model3d_contracts.library import Entry, Library
 logger = logging.getLogger(__name__)
 CHARACTER_FILE = "character.json"
 PHRASES_DIR = "phrases"
+_PHRASE_ID = re.compile(r"[0-9A-Za-z][0-9A-Za-z_-]{0,63}")
 
 
 class CharacterData(BaseModel):
     """What a character stores beside its versions; US-09 adds fields."""
 
     voice_id: str | None = None
+
+
+class Phrase(BaseModel):
+    """A finished phrase a character said; its id is the speech job's id."""
+
+    phrase_id: str
+    text: str
+    language: Literal["es", "en"]
+    created_at: datetime
 
 
 class Character(BaseModel):
@@ -83,6 +96,70 @@ class Characters:
         tmp = path.with_name(CHARACTER_FILE + ".tmp")
         tmp.write_text(data.model_dump_json(indent=2))
         os.replace(tmp, path)
+
+    def clear_voice(self, voice_id: str) -> list[str]:
+        """Unlink a voice from every character that uses it; returns those characters' ids."""
+        cleared = []
+        for character in self.characters():
+            if character.voice_id == voice_id:
+                data = self._read_data(character.character_id)
+                self.save_data(character.character_id, data.model_copy(update={"voice_id": None}))
+                cleared.append(character.character_id)
+        return cleared
+
+    def phrases(self, character_id: str) -> list[Phrase]:
+        """The character's phrases, newest first; unreadable ones are skipped."""
+        root, _ = self._group(character_id)
+        folder = self.library.folder(root.entry_id) / PHRASES_DIR
+        if not folder.is_dir():
+            return []
+        found = []
+        for path in folder.glob("*.json"):
+            try:
+                found.append(Phrase.model_validate_json(path.read_bytes()))
+            except (OSError, ValidationError) as error:
+                logger.warning("Ignoring unreadable phrase %s: %s", path, error)
+        return sorted(found, key=lambda phrase: (phrase.created_at, phrase.phrase_id), reverse=True)
+
+    def phrase_audio(self, character_id: str, phrase_id: str) -> Path | None:
+        """The WAV of a phrase, or None when the character has no such phrase."""
+        root, _ = self._group(character_id)
+        if _PHRASE_ID.fullmatch(phrase_id) is None:
+            return None
+        folder = self.library.folder(root.entry_id) / PHRASES_DIR
+        if not (folder / f"{phrase_id}.json").is_file():
+            return None
+        audio = folder / f"{phrase_id}.wav"
+        return audio if audio.is_file() else None
+
+    def add_phrase(self, character_id: str, phrase: Phrase, audio: Path) -> None:
+        """Keep a phrase: the WAV is copied first and the JSON written last, so a counted phrase always has audio."""
+        if _PHRASE_ID.fullmatch(phrase.phrase_id) is None:
+            raise ValueError(f"Invalid phrase id {phrase.phrase_id!r}")
+        root, _ = self._group(character_id)
+        folder = self.library.folder(root.entry_id) / PHRASES_DIR
+        folder.mkdir(exist_ok=True)
+        wav = folder / f"{phrase.phrase_id}.wav"
+        tmp_wav = wav.with_name(wav.name + ".tmp")
+        shutil.copyfile(audio, tmp_wav)
+        os.replace(tmp_wav, wav)
+        path = folder / f"{phrase.phrase_id}.json"
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(phrase.model_dump_json(indent=2))
+        os.replace(tmp, path)
+
+    def delete_phrase(self, character_id: str, phrase_id: str) -> bool:
+        """Remove a phrase; False when the character has no such phrase. The JSON goes first."""
+        root, _ = self._group(character_id)
+        if _PHRASE_ID.fullmatch(phrase_id) is None:
+            return False
+        folder = self.library.folder(root.entry_id) / PHRASES_DIR
+        info = folder / f"{phrase_id}.json"
+        if not info.is_file():
+            return False
+        info.unlink()
+        (folder / f"{phrase_id}.wav").unlink(missing_ok=True)
+        return True
 
     def _groups(self) -> dict[str, tuple[Entry, list[Entry]]]:
         entries = self.library.entries()

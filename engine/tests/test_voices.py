@@ -3,6 +3,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from model3d_contracts.characters import Characters
+from model3d_contracts.library import Library
 from model3d_engine.api.app import create_app
 from model3d_engine.config import Settings
 from model3d_engine.jobs.events import EventBus
@@ -12,6 +14,7 @@ from model3d_engine.voices import Voice, VoiceKind, VoiceStore
 
 from .fakes import FakeRunner
 from .test_api import MODE, assert_error
+from .test_library import add_entry
 
 
 def make(tmp_path) -> TestClient:
@@ -148,3 +151,16 @@ def test_api_lists_the_voices_stored_under_settings_voices_dir(tmp_path):
     assert [v["voice_id"] for v in listed] == [voice.voice_id]
     assert settings.voices_dir == tmp_path / "voices"
     assert (tmp_path / "voices" / voice.voice_id).is_dir()
+
+
+def test_delete_unlinks_the_voice_from_the_characters_using_it(tmp_path):
+    client = make(tmp_path)
+    voice = make_voice(tmp_path / "voices", "Ana")
+    library = Library(tmp_path / "library", recover=False)
+    hero = add_entry(library, tmp_path, "hero")
+    client.put(f"/v1/characters/{hero.entry_id}/voice", json={"voice_id": voice.voice_id})
+    assert client.get(f"/v1/characters/{hero.entry_id}").json()["voice_id"] == voice.voice_id
+
+    assert client.delete(f"/v1/voices/{voice.voice_id}").status_code == 204
+
+    assert Characters(library).get(hero.entry_id).voice_id is None
