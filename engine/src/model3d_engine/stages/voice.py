@@ -15,6 +15,9 @@ from model3d_engine.stages.protocol import ProgressCallback, StageError, StageRe
 
 REQUEST_FILE = "speech_request.json"
 SPEECH_OUTPUT = "speech.wav"
+TRANSCRIBE = "transcribe"
+REFERENCE_OUTPUT = "reference.wav"  # a transcribe job's clip, resampled to 24 kHz mono
+TRANSCRIPT_OUTPUT = "transcript.json"
 WORKER_SCRIPT = Path(__file__).with_name("voice_worker.py")
 
 
@@ -100,11 +103,14 @@ class VoiceStage:
         return request
 
     def run(self, task: StageTask, progress: ProgressCallback) -> StageResult:
-        """Write SPEECH_OUTPUT in the job folder from the job's speech request."""
+        """Write the job's audio (and a transcript for a transcribe job) in its folder from the speech request."""
         request = self._read_request(task.job_dir / REQUEST_FILE)
-        output = task.job_dir / SPEECH_OUTPUT
-        # The request's own "type" (speak or design) travels as "mode"; "type" is the protocol verb.
-        message = {**request, "type": "run", "mode": request.get("type"), "output": str(output)}
+        mode = request.get("type")
+        output = task.job_dir / (REFERENCE_OUTPUT if mode == TRANSCRIBE else SPEECH_OUTPUT)
+        # The request's own "type" (speak, design or transcribe) travels as "mode"; "type" is the protocol verb.
+        message = {**request, "type": "run", "mode": mode, "output": str(output)}
+        if mode == TRANSCRIBE:
+            message["transcript"] = str(task.job_dir / TRANSCRIPT_OUTPUT)
         try:
             self._process.stdin.write(json.dumps(message) + "\n")
             self._process.stdin.flush()

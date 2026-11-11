@@ -137,6 +137,22 @@ class JobStore:
         """Register a speech job; the voice stage reads `request` from REQUEST_FILE."""
         return self._new(JobOptions(), REQUEST_FILE, json.dumps(request).encode(), kind="speech")
 
+    def create_transcription(self, language: str, filename: str, data: bytes) -> JobRecord:
+        """Register a job that transcribes an uploaded clip; the upload is saved in the job folder as `filename`."""
+        record = self._new(JobOptions(), REQUEST_FILE, b"{}", kind="speech")
+        upload = record.dir / filename
+        upload.write_bytes(data)
+        request = {
+            "type": "transcribe",
+            "text": "",
+            "language": language,
+            "ref_audio": str(upload.resolve()),
+            "ref_text": None,
+            "instruct": None,
+        }
+        (record.dir / REQUEST_FILE).write_text(json.dumps(request))
+        return record
+
     def _new(self, options: JobOptions, input_name: str, data: bytes, kind: JobKind = "model") -> JobRecord:
         job_id = new_job_id()
         folder = self.jobs_dir / job_id

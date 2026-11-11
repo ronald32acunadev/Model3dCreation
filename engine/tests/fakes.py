@@ -1,6 +1,7 @@
 """In-process stand-ins for the GPU stage runners."""
 
 import asyncio
+import json
 import time
 import wave
 from collections.abc import Awaitable, Callable
@@ -72,12 +73,19 @@ class FakeVoiceRunner(FakeRunner):
         if self.fail_with is not None:
             self.runs.append((task.job_id, start, time.monotonic()))
             raise self.fail_with
-        output = task.job_dir / self.output_name
+        request = json.loads((task.job_dir / "speech_request.json").read_text())
+        transcribe = request["type"] == "transcribe"
+        if transcribe and b"short" in Path(request["ref_audio"]).read_bytes():
+            self.runs.append((task.job_id, start, time.monotonic()))
+            raise StageError("invalid_audio", "Recordings must be 3 to 60 seconds long")
+        output = task.job_dir / ("reference.wav" if transcribe else self.output_name)
         with wave.open(str(output), "wb") as wav:
             wav.setnchannels(1)
             wav.setsampwidth(2)
             wav.setframerate(24000)
             wav.writeframes(b"\x00\x00" * 2400)
+        if transcribe:
+            (task.job_dir / "transcript.json").write_text(json.dumps({"text": "Hola, soy yo."}))
         on_progress(1.0, "sentence 2 of 2")
         self.runs.append((task.job_id, start, time.monotonic()))
         return StageResult(output=output, vertices=0, faces=0)

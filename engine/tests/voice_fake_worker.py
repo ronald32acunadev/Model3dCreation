@@ -40,7 +40,17 @@ def main() -> None:
         )
         with open(message["output"] + ".request.json", "w") as handle:
             json.dump(request, handle)
-        if MODE == "fail_run":
+        if message["mode"] == "transcribe":
+            with open(message["ref_audio"], "rb") as clip:
+                short = b"short" in clip.read()
+            if short:
+                send({"type": "error", "code": "invalid_audio", "message": "Recordings must be 3 to 60 seconds long"})
+                continue
+            write_silence(message["output"])
+            with open(message["transcript"], "w") as handle:
+                json.dump({"text": "Hola, soy yo."}, handle)
+            send({"type": "done", "audio_seconds": 0.5, "sample_rate": SAMPLE_RATE})
+        elif MODE == "fail_run":
             send({"type": "error", "code": "speech_failed", "message": "Qwen3-TTS failed: test"})
         elif MODE == "crash_run":
             sys.exit(3)

@@ -136,3 +136,31 @@ def test_cpu_device_is_voice_unavailable(tmp_path):
         VoiceStage(tmp_path, "cpu", tmp_path / "hf", python=sys.executable, worker_script=str(FAKE_WORKER))
     assert raised.value.code == "voice_unavailable"
     assert raised.value.message == "Qwen3-TTS needs a CUDA device, got cpu"
+
+
+def test_transcribe_mode_sends_the_transcript_path_and_returns_the_reference_clip(build_stage, job_dir):
+    (job_dir / "speech_request.json").write_text(
+        json.dumps({**REQUEST, "type": "transcribe", "text": "", "ref_audio": str(job_dir / "take.wav")})
+    )
+    (job_dir / "take.wav").write_bytes(b"RIFF")
+    stage = build_stage()
+    result = stage.run(run_task(job_dir), lambda v, m: None)
+
+    assert result.output == job_dir / "reference.wav"
+    assert (result.vertices, result.faces) == (0, 0)
+    assert json.loads((job_dir / "transcript.json").read_text()) == {"text": "Hola, soy yo."}
+    request = json.loads((job_dir / "reference.wav.request.json").read_text())
+    assert request["mode"] == "transcribe"
+    assert request["output"] == str(job_dir / "reference.wav")
+    assert request["transcript"] == str(job_dir / "transcript.json")
+
+
+def test_transcribe_error_from_the_worker_is_reported(build_stage, job_dir):
+    (job_dir / "speech_request.json").write_text(
+        json.dumps({**REQUEST, "type": "transcribe", "text": "", "ref_audio": str(job_dir / "take.wav")})
+    )
+    (job_dir / "take.wav").write_bytes(b"RIFF short clip")
+    stage = build_stage()
+    with pytest.raises(StageError) as raised:
+        stage.run(run_task(job_dir), lambda v, m: None)
+    assert raised.value.code == "invalid_audio"
