@@ -1,11 +1,14 @@
 """The main window: library on the left, viewer in the center, generation panel on the right."""
 
+from collections.abc import Callable
 from pathlib import Path
 
+from model3d_contracts.characters import Character, Characters
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QInputDialog,
     QMainWindow,
@@ -26,11 +29,14 @@ from model3d_client.views.top_bar import TopBar
 
 class MainWindow(QMainWindow):
     def __init__(self, vm: MainViewModel, viewer: QWidget, parent: QWidget | None = None,
-                 voice_panel: QWidget | None = None):
+                 voice_panel: QWidget | None = None,
+                 character_dialog_factory: Callable[[str], QDialog] | None = None):
         super().__init__(parent)
         self.vm = vm
         self.viewer = viewer
         self.voice_panel = voice_panel
+        self.character_dialog_factory = character_dialog_factory
+        self._character_dialogs: list[QDialog] = []  # open character dialogs, kept alive until they finish
         self._closing = False  # shutdown finished: the next close is accepted
         self._shutting_down = False
 
@@ -92,6 +98,12 @@ class MainWindow(QMainWindow):
         vm.export_state_changed.connect(self._on_export_state)
         vm.export_finished.connect(self._on_export_finished)
         vm.export_failed.connect(self._on_export_failed)
+        self.library_panel.character_requested.connect(self._open_character)
+        self.library_panel.export_character_requested.connect(self._export_character)
+        self.library_panel.import_character_requested.connect(self._import_character)
+        vm.character_exported.connect(self._on_character_exported)
+        vm.character_imported.connect(self._on_character_imported)
+        vm.character_failed.connect(self._on_character_failed)
         self._refresh_library()
         self.retranslate()
 
@@ -248,6 +260,46 @@ class MainWindow(QMainWindow):
     def _on_export_failed(self, reason: str) -> None:
         self.statusBar().clearMessage()
         QMessageBox.warning(self, self.tr("Export model"), self.tr("Could not export the model: %1").replace("%1", reason))
+
+    def _open_character(self, character_id: str) -> None:
+        if self.character_dialog_factory is None:
+            return
+        dialog = self.character_dialog_factory(character_id)
+        self._character_dialogs.append(dialog)
+        dialog.finished.connect(self._drop_finished_character_dialogs)
+        dialog.open()
+
+    def _drop_finished_character_dialogs(self, _result: int) -> None:
+        self._character_dialogs = [dialog for dialog in self._character_dialogs if dialog.isVisible()]
+
+    def _export_character(self, character_id: str) -> None:
+        character = Characters(self.vm.library).get(character_id)
+        name = character.name if character is not None else character_id
+        start = str(Path(self.vm.settings.export_dir) / f"{name}.m3dchar")
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self, self.tr("Export character"), start, self.tr("Character packages (*.m3dchar)"))
+        if not path:
+            return
+        target = Path(path)
+        if target.suffix.lower() != ".m3dchar":
+            target = Path(path + ".m3dchar")
+        self.vm.export_character(character_id, target)
+
+    def _import_character(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self, self.tr("Import character"), str(Path(self.vm.settings.export_dir)),
+            self.tr("Character packages (*.m3dchar)"))
+        if path:
+            self.vm.import_character(Path(path))
+
+    def _on_character_exported(self, path: Path) -> None:
+        self.statusBar().showMessage(self.tr("Character exported to %1").replace("%1", str(path)), 10000)
+
+    def _on_character_imported(self, character: Character) -> None:
+        self.statusBar().showMessage(self.tr("Imported %1").replace("%1", character.name), 10000)
+
+    def _on_character_failed(self, reason: str) -> None:
+        QMessageBox.warning(self, self.tr("Character"), reason)
 
 
 def _filter_extension(selected_filter: str) -> str:

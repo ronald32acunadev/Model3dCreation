@@ -1,8 +1,10 @@
+from pathlib import Path
+
 import pytest
 from model3d_contracts.events import ResultStats
 from model3d_contracts.jobs import JobError, JobOptions, Quality
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from fake_engine import FakeEngine, error_body
 from fakes import FakeSupervisor, StubViewer
@@ -449,6 +451,100 @@ def test_character_menu_has_its_four_actions(window, png):
     assert names == ["voice_phrases", "export_character", "rename", "delete"]
 
 
-def test_import_button_emits_its_signal(qtbot, window):
+def test_import_button_emits_its_signal(qtbot, window, monkeypatch):
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args: ("", ""))  # cancel: no modal dialog in tests
     with qtbot.waitSignal(window.library_panel.import_character_requested, timeout=1000):
         window.library_panel.import_button.click()
+
+
+def character_window(qtbot, tmp_path, make_api, **kwargs) -> MainWindow:
+    paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
+    library = Library(paths.library)
+    supervisor = FakeSupervisor(state=EngineState.loading)
+    api = make_api("http://127.0.0.1:9")
+    generation = GenerationViewModel(api, library, supervisor, Settings())
+    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(), checks=lambda _paths: [])
+    win = MainWindow(vm, viewer=StubViewer(), **kwargs)
+    win.ask_close_anyway = lambda: True
+    qtbot.addWidget(win)
+    return win
+
+
+def test_character_request_opens_its_dialog(qtbot, tmp_path, make_api):
+    asked, dialogs = [], []
+
+    def factory(character_id):
+        asked.append(character_id)
+        dialog = QDialog()
+        qtbot.addWidget(dialog)
+        dialogs.append(dialog)
+        return dialog
+
+    win = character_window(qtbot, tmp_path, make_api, character_dialog_factory=factory)
+    win.library_panel.character_requested.emit("char-1")
+    assert asked == ["char-1"]
+    assert dialogs[0].isVisible()
+    dialogs[0].close()
+    assert win._character_dialogs == []
+
+
+def test_character_request_without_factory_does_nothing(qtbot, tmp_path, make_api):
+    win = character_window(qtbot, tmp_path, make_api)
+    win.library_panel.character_requested.emit("char-1")
+    assert win.statusBar().currentMessage() == ""
+
+
+def test_export_character_passes_m3dchar_path(qtbot, tmp_path, make_api, png, monkeypatch):
+    win = character_window(qtbot, tmp_path, make_api)
+    entry = add_succeeded(win.vm.library, png, "Robot")
+    asked, exported = [], []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda *args: asked.append(args[2]) or (str(tmp_path / "robot"), "Character packages (*.m3dchar)"))
+    monkeypatch.setattr(win.vm, "export_character", lambda cid, target: exported.append((cid, target)))
+    win.library_panel.export_character_requested.emit(entry.entry_id)
+    assert asked == [str(Path(win.vm.settings.export_dir) / "Robot.m3dchar")]
+    assert exported == [(entry.entry_id, tmp_path / "robot.m3dchar")]
+
+
+def test_export_character_cancel_exports_nothing(qtbot, tmp_path, make_api, png, monkeypatch):
+    win = character_window(qtbot, tmp_path, make_api)
+    entry = add_succeeded(win.vm.library, png, "Robot")
+    exported = []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args: ("", ""))
+    monkeypatch.setattr(win.vm, "export_character", lambda cid, target: exported.append((cid, target)))
+    win.library_panel.export_character_requested.emit(entry.entry_id)
+    assert exported == []
+
+
+def test_import_character_passes_chosen_package(qtbot, tmp_path, make_api, monkeypatch):
+    win = character_window(qtbot, tmp_path, make_api)
+    imported = []
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        lambda *args: (str(tmp_path / "robot.m3dchar"), "Character packages (*.m3dchar)"))
+    monkeypatch.setattr(win.vm, "import_character", lambda package: imported.append(package))
+    win.library_panel.import_character_requested.emit()
+    assert imported == [tmp_path / "robot.m3dchar"]
+
+
+def test_import_character_cancel_imports_nothing(qtbot, tmp_path, make_api, monkeypatch):
+    win = character_window(qtbot, tmp_path, make_api)
+    imported = []
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args: ("", ""))
+    monkeypatch.setattr(win.vm, "import_character", lambda package: imported.append(package))
+    win.library_panel.import_character_requested.emit()
+    assert imported == []
+
+
+def test_character_failure_shows_warning(qtbot, tmp_path, make_api, monkeypatch):
+    win = character_window(qtbot, tmp_path, make_api)
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+    win.vm.character_failed.emit("boom")
+    assert len(warnings) == 1
+    assert warnings[0][1] == "Character" and warnings[0][2] == "boom"
+
+
+def test_character_export_reports_its_path(qtbot, tmp_path, make_api):
+    win = character_window(qtbot, tmp_path, make_api)
+    win.vm.character_exported.emit(Path("/x/a.m3dchar"))
+    assert win.statusBar().currentMessage() == "Character exported to /x/a.m3dchar"

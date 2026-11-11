@@ -21,9 +21,11 @@ from model3d_client.services.supervisor import EngineSupervisor
 from model3d_client.setup.checks import Toolchain
 from model3d_client.setup.recipe import Sources, build_recipe
 from model3d_client.setup.state import load_state, read_pointer
+from model3d_client.viewmodels.characters import CharacterViewModel
 from model3d_client.viewmodels.generation import GenerationViewModel
 from model3d_client.viewmodels.main import MainViewModel
 from model3d_client.viewmodels.voice import VoiceViewModel
+from model3d_client.views.character_dialog import CharacterDialog
 from model3d_client.views.main_window import MainWindow
 from model3d_client.views.scheme import prepare_webengine
 from model3d_client.views.voice_panel import VoicePanel
@@ -86,8 +88,16 @@ def build_app(
         viewer = ViewerWidget(paths.viewer_dir, paths.library)
     else:
         viewer = viewer_factory()
-    voice = VoiceViewModel(api, supervisor, paths.data / "voice_cache", AudioPlayer(app), Recorder, parent=app)
-    return app, MainWindow(vm, viewer, voice_panel=VoicePanel(voice))
+    player = AudioPlayer(app)
+    voice = VoiceViewModel(api, supervisor, paths.data / "voice_cache", player, Recorder, parent=app)
+
+    def character_dialog(character_id: str) -> CharacterDialog:
+        character_vm = CharacterViewModel(api, library, character_id, player, paths.data / "voice_cache", parent=app)
+        character_vm.refresh()
+        return CharacterDialog(character_vm, parent=window)
+
+    window = MainWindow(vm, viewer, voice_panel=VoicePanel(voice), character_dialog_factory=character_dialog)
+    return app, window
 
 
 def build_setup(argv: list[str], env: Mapping[str, str], mode: str) -> tuple[QApplication, "SetupWizard"]:
