@@ -12,8 +12,10 @@ from PySide6.QtWidgets import QApplication, QWidget
 import model3d_client
 from model3d_client.i18n import apply_language
 from model3d_client.paths import PACKAGE_DIR, REPO_ROOT, app_paths
+from model3d_client.services.audio import AudioPlayer
 from model3d_client.services.engine_api import EngineApi
 from model3d_client.services.library import Library
+from model3d_client.services.recorder import Recorder
 from model3d_client.services.settings import load_settings
 from model3d_client.services.supervisor import EngineSupervisor
 from model3d_client.setup.checks import Toolchain
@@ -21,8 +23,10 @@ from model3d_client.setup.recipe import Sources, build_recipe
 from model3d_client.setup.state import load_state, read_pointer
 from model3d_client.viewmodels.generation import GenerationViewModel
 from model3d_client.viewmodels.main import MainViewModel
+from model3d_client.viewmodels.voice import VoiceViewModel
 from model3d_client.views.main_window import MainWindow
 from model3d_client.views.scheme import prepare_webengine
+from model3d_client.views.voice_panel import VoicePanel
 
 
 INSTALLED_ROOT = Path("/opt/model3d")
@@ -82,7 +86,8 @@ def build_app(
         viewer = ViewerWidget(paths.viewer_dir, paths.library)
     else:
         viewer = viewer_factory()
-    return app, MainWindow(vm, viewer)
+    voice = VoiceViewModel(api, supervisor, paths.data / "voice_cache", AudioPlayer(app), Recorder, parent=app)
+    return app, MainWindow(vm, viewer, voice_panel=VoicePanel(voice))
 
 
 def build_setup(argv: list[str], env: Mapping[str, str], mode: str) -> tuple[QApplication, "SetupWizard"]:

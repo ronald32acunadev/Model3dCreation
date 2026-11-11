@@ -25,10 +25,12 @@ from model3d_client.views.top_bar import TopBar
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, vm: MainViewModel, viewer: QWidget, parent: QWidget | None = None):
+    def __init__(self, vm: MainViewModel, viewer: QWidget, parent: QWidget | None = None,
+                 voice_panel: QWidget | None = None):
         super().__init__(parent)
         self.vm = vm
         self.viewer = viewer
+        self.voice_panel = voice_panel
         self._closing = False  # shutdown finished: the next close is accepted
         self._shutting_down = False
 
@@ -49,7 +51,13 @@ class MainWindow(QMainWindow):
         root = QWidget()
         layout = QVBoxLayout(root)
         layout.addWidget(self.top_bar)
-        layout.addWidget(splitter, 1)
+        self.sections = QStackedWidget()
+        self.sections.addWidget(splitter)
+        if voice_panel is not None:
+            self.sections.addWidget(voice_panel)
+            self.top_bar.show_sections(True)
+            self.top_bar.section_requested.connect(self.sections.setCurrentIndex)
+        layout.addWidget(self.sections, 1)
         self.setCentralWidget(root)
         self.resize(1300, 800)
 
