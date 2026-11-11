@@ -6,31 +6,15 @@ import re
 import secrets
 import shutil
 from datetime import UTC, datetime
-from enum import Enum
 from pathlib import Path
-from typing import Literal
 
-from pydantic import BaseModel, ValidationError
+from model3d_contracts.voices import Language, Voice, VoiceKind
+from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 VOICE_FILE = "voice.json"
 SAMPLE_FILE = "sample.wav"
 VOICE_ID = re.compile(r"[0-9A-Za-z][0-9A-Za-z-]*")
-Language = Literal["es", "en"]
-
-
-class VoiceKind(str, Enum):
-    designed = "designed"
-    recorded = "recorded"
-
-
-class Voice(BaseModel):
-    voice_id: str
-    name: str
-    kind: VoiceKind
-    language: Language
-    created_at: datetime
-    transcript: str  # the text spoken in the sample; cloning uses it later
 
 
 def _clean_name(name: str) -> str:

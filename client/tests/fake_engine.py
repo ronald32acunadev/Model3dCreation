@@ -81,6 +81,9 @@ class Controller:
     body_answer: tuple[int, dict] = (200, {"body": "biped", "legs": [], "arms": [], "up": 1})
     walk_posts: list[tuple[str, str]] = field(default_factory=list)
     walk: Callable[[str, str], tuple[int, dict]] | None = None
+    voice_answers: dict[str, tuple[int, object]] = field(default_factory=dict)  # "METHOD /path" -> (status, body)
+    voice_files: dict[str, bytes] = field(default_factory=dict)  # "GET /path" -> bytes answered with 200
+    voice_requests: list[dict] = field(default_factory=list)
 
     def push(self, *events) -> None:
         """Queue events (dicts) or CLOSE for the job's socket."""
@@ -206,6 +209,40 @@ def create_app(c: Controller) -> FastAPI:
             return JSONResponse(status_code=409, content=error_body("no_skeleton"))
         status, content = c.walk(entry_id, body["body"])
         return JSONResponse(status_code=status, content=content)
+
+    async def record(request: Request) -> dict:
+        """Log a voice or character request: its method and path, plus a JSON body or the multipart fields."""
+        entry: dict = {"method": request.method, "path": request.url.path, "json": None, "fields": {}, "files": {}}
+        content_type = request.headers.get("content-type", "")
+        if content_type.startswith("multipart/"):
+            for name, value in (await request.form()).items():
+                if hasattr(value, "filename"):
+                    entry["files"][name] = {"filename": value.filename, "content_type": value.content_type,
+                                            "data": await value.read()}
+                else:
+                    entry["fields"][name] = value
+        elif content_type.startswith("application/json"):
+            entry["json"] = await request.json()
+        c.voice_requests.append(entry)
+        return entry
+
+    @app.api_route(
+        "/v1/{area:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
+    )
+    async def scripted(area: str, request: Request):
+        """Answers the voice, speech and character routes from `voice_answers` / `voice_files`."""
+        await record(request)
+        key = f"{request.method} {request.url.path}"
+        if key in c.voice_answers:
+            status, body = c.voice_answers[key]
+            if status == 204:
+                return Response(status_code=204)
+            return JSONResponse(status_code=status, content=body)
+        if key in c.voice_files:
+            return Response(content=c.voice_files[key], media_type="application/octet-stream")
+        return JSONResponse(status_code=404, content=error_body("not_scripted", key))
 
     return app
 
