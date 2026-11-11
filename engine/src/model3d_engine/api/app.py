@@ -26,11 +26,13 @@ from model3d_contracts.library import Library
 from model3d_engine.api.errors import ApiError
 from model3d_engine.api.library import library_router
 from model3d_engine.api.tasks import ToolTasks
+from model3d_engine.api.voices import voices_router
 from model3d_engine.config import Settings, is_loopback_host, normalize_origin
 from model3d_engine.jobs.events import EventBus
 from model3d_engine.jobs.scheduler import ORIGINAL_OUTPUT, Scheduler
 from model3d_engine.jobs.store import JobRecord, JobStore
 from model3d_engine.stages.protocol import MODEL_OUTPUT
+from model3d_engine.voices import VoiceStore
 
 TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 _SUFFIXES = {"PNG": ".png", "JPEG": ".jpg"}
@@ -201,6 +203,7 @@ def create_app(
     app.state.bus = bus
     tasks = tool_tasks or ToolTasks(sys.executable, TOOLS_DIR)
     app.include_router(library_router(Library(settings.home / "library", recover=False), store, tasks))
+    app.include_router(voices_router(VoiceStore(settings.voices_dir)))
 
     @app.exception_handler(ApiError)
     async def api_error(request: Request, error: ApiError) -> JSONResponse:

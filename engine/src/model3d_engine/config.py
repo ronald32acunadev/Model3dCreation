@@ -45,6 +45,10 @@ class Settings:
         return self.home / "jobs"
 
     @property
+    def voices_dir(self) -> Path:
+        return self.home / "voices"
+
+    @property
     def hf_home(self) -> Path:
         return self.home / "hf"
 

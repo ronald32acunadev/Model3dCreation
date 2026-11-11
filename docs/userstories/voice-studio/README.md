@@ -139,7 +139,7 @@ US-01 → US-05 → (US-02, US-03, US-04) → US-10 → US-09 → US-11 → US-1
 | US-02 / AC-01..AC-04 | `engine/tests/test_speech.py` with a fake voice stage (WAV joined from pieces, errors, health); one real job | Pending |
 | US-03 / AC-01..AC-03 | `engine/tests/test_voices.py` (preview then save, errors); one real designed voice | Pending |
 | US-04 / AC-01..AC-03 | `engine/tests/test_voices.py` with a fake transcriber (limits, bad file); client test for the recorder view model; one real recording in the app | Pending |
-| US-05 / AC-01..AC-03 | `engine/tests/test_voices.py` (list, sample, rename, delete, 404) | Pending |
+| US-05 / AC-01..AC-03 | `engine/tests/test_voices.py` (list, sample, rename, delete, 404) | Passed 2026-11-11: `uv run --no-sync python -m pytest -q tests/test_voices.py` 12 passed; full engine suite 298 passed (baseline without the change: only the new voice tests fail). An encoded slash in an id (`%2F`) never reaches the handler; the router answers 404. Complete. |
 | US-06 / AC-01..AC-03 | client tests for the voice view model and window switch; one manual pass in the running app | Pending |
 | US-07 / AC-01..AC-02 | client setup recipe tests; one install into a fresh folder | Pending |
 | US-08 / AC-01..AC-02 | curl examples run against the real engine | Pending |
