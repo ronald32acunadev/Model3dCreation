@@ -21,8 +21,10 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from model3d_contracts.health import Health
 from model3d_contracts.jobs import ErrorBody, Job, JobError, JobOptions, JobState
 
+from model3d_contracts.characters import Characters
 from model3d_contracts.library import Library
 
+from model3d_engine.api.characters import characters_router
 from model3d_engine.api.errors import ApiError
 from model3d_engine.api.library import library_router
 from model3d_engine.api.speech import speech_result, speech_router
@@ -205,7 +207,9 @@ def create_app(
     )
     app.state.bus = bus
     tasks = tool_tasks or ToolTasks(sys.executable, TOOLS_DIR)
-    app.include_router(library_router(Library(settings.home / "library", recover=False), store, tasks))
+    library = Library(settings.home / "library", recover=False)
+    app.include_router(library_router(library, store, tasks))
+    app.include_router(characters_router(Characters(library)))
     voices = VoiceStore(settings.voices_dir)
     app.include_router(voices_router(voices))
     app.include_router(speech_router(scheduler, store, voices, voice_reason))
