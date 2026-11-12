@@ -10,9 +10,11 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
+    QFrame,
     QInputDialog,
     QMainWindow,
     QMessageBox,
+    QScrollArea,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
@@ -57,9 +59,11 @@ class MainWindow(QMainWindow):
         if model_voice_panel is None:
             splitter.addWidget(self.generation_panel)
         else:
+            # Each panel scrolls inside its own area so that its content height
+            # does not add to the window's minimum height.
             right = QSplitter(Qt.Orientation.Vertical)
-            right.addWidget(self.generation_panel)
-            right.addWidget(model_voice_panel)
+            right.addWidget(self._scrollable(self.generation_panel))
+            right.addWidget(self._scrollable(model_voice_panel))
             right.setStretchFactor(1, 1)
             splitter.addWidget(right)
         splitter.setStretchFactor(1, 1)
@@ -116,6 +120,15 @@ class MainWindow(QMainWindow):
         vm.character_failed.connect(self._on_character_failed)
         self._refresh_library()
         self.retranslate()
+
+    @staticmethod
+    def _scrollable(widget: QWidget) -> QScrollArea:
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        area.setWidget(widget)
+        return area
 
     def open_settings(self) -> None:
         from model3d_client.views.settings_dialog import SettingsDialog

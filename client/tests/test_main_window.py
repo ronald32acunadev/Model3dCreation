@@ -599,3 +599,19 @@ def test_character_request_selects_it_and_reveals_the_voice_area(qtbot, tmp_path
     assert win.vm.selected.entry_id == derived.entry_id
     assert win.model_voice_panel.vm.character_id == root.entry_id
     assert win.model_voice_panel.isVisible()
+
+
+def test_selecting_a_character_does_not_grow_the_window(qtbot, tmp_path, make_api, png):
+    win = model_voice_window(qtbot, tmp_path, make_api)
+    win.resize(1400, 800)
+    win.show()
+    qtbot.waitExposed(win)
+    root = add_succeeded(win.vm.library, png, "Robot")
+    add_rigged_version(win.vm.library, root)
+    win.vm.entries_changed.emit()
+    qtbot.wait(10)
+    min_before = win.minimumSizeHint().height()
+    win.library_panel.tree.setCurrentItem(win.library_panel.tree.topLevelItem(0))
+    qtbot.wait(50)
+    assert win.minimumSizeHint().height() <= min_before
+    assert win.height() == 800
