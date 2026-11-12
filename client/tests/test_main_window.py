@@ -548,3 +548,54 @@ def test_character_export_reports_its_path(qtbot, tmp_path, make_api):
     win = character_window(qtbot, tmp_path, make_api)
     win.vm.character_exported.emit(Path("/x/a.m3dchar"))
     assert win.statusBar().currentMessage() == "Character exported to /x/a.m3dchar"
+
+
+def model_voice_window(qtbot, tmp_path, make_api):
+    from model3d_client.viewmodels.characters import CharacterViewModel
+    from model3d_client.views.model_voice_panel import ModelVoicePanel
+
+    class Player:
+        def play(self, path):
+            pass
+
+    holder = {}
+
+    def make_panel(win_api, library):
+        vm = CharacterViewModel(win_api, library, None, Player(), tmp_path / "cache")
+        holder["vm"] = vm
+        return ModelVoicePanel(vm)
+
+    paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
+    library = Library(paths.library)
+    api = make_api("http://127.0.0.1:9")
+    supervisor = FakeSupervisor(state=EngineState.loading)
+    generation = GenerationViewModel(api, library, supervisor, Settings())
+    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(), checks=lambda _paths: [])
+    win = MainWindow(vm, viewer=StubViewer(), model_voice_panel=make_panel(api, library))
+    win.ask_close_anyway = lambda: True
+    qtbot.addWidget(win)
+    return win
+
+
+def test_selecting_a_version_points_the_voice_area_at_its_character(qtbot, tmp_path, make_api, png):
+    win = model_voice_window(qtbot, tmp_path, make_api)
+    root = add_succeeded(win.vm.library, png, "Robot")
+    derived = add_rigged_version(win.vm.library, root)
+    win.vm.entries_changed.emit()
+    assert win.model_voice_panel.vm.character_id is None
+    win.vm.select(derived.entry_id)
+    assert win.model_voice_panel.vm.character_id == root.entry_id
+    win.vm.select(None)
+    assert win.model_voice_panel.vm.character_id is None
+
+
+def test_character_request_selects_it_and_reveals_the_voice_area(qtbot, tmp_path, make_api, png):
+    win = model_voice_window(qtbot, tmp_path, make_api)
+    root = add_succeeded(win.vm.library, png, "Robot")
+    derived = add_rigged_version(win.vm.library, root)
+    win.vm.entries_changed.emit()
+    win.show()
+    win.library_panel.character_requested.emit(root.entry_id)
+    assert win.vm.selected.entry_id == derived.entry_id
+    assert win.model_voice_panel.vm.character_id == root.entry_id
+    assert win.model_voice_panel.isVisible()

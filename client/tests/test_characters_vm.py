@@ -204,3 +204,16 @@ def test_import_character_posts_the_package(qtbot, engine, make_api, tmp_path):
     assert (sent["method"], sent["path"]) == ("POST", "/v1/characters/import")
     assert sent["files"]["package"]["data"] == b"PK data"
     assert done[0].character_id == "C7"
+
+
+def test_set_character_switches_state_and_none_empties_it(qtbot, engine, make_vm, root_id):
+    engine.controller.voice_answers["GET /v1/voices"] = (200, [voice_json("V1")])
+    engine.controller.voice_answers[f"GET /v1/characters/{root_id}/phrases"] = (200, [phrase_json("P1")])
+    vm = make_vm()
+    vm.set_character(None)
+    assert vm.character is None and vm.voice_id is None and vm.phrases == []
+    vm.set_character(root_id)
+    qtbot.waitUntil(lambda: len(vm.phrases) == 1 and len(vm.voices) == 1, timeout=5000)
+    assert (vm.character.character_id, vm.voice_id) == (root_id, "V1")
+    vm.set_character(None)
+    assert vm.phrases == [] and vm.character_id is None

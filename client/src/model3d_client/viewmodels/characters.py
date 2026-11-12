@@ -31,7 +31,7 @@ class CharacterViewModel(QObject):
     changed = Signal()
     phrases_changed = Signal()
 
-    def __init__(self, api: EngineApi, library: Library, character_id: str, player, cache_dir: Path,
+    def __init__(self, api: EngineApi, library: Library, character_id: str | None, player, cache_dir: Path,
                  parent: QObject | None = None):
         super().__init__(parent)
         self._api = api
@@ -39,7 +39,7 @@ class CharacterViewModel(QObject):
         self._player = player
         self._cache_dir = cache_dir
         self.character_id = character_id
-        self.character: Character | None = Characters(library).get(character_id)
+        self.character: Character | None = Characters(library).get(character_id) if character_id else None
         self.voices: list[Voice] = []
         self.phrases: list[Phrase] = []
         self.busy = False
@@ -49,6 +49,38 @@ class CharacterViewModel(QObject):
         self._job_id: str | None = None
         self._stream: EventStream | None = None
         self._reconnected = False
+        self.say_hint = ""
+
+    def set_character(self, character_id: str | None) -> None:
+        """Follow another character (None: none selected): drop the old state and read the new one."""
+        if character_id == self.character_id:
+            return
+        self._stop_stream()
+        self.character_id = character_id
+        self.character = Characters(self._library).get(character_id) if character_id else None
+        self.phrases = []
+        self.busy = False
+        self.progress = 0.0
+        self.message = ""
+        self.error = None
+        self.say_hint = ""
+        self._job_id = None
+        self.changed.emit()
+        self.phrases_changed.emit()
+        if character_id is not None:
+            self.refresh()
+
+    def link_new_voice(self, voice: Voice) -> None:
+        """A voice was just created: list it, then link it to the character."""
+        self._api.voices(self._on_voices)
+        self.set_voice(voice.voice_id)
+
+    def _stop_stream(self) -> None:
+        if self._stream is not None:
+            self._stream.event.disconnect(self._on_event)
+            self._stream.closed.disconnect(self._on_closed)
+            self._stream.close()
+            self._stream = None
 
     @property
     def name(self) -> str:
@@ -61,20 +93,29 @@ class CharacterViewModel(QObject):
     def refresh(self) -> None:
         """Read the voices and the phrases from the engine."""
         self._api.voices(self._on_voices)
-        self.refresh_phrases()
+        if self.character_id is not None:
+            self.refresh_phrases()
 
     def refresh_phrases(self, on_done: Callable[[], None] | None = None) -> None:
-        self._api.phrases(self.character_id, lambda result: self._on_phrases(result, on_done))
+        character_id = self.character_id
+        self._api.phrases(character_id, lambda result: self._on_phrases(character_id, result, on_done))
 
     def set_voice(self, voice_id: str | None) -> None:
-        if voice_id == self.voice_id:
+        if self.character_id is None or voice_id == self.voice_id:
             return
         self.error = None
-        self._api.set_character_voice(self.character_id, voice_id, lambda result: self._on_voice_set(voice_id, result))
+        character_id = self.character_id
+        self._api.set_character_voice(
+            character_id, voice_id, lambda result: self._on_voice_set(character_id, voice_id, result))
 
     def say(self, text: str, language: str) -> None:
-        if self.busy or not text.strip() or self.voice_id is None:
+        if self.character_id is None or self.busy or not text.strip():
             return
+        if self.voice_id is None:
+            self.say_hint = "Link a voice first"
+            self.changed.emit()
+            return
+        self.say_hint = ""
         self.busy = True
         self.progress = 0.0
         self.message = ""
@@ -84,14 +125,20 @@ class CharacterViewModel(QObject):
         self._api.character_speak(self.character_id, text, language, self._on_submitted)
 
     def play_phrase(self, phrase_id: str) -> None:
+        if self.character_id is None:
+            return
         self.error = None
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         target = self._cache_dir / f"{self.character_id}-{phrase_id}.wav"
         self._api.download_phrase(self.character_id, phrase_id, target, self._on_phrase_downloaded)
 
     def delete_phrase(self, phrase_id: str) -> None:
+        if self.character_id is None:
+            return
         self.error = None
-        self._api.delete_phrase(self.character_id, phrase_id, lambda result: self._on_phrase_deleted(phrase_id, result))
+        character_id = self.character_id
+        self._api.delete_phrase(
+            character_id, phrase_id, lambda result: self._on_phrase_deleted(character_id, phrase_id, result))
 
     def _fail(self, error: JobError) -> None:
         self.busy = False
@@ -111,7 +158,10 @@ class CharacterViewModel(QObject):
         self.voices = result
         self.changed.emit()
 
-    def _on_phrases(self, result: list[Phrase] | ApiError, on_done: Callable[[], None] | None) -> None:
+    def _on_phrases(self, character_id: str | None, result: list[Phrase] | ApiError,
+                    on_done: Callable[[], None] | None) -> None:
+        if character_id != self.character_id:
+            return  # the answer is for a character that is no longer open
         if isinstance(result, ApiError):
             self._fail_api(result)
             return
@@ -120,7 +170,9 @@ class CharacterViewModel(QObject):
         if on_done is not None:
             on_done()
 
-    def _on_voice_set(self, voice_id: str | None, result: ApiError | None) -> None:
+    def _on_voice_set(self, character_id: str | None, voice_id: str | None, result: ApiError | None) -> None:
+        if character_id != self.character_id:
+            return
         if isinstance(result, ApiError):
             self._fail_api(result)
             return
@@ -191,9 +243,11 @@ class CharacterViewModel(QObject):
             return
         self._player.play(result)
 
-    def _on_phrase_deleted(self, phrase_id: str, result: ApiError | None) -> None:
+    def _on_phrase_deleted(self, character_id: str | None, phrase_id: str, result: ApiError | None) -> None:
         if isinstance(result, ApiError):
-            self._fail_api(result)
+            if character_id == self.character_id:
+                self._fail_api(result)
             return
-        (self._cache_dir / f"{self.character_id}-{phrase_id}.wav").unlink(missing_ok=True)
-        self.refresh_phrases()
+        (self._cache_dir / f"{character_id}-{phrase_id}.wav").unlink(missing_ok=True)
+        if character_id == self.character_id:
+            self.refresh_phrases()

@@ -27,6 +27,7 @@ from model3d_client.viewmodels.main import MainViewModel
 from model3d_client.viewmodels.voice import VoiceViewModel
 from model3d_client.views.character_dialog import CharacterDialog
 from model3d_client.views.main_window import MainWindow
+from model3d_client.views.model_voice_panel import ModelVoicePanel
 from model3d_client.views.scheme import prepare_webengine
 from model3d_client.views.voice_panel import VoicePanel
 
@@ -96,7 +97,17 @@ def build_app(
         character_vm.refresh()
         return CharacterDialog(character_vm, parent=window)
 
-    window = MainWindow(vm, viewer, voice_panel=VoicePanel(voice), character_dialog_factory=character_dialog)
+    # One view model follows the selected model. It reads the saved voices when the selection moves and after
+    # "New voice…"; a voice made or deleted in the Voice section shows up here on the next selection change.
+    model_voice_vm = CharacterViewModel(api, library, None, player, paths.data / "voice_cache", parent=app)
+
+    def new_voice_dialog(parent: QWidget):
+        from model3d_client.views.new_voice_dialog import NewVoiceDialog
+
+        return NewVoiceDialog(voice, parent)
+
+    window = MainWindow(vm, viewer, voice_panel=VoicePanel(voice), character_dialog_factory=character_dialog,
+                        model_voice_panel=ModelVoicePanel(model_voice_vm, new_voice_dialog))
     return app, window
 
 
