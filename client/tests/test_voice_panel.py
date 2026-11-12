@@ -1,6 +1,5 @@
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QLabel, QTabWidget, QWidget
 
 from fake_engine import FakeEngine
 from fakes import FakePlayer, FakeRecorder, FakeSupervisor, StubViewer
@@ -12,6 +11,7 @@ from model3d_client.viewmodels.generation import GenerationViewModel
 from model3d_client.viewmodels.main import MainViewModel
 from model3d_client.viewmodels.voice import VoiceViewModel
 from model3d_client.views.main_window import MainWindow
+from model3d_client.views.new_voice_dialog import NewVoiceDialog
 from model3d_client.views.voice_panel import VoicePanel
 
 TS = "2026-11-01T12:00:00Z"
@@ -52,31 +52,53 @@ def load_voices(qtbot, engine, vm):
     qtbot.waitUntil(lambda: len(vm.voices) == 2, timeout=5000)
 
 
-def test_panel_renders_the_voices(qtbot, engine, vm, panel):
+def test_panel_has_no_tabs_and_lists_voices_with_play(qtbot, engine, vm, panel):
+    assert not panel.findChildren(QTabWidget)
     load_voices(qtbot, engine, vm)
     assert panel.voice_list.count() == 2
-    assert panel.voice_list.item(0).text().startswith("Narrator")
+    assert sorted(panel.row_play_buttons) == ["V1", "V2"]
     assert [panel.generate_voice_combo.itemText(i) for i in range(2)] == ["Narrator", "Hero"]
+    assert panel.row_play_buttons["V1"].isEnabled()
 
 
-def test_voice_buttons_need_a_selected_voice(qtbot, engine, vm, panel):
+def test_row_play_button_plays_that_voice_sample(qtbot, engine, vm, panel):
+    engine.controller.voice_files["GET /v1/voices/V2/sample"] = b"RIFF hero"
     load_voices(qtbot, engine, vm)
-    assert not panel.play_voice_button.isEnabled()
-    panel.voice_list.setCurrentRow(1)
-    assert panel.play_voice_button.isEnabled() and panel.delete_voice_button.isEnabled()
-    assert panel.selected_voice_id() == "V2"
+    panel.row_play_buttons["V2"].click()
+    qtbot.waitUntil(lambda: bool(vm.player.played), timeout=5000)
+    assert vm.player.played[0].read_bytes() == b"RIFF hero"
 
 
-def test_unavailable_voice_disables_controls_and_shows_the_reason(qtbot, make_api, engine, tmp_path):
+def test_empty_hint_shows_only_without_voices(qtbot, engine, vm, panel):
+    panel.show()
+    assert panel.empty_hint.isVisible() and "New voice" in panel.empty_hint.text()
+    load_voices(qtbot, engine, vm)
+    assert not panel.empty_hint.isVisible()
+
+
+def test_new_voice_button_opens_the_dialog(qtbot, panel, monkeypatch):
+    opened = []
+    monkeypatch.setattr(NewVoiceDialog, "open", lambda self: opened.append(self))
+    panel.new_voice_button.click()
+    assert len(opened) == 1 and isinstance(opened[0], NewVoiceDialog)
+    assert panel.new_voice_dialog is opened[0]
+    opened[0].reject()
+    assert panel.new_voice_dialog is None
+
+
+def test_unavailable_voice_shows_the_reason_once_and_disables_buttons(qtbot, make_api, engine, tmp_path):
     supervisor = FakeSupervisor(voice=False, voice_reason="Voice model not installed")
     voice_vm = VoiceViewModel(make_api(engine.url), supervisor, tmp_path / "cache", FakePlayer(), FakeRecorder)
     widget = VoicePanel(voice_vm)
     qtbot.addWidget(widget)
     widget.show()
     assert widget.banner.isVisible() and widget.banner.text() == "Voice model not installed"
-    assert not widget.tabs.isEnabled() and not widget.voice_list.isEnabled()
+    assert not widget.new_voice_button.isEnabled() and not widget.generate_button.isEnabled()
+    assert not widget.voice_list.isEnabled()
+    shown = [label for label in widget.findChildren(QLabel) if label.isVisible() and label.text() == "Voice model not installed"]
+    assert len(shown) == 1
     supervisor.set_voice(True)
-    assert not widget.banner.isVisible() and widget.tabs.isEnabled()
+    assert not widget.banner.isVisible() and widget.new_voice_button.isEnabled()
 
 
 def test_engine_not_ready_banner(qtbot, make_api, engine, tmp_path):
@@ -86,46 +108,14 @@ def test_engine_not_ready_banner(qtbot, make_api, engine, tmp_path):
     assert widget.banner.text() == "The engine is not ready yet."
 
 
-def test_preview_button_needs_description_and_sample_text(panel):
-    assert not panel.preview_button.isEnabled()
-    panel.description_edit.setPlainText("a deep voice")
-    assert not panel.preview_button.isEnabled()
-    panel.sample_edit.setPlainText("Hello")
-    assert panel.preview_button.isEnabled()
-    panel.description_edit.setPlainText("   ")
-    assert not panel.preview_button.isEnabled()
-
-
-def test_generate_button_needs_voice_and_text(qtbot, engine, vm, panel):
+def test_speak_button_needs_voice_and_text(qtbot, engine, vm, panel):
     assert not panel.generate_button.isEnabled()
     load_voices(qtbot, engine, vm)
     assert not panel.generate_button.isEnabled()
     panel.generate_text_edit.setPlainText("Hola")
     assert panel.generate_button.isEnabled()
-
-
-def test_save_voice_needs_a_name_and_a_preview(panel, vm):
-    panel.preview_name_edit.setText("Deep")
-    assert not panel.save_preview_button.isEnabled()
-    vm.preview_id = "PV1"
-    vm.changed.emit()
-    assert panel.save_preview_button.isEnabled()
-    panel.preview_name_edit.setText("")
-    assert not panel.save_preview_button.isEnabled()
-
-
-def test_record_button_toggles_and_take_buttons_follow(qtbot, panel, vm):
-    assert panel.record_button.text() == "Record" and not panel.play_take_button.isEnabled()
-    qtbot.mouseClick(panel.record_button, Qt.MouseButton.LeftButton)
-    assert panel.record_button.text() == "Stop"
-    vm._recorder.level.emit(0.5)
-    assert panel.level_bar.value() == 50
-    qtbot.mouseClick(panel.record_button, Qt.MouseButton.LeftButton)
-    assert panel.record_button.text() == "Record"
-    assert panel.play_take_button.isEnabled() and panel.rerecord_button.isEnabled()
-    assert not panel.save_recording_button.isEnabled()
-    panel.record_name_edit.setText("Mine")
-    assert panel.save_recording_button.isEnabled()
+    panel.generate_text_edit.setPlainText("  ")
+    assert not panel.generate_button.isEnabled()
 
 
 def test_error_is_shown(panel, vm):
@@ -140,13 +130,23 @@ def test_error_is_shown(panel, vm):
 def test_delete_asks_before_calling_the_engine(qtbot, engine, vm, panel):
     load_voices(qtbot, engine, vm)
     engine.controller.voice_answers["DELETE /v1/voices/V1"] = (204, None)
-    panel.voice_list.setCurrentRow(0)
     panel.confirm_delete = lambda name: False
-    panel.delete_voice_button.click()
+    panel.delete_voice("V1")
     assert not [r for r in engine.controller.voice_requests if r["method"] == "DELETE"]
     panel.confirm_delete = lambda name: True
-    panel.delete_voice_button.click()
+    panel.delete_voice("V1")
     qtbot.waitUntil(lambda: any(r["method"] == "DELETE" for r in engine.controller.voice_requests), timeout=5000)
+
+
+def test_rename_asks_for_a_name_then_patches(qtbot, engine, vm, panel):
+    load_voices(qtbot, engine, vm)
+    engine.controller.voice_answers["PATCH /v1/voices/V1"] = (200, voice_json("V1", "Bard"))
+    panel.ask_name = lambda title, label, current: None
+    panel.rename_voice("V1")
+    assert not [r for r in engine.controller.voice_requests if r["method"] == "PATCH"]
+    panel.ask_name = lambda title, label, current: "Bard"
+    panel.rename_voice("V1")
+    qtbot.waitUntil(lambda: any(r["method"] == "PATCH" for r in engine.controller.voice_requests), timeout=5000)
 
 
 @pytest.fixture

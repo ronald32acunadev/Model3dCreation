@@ -230,3 +230,38 @@ def test_becoming_available_loads_the_voices(qtbot, engine, make_vm):
     vm = make_vm(supervisor)
     supervisor.set_voice(True)
     qtbot.waitUntil(lambda: len(vm.voices) == 1, timeout=5000)
+
+
+def test_saving_a_voice_emits_voice_saved_with_it(qtbot, engine, make_vm):
+    engine.controller.voice_answers["POST /v1/voice-previews"] = (202, make_job("PV3"))
+    engine.controller.voice_files["GET /v1/speech-jobs/PV3/result"] = b"RIFF preview"
+    engine.controller.voice_answers["POST /v1/voices"] = (201, voice_json("V9", "Deep"))
+    script_voices(engine, voice_json("V9", "Deep"))
+    engine.controller.push(completed("PV3"), CLOSE)
+    vm = make_vm()
+    vm.preview("d", "en", "t")
+    qtbot.waitUntil(lambda: vm.preview_ready, timeout=10000)
+    with qtbot.waitSignal(vm.voice_saved, timeout=5000) as blocker:
+        vm.save_preview("Deep")
+    assert blocker.args[0].voice_id == "V9"
+
+
+def test_reset_draft_clears_preview_take_and_error(qtbot, engine, make_vm, recorder, player):
+    vm = make_vm()
+    vm.preview_id, vm.preview_path = "PV1", None
+    vm.start_recording()
+    vm.stop_recording()
+    take = vm.take
+    assert take is not None and take.exists()
+    vm.transcript = "old"
+    vm.reset_draft()
+    assert vm.take is None and not take.exists() and vm.transcript is None
+    assert not vm.preview_ready and vm.error is None and player.stops >= 1
+
+
+def test_reset_draft_while_recording_discards_the_take(make_vm, recorder):
+    vm = make_vm()
+    vm.start_recording()
+    vm.reset_draft()
+    assert not vm.recording and vm.take is None
+    assert recorder.target is not None and not recorder.target.exists()

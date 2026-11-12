@@ -84,6 +84,7 @@ class VoiceViewModel(QObject):
     changed = Signal()
     voices_changed = Signal()
     error_changed = Signal()
+    voice_saved = Signal(object)
 
     def __init__(self, api: EngineApi, supervisor: EngineSupervisor, cache_dir: Path, player,
                  recorder_factory: Callable[[], object] | None = None, parent: QObject | None = None):
@@ -113,6 +114,7 @@ class VoiceViewModel(QObject):
         self.transcribing = False
         self.transcript: str | None = None
         self._takes = 0
+        self._discard_take = False
 
         self.generating = False
         self.progress = 0.0
@@ -285,6 +287,22 @@ class VoiceViewModel(QObject):
         self.preview_id, self.preview_path = None, None
         self.refresh()
         self.changed.emit()
+        self.voice_saved.emit(result)
+
+    def reset_draft(self) -> None:
+        """Forget the preview, the take and the transcript of an unsaved new voice."""
+        self.player.stop()
+        if self.recording and self._recorder is not None:
+            self._discard_take = True
+            self._recorder.stop()
+        if self.take is not None:
+            self.take.unlink(missing_ok=True)
+        self.take = None
+        self.transcript = None
+        self.preview_id, self.preview_path = None, None
+        self.error = None
+        self.error_changed.emit()
+        self.changed.emit()
 
     def start_recording(self) -> None:
         if not self._guard() or self.recording or self.transcribing:
@@ -319,7 +337,11 @@ class VoiceViewModel(QObject):
     def _on_recorded(self, path: Path) -> None:
         self.recording = False
         self.level = 0.0
-        self.take = path
+        if self._discard_take:
+            self._discard_take = False
+            Path(path).unlink(missing_ok=True)
+        else:
+            self.take = path
         self.changed.emit()
 
     def _on_recording_failed(self, message: str) -> None:
@@ -357,6 +379,7 @@ class VoiceViewModel(QObject):
         self.take = None
         self.refresh()
         self.changed.emit()
+        self.voice_saved.emit(result)
 
     def history(self, voice_id: str) -> list[Path]:
         """The clips generated with a voice, newest first; read from disk so they survive restarts."""
