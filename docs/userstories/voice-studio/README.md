@@ -1,6 +1,6 @@
 # Voice studio
 
-Status: US-01..US-08 approved 2026-11-09 ("Approve, all stories"), execution mode: all stories. US-09..US-12 added and approved 2026-11-11 ("Si"), including the voice-deletion assumption; execution mode for them: all stories (2026-11-11, "All in a row"). Constraint 2026-11-11 (verbatim): "quiero que todo se haga por medio de modelos de IA locales", clarified "Me refiero a la generacion de voces" — every voice step (design, cloning, speech, transcription) runs on local models on this machine; no cloud TTS or transcription service is called, and after the one-time weight download it works offline. Code authorship follows AGENTS.md as before. US-01 in progress. Branch: `feat/public-api-voice`. Depends on `docs/userstories/public-api/` (the engine API, its LAN address and API key).
+Status: US-01..US-08 approved 2026-11-09 ("Approve, all stories"), execution mode: all stories. US-13..US-14 added and approved 2026-11-11 ("Approve both"), execution mode all stories. US-09..US-12 added and approved 2026-11-11 ("Si"), including the voice-deletion assumption; execution mode for them: all stories (2026-11-11, "All in a row"). Constraint 2026-11-11 (verbatim): "quiero que todo se haga por medio de modelos de IA locales", clarified "Me refiero a la generacion de voces" — every voice step (design, cloning, speech, transcription) runs on local models on this machine; no cloud TTS or transcription service is called, and after the one-time weight download it works offline. Code authorship follows AGENTS.md as before. US-01 in progress. Branch: `feat/public-api-voice`. Depends on `docs/userstories/public-api/` (the engine API, its LAN address and API key).
 
 ## Context
 
@@ -127,6 +127,26 @@ As the owner, or another agent using the API, I want to import a `.m3dchar` file
 - US-12 / AC-03: An exported then imported character matches the original: same names, versions, derivation, files byte for byte, voice transcript and phrase texts.
 - US-12 / AC-04: The app has "Import character…" with a file dialog; the character appears in the library when done.
 
+## US-13: A simpler Voice section
+
+Added 2026-11-11 after the first manual pass. Feedback (verbatim): "PARECE QUE LA INTERFAZ DE VOZ ES UN POCO confusa". Revises the layout of US-06 / AC-01; the features stay.
+
+As a user, I want the Voice section to show one clear path, so that I know what to do first.
+
+- US-13 / AC-01: The section shows my voices as a list with Play next to each, a single "New voice" button, and a "Try a voice" area (voice, language, text, Speak, Save as WAV, history). The Describe/Record/Generate tabs are gone.
+- US-13 / AC-02: "New voice" opens a dialog that asks first how to create it ("Describe it" or "Record it"), then shows only that method's fields, the preview or take to listen to, and finally the name and Save. Cancel leaves nothing saved.
+- US-13 / AC-03: With no voices yet, the list shows a short hint pointing at "New voice". When voice generation is unavailable, the reason is shown once at the top and the buttons are disabled.
+
+## US-14: A voice button on the model
+
+Added 2026-11-11. Request (verbatim): "me gustaria añadir a los modelos un boton para generar voz algo como que los vincule". Revises US-09 / AC-06: the character's voice moves from the right-click menu to the model view.
+
+As a user, I want a visible voice button on the selected model, so that I link a voice to it and make it speak without looking for a menu.
+
+- US-14 / AC-01: When a model is selected in "3D models", the right panel shows a "Voice" area for its character: the linked voice (or "No voice"), a "Link voice" picker with the saved voices plus "New voice…" (which opens the US-13 dialog and links the new voice when saved), and "Unlink".
+- US-14 / AC-02: With a voice linked, the area shows a text box and a "Say" button that generates and plays the phrase, and the character's phrases with Play and Delete. Without a voice, "Say" is disabled with "Link a voice first".
+- US-14 / AC-03: The right-click "Voice and phrases…" entry stays as a shortcut to the same area; export and import are unchanged.
+
 ## Design notes (2026-11-11, for US-02..US-04)
 
 - Voice stage: `engine/src/model3d_engine/stages/voice.py` (`VoiceStage`, `make_voice_stage`) copies the TRELLIS pattern: it starts `stages/voice_worker.py` with `vendor/Qwen3-TTS/.venv/bin/python` (`Settings.qwen_tts_dir`, env `MODEL3D_QWEN_TTS_DIR`), `CUDA_VISIBLE_DEVICES` set to its card, `HF_HOME`, `HF_HUB_OFFLINE=1`, and talks JSON lines (`ready`, `run`, `progress`, `done`, `error`, `stop`). The worker imports no engine code, loads models from their local snapshot (transformers 4.57.3 queries the Hub for a repo id even offline), uses `sdpa` attention and bf16, loads each model on first use and keeps at most one Qwen3-TTS model resident.
@@ -150,6 +170,8 @@ US-01 → US-05 → (US-02, US-03, US-04) → US-10 → US-09 → US-11 → US-1
 | US-06 / AC-01..AC-03 | client tests for the voice view model and window switch; one manual pass in the running app | Automated part passed 2026-11-11: `test_voice_vm.py`, `test_voice_panel.py`, `test_audio.py` (30 tests, fake player/recorder), section switch tests, Spanish catalog complete (252 finished, 0 unfinished); client suite 392 passed five runs in a row after moving garbage collection to the main thread. Pending: manual pass in the running app with a real microphone and speakers. |
 | US-07 / AC-01..AC-02 | client setup recipe tests; one install into a fresh folder | Pending |
 | US-08 / AC-01..AC-02 | curl examples run against the real engine | Pending |
+| US-13 / AC-01..AC-03 | client tests for the simplified panel and the new-voice dialog (method choice, preview/take, cancel saves nothing, empty hint, unavailable banner); manual pass | Pending |
+| US-14 / AC-01..AC-03 | client tests for the model voice area (link, unlink, new voice links, Say disabled without voice, phrases); manual pass | Pending |
 | US-10 / AC-01..AC-02 | `engine/tests/test_characters.py` (grouping at depth, existing library without `character.json`, rename, 404 for derived id); existing library tests still pass | Passed 2026-11-11: `contracts/tests/test_characters.py` 12 passed (depth, orphan, cycle-safe, no write on read, corrupt file, rename), `engine/tests/test_characters.py` 6 passed; suites: contracts 32, engine 360, client 287 + known i18n venv failure, blender 29. |
 | US-10 / AC-03 | client test for the character cards view model; one manual pass in the running app | Automated part passed 2026-11-11: library tree tests in `test_main_window.py` (one item per character, versions as children, selection unchanged). Pending: manual pass in the running app. |
 | US-09 / AC-01..AC-05 | `engine/tests/test_character_voice.py` with a fake voice stage (link, unlink, speak, phrases list/audio/delete, 404/409, LAN key, voice deletion clears links); one real phrase via curl from another machine | Passed 2026-11-11: `test_character_voice.py` 19 passed, contracts characters tests 18 passed; suites contracts 38, engine 379, client 287 + known i18n venv failure, blender 29. Real run on a copy of a library character (engine on a temporary MODEL3D_HOME, localhost): speech before linking → 409 `voice_not_assigned`; PUT voice; `POST /v1/characters/{id}/speech` with text only → succeeded in 24 s; the phrase is listed, its audio is 200 `audio/wav`, `phrase_count` 1. Pending: the same call from another machine with the API key. |
