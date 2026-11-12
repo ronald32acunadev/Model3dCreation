@@ -76,8 +76,14 @@ def write_config(snapshot: Path, config_dir: Path) -> None:
     args["args"]["low_vram"] = True
     (config_dir / "pipeline.json").write_text(json.dumps(args))
     link = config_dir / "ckpts"
-    if not os.path.lexists(link):
-        link.symlink_to(snapshot / "ckpts")
+    target = snapshot / "ckpts"
+    if os.path.islink(link):
+        if os.readlink(link) == str(target) and link.exists():
+            return
+        link.unlink()
+    elif os.path.lexists(link):
+        return
+    link.symlink_to(target)
 
 
 def guard_fill_holes() -> None:
