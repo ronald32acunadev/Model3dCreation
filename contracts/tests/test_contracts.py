@@ -12,7 +12,9 @@ from model3d_contracts.events import (
     SnapshotEvent,
     parse_event,
 )
-from model3d_contracts.jobs import FINAL_STATES, Job, JobError, JobOptions, JobState, Quality
+from typing import get_args
+
+from model3d_contracts.jobs import FINAL_STATES, Job, JobError, JobOptions, JobState, Quality, Stage
 
 TS = datetime(2026, 10, 20, 19, 5, tzinfo=UTC)
 
@@ -132,3 +134,16 @@ def test_job_notice_defaults_to_none():
     assert job.notice is None
     job2 = Job(job_id="j1", state=JobState.queued, seed=1, created_at=TS, links=JobLinks(self="/a", events="/b", result="/c"), notice="Detailed face was cancelled")
     assert job2.notice == "Detailed face was cancelled"
+
+
+def test_sharper_texture_needs_rig():
+    with pytest.raises(ValidationError) as excinfo:
+        JobOptions(sharper_texture=True)
+    assert "sharper_texture needs rig: true" in str(excinfo.value)
+    assert JobOptions(sharper_texture=True, rig=True).sharper_texture is True
+    assert JobOptions().sharper_texture is False
+
+
+def test_texturing_is_a_job_state_with_its_stage():
+    assert JobState("texturing") is JobState.texturing
+    assert "texture" in get_args(Stage)

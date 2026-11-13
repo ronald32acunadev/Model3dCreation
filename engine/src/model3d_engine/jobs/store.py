@@ -46,7 +46,10 @@ _ALLOWED: dict[JobState, frozenset[JobState]] = {
         {JobState.painting, JobState.rigging, JobState.succeeded, JobState.failed, JobState.cancelled}
     ),
     JobState.painting: frozenset({JobState.rigging, JobState.succeeded, JobState.failed, JobState.cancelled}),
-    JobState.rigging: frozenset({JobState.detailing, JobState.succeeded, JobState.failed, JobState.cancelled}),
+    JobState.rigging: frozenset(
+        {JobState.texturing, JobState.detailing, JobState.succeeded, JobState.failed, JobState.cancelled}
+    ),
+    JobState.texturing: frozenset({JobState.detailing, JobState.succeeded, JobState.failed, JobState.cancelled}),
     JobState.detailing: frozenset({JobState.succeeded, JobState.failed, JobState.cancelled}),
     JobState.speaking: frozenset({JobState.succeeded, JobState.failed, JobState.cancelled}),
     JobState.succeeded: frozenset(),
@@ -84,6 +87,8 @@ class JobRecord:
             self.stage, self.progress = "paint", 0.0
         elif new == JobState.rigging:
             self.stage, self.progress = "rig", 0.0
+        elif new == JobState.texturing:
+            self.stage, self.progress = "texture", 0.0
         elif new == JobState.detailing:
             self.stage, self.progress = "face", 0.0
         elif new == JobState.speaking:

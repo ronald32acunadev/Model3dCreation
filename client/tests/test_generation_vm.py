@@ -406,3 +406,56 @@ def test_detailed_face_follows_the_engine_health(qtbot, engine, make_vm, library
     assert options["detailed_face"] is False
     assert options["rig"] is False
     assert make_vm(supervisor=FakeSupervisor(detailed_face=True)).detail_reason is None
+
+
+def test_texture_progress_event_maps_to_texturing_phase(qtbot, engine, make_vm, library, png):
+    vm = make_vm(supervisor=FakeSupervisor(sharper_texture=True))
+    vm.set_image(png)
+    vm.set_sharper_texture(True)
+    engine.controller.push(progress("texture", 0.3, "painted head (1 of 6)"))
+    vm.generate()
+    qtbot.waitUntil(lambda: vm.phase == Phase.texturing, timeout=10000)
+    assert (vm.progress, vm.message) == (0.3, "painted head (1 of 6)")
+    assert vm.can_cancel
+    engine.controller.push(completed(), CLOSE)
+    qtbot.waitUntil(lambda: vm.phase == Phase.idle, timeout=10000)
+
+
+def test_sharper_texture_asks_for_rig_and_saves_the_final_and_the_original_model(qtbot, engine, make_vm, library, png):
+    engine.controller.result = b"glTF sharper model"
+    engine.controller.jobs["J1"] = make_job("J1", JobState.succeeded)
+    engine.controller.push(progress("texture", 0.4, "painted head"), completed(), CLOSE)
+    vm = make_vm(supervisor=FakeSupervisor(sharper_texture=True))
+    vm.set_image(png)
+    vm.set_sharper_texture(True)
+    entry = run_to_end(qtbot, vm)
+    options = json.loads(engine.controller.submissions[-1]["options"])
+    assert (options["rig"], options["sharper_texture"], options["detailed_face"]) == (True, True, False)
+    assert library.model_path(entry.entry_id).read_bytes() == b"glTF sharper model"
+    assert (library.folder(entry.entry_id) / "model_original.glb").read_bytes() == b"glTF original model"
+    assert engine.controller.result_requests == [None, "original"]
+
+
+def test_sharper_texture_is_not_asked_when_the_engine_cannot(qtbot, engine, make_vm, library, png):
+    engine.controller.push(completed(), CLOSE)
+    vm = make_vm(supervisor=FakeSupervisor(sharper_texture=False))
+    vm.set_image(png)
+    vm.set_sharper_texture(True)
+    assert vm.sharper_texture_reason == "Sharper texture needs the TRELLIS.2 generator"
+    run_to_end(qtbot, vm)
+    options = json.loads(engine.controller.submissions[-1]["options"])
+    assert (options["rig"], options["sharper_texture"]) == (False, False)
+
+
+def test_regenerate_keeps_sharper_texture(qtbot, engine, make_vm, library, png):
+    source = finished_entry(library, png)
+    library.update(source.model_copy(update={"options": source.options.model_copy(update={"rig": True, "sharper_texture": True})}))
+    source = library._read(source.entry_id)
+    engine.controller.push(completed(), CLOSE)
+    vm = make_vm(supervisor=FakeSupervisor(sharper_texture=True))
+    done = []
+    vm.finished.connect(done.append)
+    vm.regenerate(source.entry_id)
+    qtbot.waitUntil(lambda: bool(done), timeout=10000)
+    sent = json.loads(engine.controller.submissions[-1]["options"])
+    assert (sent["rig"], sent["sharper_texture"]) == (True, True)

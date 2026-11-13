@@ -16,7 +16,8 @@ class FakeSupervisor(QObject):
 
     def __init__(self, state=EngineState.ready, texture=True, rig=True, rig_reason=None, detailed_face=False,
                  detailed_face_reason="Detailed face needs the TRELLIS.2 generator", voice=False,
-                 voice_reason=None):
+                 voice_reason=None, sharper_texture=False,
+                 sharper_texture_reason="Sharper texture needs the TRELLIS.2 generator"):
         super().__init__()
         self.state = state
         self.health = Health.model_validate({
@@ -24,6 +25,8 @@ class FakeSupervisor(QObject):
                           detailed_face=detailed_face, detailed_face_reason=detailed_face_reason),
             "voice": voice,
             "voice_reason": voice_reason,
+            "sharper_texture": sharper_texture,
+            "sharper_texture_reason": None if sharper_texture else sharper_texture_reason,
         })
         self.failure = None
         self.owned = True

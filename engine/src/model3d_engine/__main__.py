@@ -53,6 +53,18 @@ def read_memory() -> dict[str, tuple[int, int]]:
     return memory
 
 
+TEXTURING_ENCODER = "ckpts/shape_enc_next_dc_f16c32_fp16.safetensors"
+
+
+def texturing_weights_reason(hf_home: Path) -> str | None:
+    """Why TRELLIS.2's texturing pipeline cannot load, or None: it needs a shape encoder the
+    image-to-3D pipeline does not use, so a cache made for generation alone lacks it."""
+    snapshots = Path(hf_home) / "hub/models--microsoft--TRELLIS.2-4B/snapshots"
+    if any((snapshot / TEXTURING_ENCODER).exists() for snapshot in snapshots.glob("*")):
+        return None
+    return f"TRELLIS.2's texturing weights are missing ({TEXTURING_ENCODER} in {snapshots})"
+
+
 def build_engine(
     settings: Settings,
     inventory: Inventory | None = None,
@@ -63,6 +75,7 @@ def build_engine(
     rig_runner: RigRunner | None = None,
     head_pass: HeadPassRunner | None = None,
     voice_runner: StageRunner | None = None,
+    texture_pass: HeadPassRunner | None = None,
     voice_factory: str = VOICE_FACTORY,
 ) -> FastAPI:
     """Pick the run mode for the detected GPUs and wire workers, scheduler, store, and bus into the API."""
@@ -134,6 +147,15 @@ def build_engine(
             f"http://127.0.0.1:{settings.port}",
         )
         head_pass = candidate if candidate.reason is None else None
+    if texture_pass is None and trellis and rig is not None and (rig.ready or getattr(rig, "reason", None) is None):
+        # Sharper texture retextures each skeleton part with TRELLIS.2 on the cards itself.
+        candidate = HeadPassRunner(
+            Path(sys.executable),
+            REPO_ROOT / "scripts/kit_assembly/texture_pass.py",
+            settings.home,
+            f"http://127.0.0.1:{settings.port}",
+        )
+        texture_pass = candidate if candidate.reason is None else None
     # Speech runs on the shape card, taking turns with the 3D stages; it needs the Qwen3-TTS clone and its venv.
     voice = voice_runner
     voice_gpu = devices.shape if plan.name != ModeName.unsupported else None
@@ -148,7 +170,8 @@ def build_engine(
     cards["voice"] = devices.shape
     store, bus = JobStore(settings.jobs_dir), EventBus()
     swap = plan.name in (ModeName.single_gpu_swap, ModeName.single_gpu_resident, ModeName.shape_only)
-    scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=cards, head_pass=head_pass, voice=voice)
+    scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=cards, head_pass=head_pass, voice=voice,
+                          texture_pass=texture_pass)
     if plan.name == ModeName.unsupported:
         scheduler.start_error = JobError(code=ModeUnavailable.code, message=plan.reason)
 
@@ -182,6 +205,8 @@ def build_engine(
             "detailed_face_reason": detailed_face_reason(),
             "voice": scheduler.voice_available,
             "voice_reason": voice_reason(),
+            "sharper_texture": sharper_texture_reason() is None,
+            "sharper_texture_reason": sharper_texture_reason(),
         }
 
     def rig_reason() -> str | None:
@@ -196,6 +221,15 @@ def build_engine(
             return "Voice generation needs a usable GPU"
         return f"Qwen3-TTS is not installed in {settings.qwen_tts_dir}"
 
+    def sharper_texture_reason() -> str | None:
+        if not trellis:
+            return "Sharper texture needs MODEL3D_GENERATOR=trellis2"
+        if (reason := rig_reason()) is not None:
+            return reason
+        if texture_pass is None:
+            return "The texture-pass tools are not installed"
+        return texturing_weights_reason(settings.hf_home)
+
     def detailed_face_reason() -> str | None:
         if not trellis:
             return "Detailed face needs MODEL3D_GENERATOR=trellis2"
@@ -207,7 +241,7 @@ def build_engine(
 
     # Only shape_only refuses textured jobs; with no usable GPU every job gets 503 and the cause.
     texture_available = plan.name != ModeName.shape_only
-    app = create_app(settings, scheduler, store, bus, health, texture_available=texture_available, rig_reason=rig_reason, detailed_face_reason=detailed_face_reason, voice_reason=voice_reason)
+    app = create_app(settings, scheduler, store, bus, health, texture_available=texture_available, rig_reason=rig_reason, detailed_face_reason=detailed_face_reason, sharper_texture_reason=sharper_texture_reason, voice_reason=voice_reason)
     app.state.rig = rig
     app.state.voice = voice
     app.state.head_pass = head_pass

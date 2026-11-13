@@ -4,6 +4,7 @@ plus an optional rig stage that adds a skeleton to finished models."""
 import asyncio
 import logging
 import shutil
+from pathlib import Path
 from collections.abc import Awaitable, Callable
 
 from model3d_contracts.events import CancelledEvent, CompletedEvent, FailedEvent, ProgressEvent, ResultStats
@@ -26,7 +27,7 @@ from model3d_engine.stages.protocol import (
 logger = logging.getLogger(__name__)
 
 STATS_FILE = "stats.json"  # the library save endpoint reads this file
-ORIGINAL_OUTPUT = "model_original.glb"  # the rigged model a head pass replaced
+ORIGINAL_OUTPUT = "model_original.glb"  # the rigged model before the texture or head pass replaced it
 
 
 class Scheduler:
@@ -55,6 +56,7 @@ class Scheduler:
         cards: dict[str, str] | None = None,
         head_pass: HeadPassRunner | None = None,
         voice: StageRunner | None = None,
+        texture_pass: HeadPassRunner | None = None,
         on_speech_succeeded: Callable[[JobRecord], None] | None = None,
     ):
         self.on_speech_succeeded = on_speech_succeeded
@@ -65,6 +67,8 @@ class Scheduler:
         self._rig = rig
         self._voice = voice
         self._head_pass = head_pass
+        self._texture_pass = texture_pass
+        self._texture_queue: asyncio.Queue[str] = asyncio.Queue()
         self._shape_queue: asyncio.Queue[str] = asyncio.Queue()
         self._paint_queue: asyncio.Queue[str] = asyncio.Queue()
         self._rig_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -105,9 +109,10 @@ class Scheduler:
         if self._rig is not None:
             await self._rig.start()
         if self._swap:
-            self._tasks = [asyncio.create_task(self._swap_loop()), asyncio.create_task(self._face_loop())]
+            self._tasks = [asyncio.create_task(loop) for loop in (self._swap_loop(), self._face_loop(), self._texture_loop())]
         else:
-            loops = [self._shape_loop(), self._paint_loop(), self._rig_loop(), self._face_loop(), self._voice_loop()]
+            loops = [self._shape_loop(), self._paint_loop(), self._rig_loop(), self._face_loop(), self._voice_loop(),
+                     self._texture_loop()]
             self._tasks = [asyncio.create_task(loop) for loop in loops]
         self._started = True
 
@@ -157,8 +162,9 @@ class Scheduler:
             self._cancel(record)
         else:
             record.cancel_requested = True
-            if record.state == JobState.detailing and self._head_pass is not None:
-                task = asyncio.get_running_loop().create_task(self._head_pass.cancel(job_id))
+            running = {JobState.detailing: self._head_pass, JobState.texturing: self._texture_pass}.get(record.state)
+            if running is not None:
+                task = asyncio.get_running_loop().create_task(running.cancel(job_id))
                 self._background.add(task)
                 task.add_done_callback(self._background.discard)
         return True
@@ -331,12 +337,81 @@ class Scheduler:
             return
         if record.cancel_requested:
             self._cancel(record)
-        elif record.options.detailed_face and self._head_pass is not None:
+        elif record.options.sharper_texture and self._texture_pass is not None:
             self._face_results[job_id] = result
-            self._face_queue.put_nowait(job_id)
+            self._texture_queue.put_nowait(job_id)
             self._work.set()
         else:
+            self._after_texture(record, result)
+
+    def _after_texture(self, record: JobRecord, result: StageResult) -> None:
+        """A rigged (and maybe retextured) model: on to Detailed face, or finished."""
+        if record.options.detailed_face and self._head_pass is not None:
+            self._face_results[record.job_id] = result
+            self._face_queue.put_nowait(record.job_id)
+            self._work.set()
+        else:
+            self._face_results.pop(record.job_id, None)
             self._succeed(record, result, record.options.texture)
+
+    @staticmethod
+    def _add_notice(record: JobRecord, notice: str | None) -> None:
+        if notice:
+            record.notice = f"{record.notice}; {notice}" if record.notice else notice
+
+    def _replace_model(self, record: JobRecord, model: Path) -> None:
+        """The pass's model becomes the job's; the first model before any pass stays as the original."""
+        current = record.dir / MODEL_OUTPUT
+        original = record.dir / ORIGINAL_OUTPUT
+        if not original.exists():
+            current.replace(original)
+        shutil.copyfile(model, current)
+
+    async def _texture_job(self, job_id: str) -> None:
+        """Run the texture pass holding every card: it drives the GPUs itself, so no stage may load
+        a model on them meanwhile (other jobs wait for it, unlike Detailed face)."""
+        record = self._store.get(job_id)
+        result = self._face_results.get(job_id)
+        if record is None or record.is_final or result is None or self._texture_pass is None:
+            return
+        if record.cancel_requested:
+            self._add_notice(record, "Sharper texture was cancelled")
+            self._after_texture(record, result)
+            return
+        self._begin(record, JobState.texturing, "texture")
+        progress = self._progress(record, "texture")
+
+        def on_step(step: str) -> None:
+            progress(record.progress, step)
+
+        outcome: HeadPassResult | None = None
+        failure = ""
+        locks = list({id(lock): lock for lock in self._card_lock.values()}.values())
+        for lock in locks:
+            await lock.acquire()
+        try:
+            for name, runner in (("shape", self._shape), ("paint", self._paint), ("voice", self._voice)):
+                if runner is not None and runner.ready:
+                    await runner.unload()
+            outcome = await self._texture_pass.run(job_id, on_step)
+        except HeadPassFailed as error:
+            failure = str(error).splitlines()[0] if str(error) else "unknown error"
+        finally:
+            for lock in reversed(locks):
+                lock.release()
+        if record.cancel_requested:
+            self._add_notice(record, "Sharper texture was cancelled")
+        elif outcome is None:
+            self._add_notice(record, f"Sharper texture failed: {failure}")
+        elif outcome.applied and outcome.model is not None:
+            self._replace_model(record, outcome.model)
+        else:
+            self._add_notice(record, outcome.reason)
+        if record.cancel_requested:
+            self._face_results.pop(job_id, None)
+            self._succeed(record, result, record.options.texture)
+        else:
+            self._after_texture(record, result)
 
     async def _face_job(self, job_id: str) -> None:
         record = self._store.get(job_id)
@@ -344,7 +419,7 @@ class Scheduler:
         if record is None or record.is_final or result is None or self._head_pass is None:
             return
         if record.cancel_requested:
-            record.notice = "Detailed face was cancelled"
+            self._add_notice(record, "Detailed face was cancelled")
             self._succeed(record, result, record.options.texture)
             return
         self._begin(record, JobState.detailing, "face")
@@ -360,15 +435,13 @@ class Scheduler:
         except HeadPassFailed as error:
             failure = str(error).splitlines()[0] if str(error) else "unknown error"
         if record.cancel_requested:
-            record.notice = "Detailed face was cancelled"
+            self._add_notice(record, "Detailed face was cancelled")
         elif outcome is None:
-            record.notice = f"Detailed face failed: {failure}"
+            self._add_notice(record, f"Detailed face failed: {failure}")
         elif outcome.applied and outcome.model is not None:
-            model = record.dir / MODEL_OUTPUT
-            model.replace(record.dir / ORIGINAL_OUTPUT)
-            shutil.copyfile(outcome.model, model)
+            self._replace_model(record, outcome.model)
         else:
-            record.notice = outcome.reason
+            self._add_notice(record, outcome.reason)
         self._succeed(record, result, record.options.texture)
 
     def _succeed_speech(self, record: JobRecord) -> None:
@@ -433,6 +506,10 @@ class Scheduler:
             await self._guarded(self._voice_job, await self._voice_queue.get())
             if self._voice is not None:
                 await self._release(self._voice, self._voice_queue, "voice")
+
+    async def _texture_loop(self) -> None:
+        while True:
+            await self._guarded(self._texture_job, await self._texture_queue.get())
 
     async def _face_loop(self) -> None:
         while True:

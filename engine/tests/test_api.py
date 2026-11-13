@@ -65,6 +65,8 @@ def make_client(
     base_url="http://127.0.0.1:8765",
     head_pass=None,
     detailed_face_reason: str | None = "Detailed face is not set up",
+    texture_pass=None,
+    sharper_texture_reason: str | None = "Sharper texture is not set up",
 ) -> TestClient:
     settings = Settings(
         home=tmp_path,
@@ -76,17 +78,20 @@ def make_client(
         api_keys=api_keys,
     )
     store, bus = JobStore(settings.jobs_dir), EventBus()
-    scheduler = Scheduler(store, bus, shape or FakeRunner("shape.glb"), paint or FakeRunner("model.glb"), rig=rig, head_pass=head_pass)
+    scheduler = Scheduler(store, bus, shape or FakeRunner("shape.glb"), paint or FakeRunner("model.glb"), rig=rig,
+                          head_pass=head_pass, texture_pass=texture_pass)
     reason = None if rig is not None else "UniRig is not installed in vendor/UniRig (see docs/setup.md)"
     app = create_app(
         settings,
         scheduler,
         store,
         bus,
-        health=lambda: {"ready": scheduler.ready, "mode": MODE, "gpus": [], "rig": scheduler.rig_available, "rig_reason": reason, "detailed_face": detailed_face_reason is None, "detailed_face_reason": detailed_face_reason},
+        health=lambda: {"ready": scheduler.ready, "mode": MODE, "gpus": [], "rig": scheduler.rig_available, "rig_reason": reason, "detailed_face": detailed_face_reason is None, "detailed_face_reason": detailed_face_reason,
+                       "sharper_texture": sharper_texture_reason is None, "sharper_texture_reason": sharper_texture_reason},
         texture_available=texture_available,
         rig_reason=lambda: reason,
         detailed_face_reason=lambda: detailed_face_reason,
+        sharper_texture_reason=lambda: sharper_texture_reason,
     )
     client = ReadyClient(app, base_url=base_url)
     client.wait_ready = wait_ready
@@ -243,6 +248,8 @@ def test_health_reports_injected_status(tmp_path):
             "detailed_face_reason": "Detailed face is not set up",
             "voice": False,
             "voice_reason": None,
+            "sharper_texture": False,
+            "sharper_texture_reason": "Sharper texture is not set up",
         }
 
 
@@ -400,3 +407,28 @@ def test_detailed_face_job_reports_its_notice(tmp_path):
         job_id = response.json()["job_id"]
         wait_state(client, job_id, "succeeded")
         assert client.get(f"/v1/jobs/{job_id}").json()["notice"] == "no usable head"
+
+
+def test_sharper_texture_unavailable_names_the_reason(tmp_path):
+    with make_client(tmp_path, rig=FakeRunner("model.glb"), sharper_texture_reason="Sharper texture needs MODEL3D_GENERATOR=trellis2") as client:
+        error = assert_error(post_job(client, options={"rig": True, "sharper_texture": True}), 400, "sharper_texture_unavailable")
+        assert error["message"] == "Sharper texture needs MODEL3D_GENERATOR=trellis2"
+
+
+def test_sharper_texture_without_rig_is_refused(tmp_path):
+    with make_client(tmp_path, rig=FakeRunner("model.glb"), sharper_texture_reason=None) as client:
+        assert_error(post_job(client, options={"sharper_texture": True}), 400, "invalid_options")
+
+
+def test_sharper_texture_job_serves_the_textured_model_and_the_original(tmp_path):
+    (tmp_path / "texture").mkdir()
+    with make_client(tmp_path, rig=FakeRunner("model.glb"), texture_pass=FakeHeadPass(tmp_path / "texture"),
+                     sharper_texture_reason=None) as client:
+        response = post_job(client, options={"rig": True, "sharper_texture": True, "texture": False})
+        assert response.status_code == 202
+        job_id = response.json()["job_id"]
+        wait_state(client, job_id, "succeeded")
+        plain = client.get(f"/v1/jobs/{job_id}/result?variant=original")
+        final = client.get(f"/v1/jobs/{job_id}/result")
+        assert plain.status_code == final.status_code == 200
+        assert final.content != plain.content

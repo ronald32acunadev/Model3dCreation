@@ -30,6 +30,8 @@ def test_health_round_trips():
         "detailed_face_reason": None,
         "voice": False,
         "voice_reason": None,
+        "sharper_texture": False,
+        "sharper_texture_reason": None,
     }
     assert Health.model_validate(body).model_dump(mode="json") == body
     failed = {**body, "ready": False, "error": {"code": "mode_unavailable", "message": "No NVIDIA GPU is visible to PyTorch"}}
@@ -42,5 +44,6 @@ def test_health_rig_fields_default():
     assert health.rig is False
     assert health.rig_reason is None
     unavailable = {**body, "rig": False, "rig_reason": "UniRig environment missing"}
-    expected = {**unavailable, "detailed_face": False, "detailed_face_reason": None, "voice": False, "voice_reason": None}
+    expected = {**unavailable, "detailed_face": False, "detailed_face_reason": None, "voice": False, "voice_reason": None,
+                "sharper_texture": False, "sharper_texture_reason": None}
     assert Health.model_validate(unavailable).model_dump(mode="json") == expected

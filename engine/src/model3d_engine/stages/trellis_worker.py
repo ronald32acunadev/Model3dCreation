@@ -170,9 +170,10 @@ def run_job(pipeline, message: dict) -> dict:
 
 def bake_glb(mesh, message: dict) -> dict:
     """Simplify, remesh, unwrap, and bake on the card that holds the decoded mesh."""
-    import o_voxel
     import torch
     import trimesh
+
+    import trellis_bake  # beside this script: TRELLIS.2's bake, tile by tile
 
     # CuMesh allocates outside PyTorch's cache, so hand the cached blocks back to CUDA first.
     torch.cuda.empty_cache()
@@ -181,7 +182,7 @@ def bake_glb(mesh, message: dict) -> dict:
     send({"type": "progress", "value": 0.9, "message": "Baking the texture"})
 
     def bake(remesh: bool):
-        return o_voxel.postprocess.to_glb(
+        return trellis_bake.to_glb(
             vertices=mesh.vertices,
             faces=mesh.faces,
             attr_volume=mesh.attrs,

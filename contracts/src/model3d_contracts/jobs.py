@@ -14,6 +14,7 @@ class JobState(str, Enum):
     shaping = "shaping"
     painting = "painting"
     rigging = "rigging"
+    texturing = "texturing"
     detailing = "detailing"
     speaking = "speaking"
     succeeded = "succeeded"
@@ -53,6 +54,7 @@ class JobOptions(BaseModel):
     target_faces: int | None = None
     rig: bool = False  # add a skeleton (UniRig) after shape and paint
     detailed_face: bool = False  # sculpt a detailed head after rigging (needs rig and TRELLIS.2)
+    sharper_texture: bool = False  # retexture each skeleton part from its close-up after rigging (needs rig and TRELLIS.2)
 
     @field_validator("target_faces")
     @classmethod
@@ -65,6 +67,8 @@ class JobOptions(BaseModel):
     def _check_detailed_face(self) -> "JobOptions":
         if self.detailed_face and not self.rig:
             raise ValueError("detailed_face needs rig: true")
+        if self.sharper_texture and not self.rig:
+            raise ValueError("sharper_texture needs rig: true")
         return self
 
 
@@ -89,7 +93,7 @@ class ErrorBody(BaseModel):
     error: JobError
 
 
-Stage = Literal["shape", "paint", "rig", "face", "voice"]
+Stage = Literal["shape", "paint", "rig", "texture", "face", "voice"]
 JobKind = Literal["model", "speech"]
 
 

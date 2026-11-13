@@ -615,3 +615,19 @@ def test_selecting_a_character_does_not_grow_the_window(qtbot, tmp_path, make_ap
     qtbot.wait(50)
     assert win.minimumSizeHint().height() <= min_before
     assert win.height() == 800
+
+
+def test_sharper_texture_check_follows_the_engine(qtbot, tmp_path, make_api):
+    paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
+    for available in (False, True):
+        supervisor = FakeSupervisor(sharper_texture=available)
+        api = make_api("http://127.0.0.1:9")
+        library = Library(paths.library)
+        generation = GenerationViewModel(api, library, supervisor, Settings())
+        win = MainWindow(MainViewModel(paths, api, supervisor, library, generation, Settings()), viewer=StubViewer())
+        qtbot.addWidget(win)
+        check = win.generation_panel.sharper_check
+        assert check.text() == "Sharper texture"
+        assert check.isEnabled() is available
+        assert check.toolTip() == ("Sharper texture needs the TRELLIS.2 generator" if not available else check.toolTip())
+        assert check.toolTip()

@@ -132,6 +132,8 @@ def test_build_engine_dual_gpu_health(tmp_path):
             "detailed_face_reason": "Detailed face needs MODEL3D_GENERATOR=trellis2",
             "voice": False,
             "voice_reason": f"Qwen3-TTS is not installed in {tmp_path / 'Qwen'}",
+            "sharper_texture": False,
+            "sharper_texture_reason": "Sharper texture needs MODEL3D_GENERATOR=trellis2",
         }
         job_id = run_job(client, {"texture": False})
         assert client.get(f"/v1/jobs/{job_id}/result").content[:4] == b"glTF"
@@ -390,3 +392,13 @@ def test_main_builds_the_engine_with_the_bound_port(tmp_path, monkeypatch):
 
     assert built[0].port == served["port"]
     assert served["port"] != 0
+
+
+def test_texturing_weights_need_the_shape_encoder(tmp_path):
+    from model3d_engine.__main__ import TEXTURING_ENCODER, texturing_weights_reason
+
+    snapshot = tmp_path / "hub/models--microsoft--TRELLIS.2-4B/snapshots/abc"
+    (snapshot / "ckpts").mkdir(parents=True)
+    assert "texturing weights are missing" in texturing_weights_reason(tmp_path)
+    (snapshot / TEXTURING_ENCODER).write_bytes(b"x")
+    assert texturing_weights_reason(tmp_path) is None

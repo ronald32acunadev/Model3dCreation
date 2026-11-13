@@ -28,6 +28,7 @@ class Phase(str, Enum):
     shaping = "shaping"
     painting = "painting"
     rigging = "rigging"
+    texturing = "texturing"  # the texture pass repaints each part from its close-up
     detailing = "detailing"  # the head pass sculpts the face after the job finished
     cancelling = "cancelling"
 
@@ -49,8 +50,9 @@ class GenerationViewModel(QObject):
         self.quality = settings.default_quality
         self.rig = False
         self.detailed_face = False
+        self.sharper_texture = False
         self.notice: str | None = None  # why the last detailed face was not applied
-        self._detail = False  # the running generation ends with a head pass
+        self._detail = False  # the running generation ends with a texture or head pass
         self._detail_notice: str | None = None
         self._download_stats = None
         self.phase = Phase.idle
@@ -89,6 +91,15 @@ class GenerationViewModel(QObject):
             return health.detailed_face_reason
         return "Detailed face is not available"
 
+    @property
+    def sharper_texture_reason(self) -> str | None:
+        health: Health | None = self._supervisor.health
+        if health is not None and health.sharper_texture:
+            return None
+        if health is not None and health.sharper_texture_reason:
+            return health.sharper_texture_reason
+        return "Sharper texture is not available"
+
     def can_add_skeleton(self, entry: Entry) -> bool:
         return (
             self._supervisor.state == EngineState.ready
@@ -117,7 +128,7 @@ class GenerationViewModel(QObject):
     @property
     def can_cancel(self) -> bool:
         return self.phase in (Phase.submitting, Phase.queued, Phase.shaping, Phase.painting, Phase.rigging,
-                              Phase.detailing)
+                              Phase.texturing, Phase.detailing)
 
     def set_image(self, path: Path) -> None:
         self.image = path
@@ -143,6 +154,10 @@ class GenerationViewModel(QObject):
         self.quality = quality
         self.changed.emit()
 
+    def set_sharper_texture(self, sharper: bool) -> None:
+        self.sharper_texture = sharper
+        self.changed.emit()
+
     def set_detailed_face(self, detailed: bool) -> None:
         self.detailed_face = detailed
         self.changed.emit()
@@ -151,16 +166,18 @@ class GenerationViewModel(QObject):
         if not self.can_generate:
             return
         detail = self.detailed_face and self.detail_reason is None
-        rig = (self.rig or detail) and self.rig_available
+        sharper = self.sharper_texture and self.sharper_texture_reason is None
+        rig = (self.rig or detail or sharper) and self.rig_available
         options = JobOptions(
             texture=self.texture and self.texture_available,
             quality=self.quality,
             rig=rig,
             detailed_face=detail and rig,
+            sharper_texture=sharper and rig,
         )
         self.entry = self._library.create(self.image, options)
         self._start()
-        self._detail = detail and rig
+        self._detail = (detail or sharper) and rig  # a pass may replace the model: fetch its notice and the original
         self._api.submit(self.image, options, self._on_submitted)
 
     def add_skeleton(self, entry_id: str) -> None:
@@ -185,10 +202,13 @@ class GenerationViewModel(QObject):
             "texture": source.options.texture and self.texture_available,
             "rig": source.options.rig and self.rig_available,
             "detailed_face": source.options.detailed_face and self.detail_reason is None and source.options.rig and self.rig_available,
+            "sharper_texture": source.options.sharper_texture and self.sharper_texture_reason is None and source.options.rig
+            and self.rig_available,
         })
         image = self._library.input_path(entry_id)
         self.entry = self._library.create(image, options, name=source.name)
         self._start()
+        self._detail = options.detailed_face or options.sharper_texture
         self._api.submit(image, options, self._on_submitted)
 
     def _start(self) -> None:
@@ -237,7 +257,8 @@ class GenerationViewModel(QObject):
         if self.entry is None:
             return
         if isinstance(event, (SnapshotEvent, ProgressEvent)):
-            phase = {"shape": Phase.shaping, "paint": Phase.painting, "rig": Phase.rigging, "face": Phase.detailing}.get(event.stage, Phase.queued)
+            phase = {"shape": Phase.shaping, "paint": Phase.painting, "rig": Phase.rigging, "texture": Phase.texturing,
+                     "face": Phase.detailing}.get(event.stage, Phase.queued)
             if self.phase == Phase.cancelling:
                 phase = Phase.cancelling
             self._set_phase(phase, event.progress, getattr(event, "message", ""))

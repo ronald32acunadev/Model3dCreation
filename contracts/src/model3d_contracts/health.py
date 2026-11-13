@@ -37,3 +37,5 @@ class Health(BaseModel):
     detailed_face_reason: str | None = None  # why Detailed face is unavailable
     voice: bool = False  # whether speech jobs may run
     voice_reason: str | None = None  # why voice generation is unavailable
+    sharper_texture: bool = False  # whether jobs may ask for a sharper texture
+    sharper_texture_reason: str | None = None  # why Sharper texture is unavailable

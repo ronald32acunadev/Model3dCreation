@@ -173,13 +173,15 @@ def create_app(
     detailed_face_reason: Callable[[], str | None] = lambda: "Detailed face is not set up",
     tool_tasks: ToolTasks | None = None,
     voice_reason: Callable[[], str | None] = lambda: "Voice generation is not set up",
+    sharper_texture_reason: Callable[[], str | None] = lambda: "Sharper texture is not set up",
 ) -> FastAPI:
     """Build the API around an existing scheduler, store, and event bus.
 
     `health` returns the body of GET /v1/health without its `error`, which comes from the
     scheduler; `texture_available` is false when the run mode has no paint stage; `rig_reason`
     explains why rigging is unavailable; `detailed_face_reason` explains why Detailed face is
-    unavailable (None when it is available); `voice_reason` explains why speech jobs are unavailable;
+    unavailable (None when it is available); `sharper_texture_reason` does the same for Sharper
+    texture; `voice_reason` explains why speech jobs are unavailable;
     `tool_tasks` runs the export and walk scripts (the
     engine's own Python and `tools/` by default).
     """
@@ -256,6 +258,8 @@ def create_app(
             _check_rig()
         if job_options.detailed_face and (reason := detailed_face_reason()) is not None:
             raise ApiError(400, "detailed_face_unavailable", reason)
+        if job_options.sharper_texture and (reason := sharper_texture_reason()) is not None:
+            raise ApiError(400, "sharper_texture_unavailable", reason)
         _check_ready()
         record = store.create(job_options, data, suffix)
         scheduler.submit(record)
