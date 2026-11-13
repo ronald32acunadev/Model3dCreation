@@ -1,13 +1,14 @@
+from pathlib import Path
+
 import pytest
 from model3d_contracts.events import ResultStats
 from model3d_contracts.jobs import JobError, JobOptions, Quality
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
+from fake_engine import FakeEngine, error_body
 from fakes import FakeSupervisor, StubViewer
 from model3d_client.paths import AppPaths
-from model3d_client.services.animator import RigAnimator
-from model3d_client.services.converter import ModelConverter
 from model3d_client.services.diagnostics import Check, CheckId
 from model3d_client.services.library import Library, Outcome
 from model3d_client.services.settings import Settings
@@ -100,10 +101,10 @@ def test_quality_combo_sets_view_model(window):
 def test_library_lists_entries_and_click_selects(window, png):
     entry = add_succeeded(window.vm.library, png, "Robot")
     window.vm.entries_changed.emit()
-    items = window.library_panel.list
-    assert items.count() == 1
-    assert "Robot" in items.item(0).text()
-    items.setCurrentRow(0)
+    tree = window.library_panel.tree
+    assert tree.topLevelItemCount() == 1
+    assert "Robot" in tree.topLevelItem(0).child(0).text(0)
+    tree.setCurrentItem(tree.topLevelItem(0).child(0))
     assert window.vm.selected.entry_id == entry.entry_id
 
 
@@ -233,14 +234,14 @@ def test_add_skeleton_disabled_for_rigged_entry(qtbot, tmp_path, make_api, png):
     win.vm.entries_changed.emit()
     menu = win.library_panel.build_menu(rigged)
     assert not next(a for a in menu.actions() if a.objectName() == "add_skeleton").isEnabled()
-    assert "skeleton" in win.library_panel.list.item(0).text()
+    assert "skeleton" in win.library_panel.tree.topLevelItem(0).child(0).text(0)
 
 
 def test_library_rescans_when_app_becomes_active(qtbot, window, png, qapp):
     add_succeeded(Library(window.vm.library.root), png, "From Blender")
-    assert window.library_panel.list.count() == 0
+    assert window.library_panel.tree.topLevelItemCount() == 0
     qapp.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
-    assert window.library_panel.list.count() == 1
+    assert window.library_panel.tree.topLevelItemCount() == 1
 
 
 def test_half_written_entry_is_skipped(qtbot, window, png, qapp):
@@ -249,7 +250,7 @@ def test_half_written_entry_is_skipped(qtbot, window, png, qapp):
     broken.mkdir()
     (broken / "entry.json").write_text('{"entry_id": "20261022T1200')
     qapp.applicationStateChanged.emit(Qt.ApplicationState.ApplicationActive)
-    assert window.library_panel.list.count() == 1
+    assert window.library_panel.tree.topLevelItemCount() == 1
 
 
 def test_rig_reason_is_visible_text_and_menu_tooltip(qtbot, tmp_path, make_api, png):
@@ -276,19 +277,24 @@ def test_rig_hint_hidden_before_the_engine_answers(window):
     assert window.generation_panel.rig_hint.isHidden()
 
 
-def make_window(qtbot, tmp_path, make_api, body: str) -> MainWindow:
-    """A window whose export runs a fake engine Python that executes `body` as a shell script."""
-    python = tmp_path / "python"
-    python.write_text("#!/bin/sh\n" + body)
-    python.chmod(0o755)
+@pytest.fixture
+def engine():
+    fake = FakeEngine()
+    fake.start()
+    yield fake
+    fake.stop()
+
+
+def make_window(qtbot, tmp_path, make_api, engine) -> MainWindow:
     paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
     library = Library(paths.library)
     supervisor = FakeSupervisor(state=EngineState.loading)
-    api = make_api("http://127.0.0.1:9")
+    api = make_api(engine.url)
     generation = GenerationViewModel(api, library, supervisor, Settings())
     checks = lambda _paths: []
-    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(), checks=checks,
-                       converter=ModelConverter(python))
+    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(), checks=checks)
+    engine.controller.library_dir = paths.library
+    vm.poll_ms = 20
     win = MainWindow(vm, viewer=StubViewer())
     win.ask_close_anyway = lambda: True
     qtbot.addWidget(win)
@@ -304,8 +310,9 @@ def add_rigged(library, png, name="robot"):
     return entry
 
 
-def test_export_fbx_writes_file_and_reports(qtbot, tmp_path, make_api, png):
-    win = make_window(qtbot, tmp_path, make_api, 'printf data > "$3"\nexit 0\n')
+def test_export_fbx_writes_file_and_reports(qtbot, tmp_path, make_api, png, engine):
+    engine.controller.export_file = b"data"
+    win = make_window(qtbot, tmp_path, make_api, engine)
     entry = add_succeeded(win.vm.library, png)
     win.vm.select(entry.entry_id)
     win.ask_export_path = lambda start: (str(tmp_path / "robot"), "FBX (*.fbx)")
@@ -319,8 +326,9 @@ def test_export_fbx_writes_file_and_reports(qtbot, tmp_path, make_api, png):
     assert win.generation_panel.save_button.isEnabled()
 
 
-def test_failed_export_shows_warning(qtbot, tmp_path, make_api, png, monkeypatch):
-    win = make_window(qtbot, tmp_path, make_api, "echo nope >&2\nexit 1\n")
+def test_failed_export_shows_warning(qtbot, tmp_path, make_api, png, monkeypatch, engine):
+    engine.controller.export_answers = [(409, error_body("export_not_ready", "Export stl failed: nope"))]
+    win = make_window(qtbot, tmp_path, make_api, engine)
     entry = add_succeeded(win.vm.library, png)
     win.vm.select(entry.entry_id)
     win.ask_export_path = lambda start: (str(tmp_path / "robot"), "STL (*.stl)")
@@ -334,8 +342,9 @@ def test_failed_export_shows_warning(qtbot, tmp_path, make_api, png, monkeypatch
     assert win.generation_panel.save_button.isEnabled()
 
 
-def test_obj_export_of_rigged_model_warns_about_skeleton(qtbot, tmp_path, make_api, png):
-    win = make_window(qtbot, tmp_path, make_api, 'printf data > "$3"\nexit 0\n')
+def test_obj_export_of_rigged_model_warns_about_skeleton(qtbot, tmp_path, make_api, png, engine):
+    engine.controller.export_file = b"data"
+    win = make_window(qtbot, tmp_path, make_api, engine)
     entry = add_rigged(win.vm.library, png)
     win.vm.select(entry.entry_id)
     win.ask_export_path = lambda start: (str(tmp_path / "robot"), "Wavefront OBJ (*.obj)")
@@ -347,30 +356,8 @@ def test_obj_export_of_rigged_model_warns_about_skeleton(qtbot, tmp_path, make_a
     assert (tmp_path / "robot.obj").exists()
 
 
-DETECT_BIPED = 'echo \'MODEL3D_RESULT {"body": "biped", "legs": [], "arms": [], "up": 1}\'\nexit 0\n'
-DETECT_FAIL = "echo broken >&2\nexit 1\n"
-
-
-def animating_window(qtbot, tmp_path, make_api, body: str) -> MainWindow:
-    """A window whose body detection runs a fake engine Python that executes `body` as a shell script."""
-    python = tmp_path / "python"
-    python.write_text("#!/bin/sh\n" + body)
-    python.chmod(0o755)
-    paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
-    library = Library(paths.library)
-    supervisor = FakeSupervisor(state=EngineState.loading)
-    api = make_api("http://127.0.0.1:9")
-    generation = GenerationViewModel(api, library, supervisor, Settings())
-    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(), checks=lambda _paths: [],
-                       animator=RigAnimator(python))
-    win = MainWindow(vm, viewer=StubViewer())
-    win.ask_close_anyway = lambda: True
-    qtbot.addWidget(win)
-    return win
-
-
-def test_add_walk_asks_with_the_detected_body(qtbot, tmp_path, make_api, png):
-    win = animating_window(qtbot, tmp_path, make_api, DETECT_BIPED)
+def test_add_walk_asks_with_the_detected_body(qtbot, tmp_path, make_api, png, engine):
+    win = make_window(qtbot, tmp_path, make_api, engine)
     entry = add_rigged(win.vm.library, png)
     asked = []
     win.ask_body_type = lambda detected: asked.append(detected)  # cancel: no walk
@@ -379,8 +366,8 @@ def test_add_walk_asks_with_the_detected_body(qtbot, tmp_path, make_api, png):
     assert asked == ["biped"]
 
 
-def test_chosen_body_starts_the_walk(qtbot, tmp_path, make_api, png):
-    win = animating_window(qtbot, tmp_path, make_api, DETECT_BIPED)
+def test_chosen_body_starts_the_walk(qtbot, tmp_path, make_api, png, engine):
+    win = make_window(qtbot, tmp_path, make_api, engine)
     entry = add_rigged(win.vm.library, png)
     win.ask_body_type = lambda detected: "quadruped"
     walks = []
@@ -390,8 +377,8 @@ def test_chosen_body_starts_the_walk(qtbot, tmp_path, make_api, png):
     assert walks == [(entry.entry_id, "quadruped")]
 
 
-def test_cancelled_dialog_starts_no_walk(qtbot, tmp_path, make_api, png):
-    win = animating_window(qtbot, tmp_path, make_api, DETECT_BIPED)
+def test_cancelled_dialog_starts_no_walk(qtbot, tmp_path, make_api, png, engine):
+    win = make_window(qtbot, tmp_path, make_api, engine)
     entry = add_rigged(win.vm.library, png)
     win.ask_body_type = lambda detected: None
     walks = []
@@ -401,8 +388,9 @@ def test_cancelled_dialog_starts_no_walk(qtbot, tmp_path, make_api, png):
     assert walks == []
 
 
-def test_failed_detection_shows_warning(qtbot, tmp_path, make_api, png, monkeypatch):
-    win = animating_window(qtbot, tmp_path, make_api, DETECT_FAIL)
+def test_failed_detection_shows_warning(qtbot, tmp_path, make_api, png, monkeypatch, engine):
+    engine.controller.body_answer = (409, error_body("no_skeleton", "broken"))
+    win = make_window(qtbot, tmp_path, make_api, engine)
     entry = add_rigged(win.vm.library, png)
     warnings = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
@@ -411,3 +399,235 @@ def test_failed_detection_shows_warning(qtbot, tmp_path, make_api, png, monkeypa
     assert len(warnings) == 1
     assert "Could not add the walk animation" in warnings[0][2] and "broken" in warnings[0][2]
     assert win.vm.library.entries() and len(win.vm.library.entries()) == 1
+
+
+def add_rigged_version(library, root, name="Robot rigged"):
+    derived = library.create_derived(root.entry_id)
+    library.model_path(derived.entry_id).write_bytes(b"glTF")
+    derived = derived.model_copy(update={"outcome": Outcome.succeeded, "name": name, "options": JobOptions(rig=True)})
+    library.update(derived)
+    return derived
+
+
+def test_library_groups_versions_under_one_character(window, png):
+    root = add_succeeded(window.vm.library, png, "Robot")
+    derived = add_rigged_version(window.vm.library, root)
+    window.vm.entries_changed.emit()
+    tree = window.library_panel.tree
+    assert tree.topLevelItemCount() == 1
+    top = tree.topLevelItem(0)
+    assert top.text(0).startswith("Robot\n")
+    assert top.childCount() == 2
+    assert [top.child(i).data(0, Qt.ItemDataRole.UserRole) for i in range(2)] == [root.entry_id, derived.entry_id]
+    assert "skeleton" in top.child(1).text(0)
+
+
+def test_selecting_a_version_shows_its_model(window, png):
+    root = add_succeeded(window.vm.library, png, "Robot")
+    derived = add_rigged_version(window.vm.library, root)
+    window.vm.entries_changed.emit()
+    top = window.library_panel.tree.topLevelItem(0)
+    window.library_panel.tree.setCurrentItem(top.child(0))
+    assert window.vm.selected.entry_id == root.entry_id
+    assert window.viewer.shown == window.vm.library.model_path(root.entry_id)
+    tree = window.library_panel.tree
+    tree.setCurrentItem(tree.topLevelItem(0).child(1))
+    assert window.vm.selected.entry_id == derived.entry_id
+    assert window.viewer.shown == window.vm.library.model_path(derived.entry_id)
+
+
+def test_selecting_a_character_selects_its_newest_finished_version(window, png):
+    root = add_succeeded(window.vm.library, png, "Robot")
+    derived = add_rigged_version(window.vm.library, root)
+    window.vm.entries_changed.emit()
+    window.library_panel.tree.setCurrentItem(window.library_panel.tree.topLevelItem(0))
+    assert window.vm.selected.entry_id == derived.entry_id
+
+
+def test_character_menu_has_its_four_actions(window, png):
+    add_succeeded(window.vm.library, png, "Robot")
+    window.vm.entries_changed.emit()
+    names = [a.objectName() for a in window.library_panel.build_character_menu().actions()]
+    assert names == ["voice_phrases", "export_character", "rename", "delete"]
+
+
+def test_import_button_emits_its_signal(qtbot, window, monkeypatch):
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args: ("", ""))  # cancel: no modal dialog in tests
+    with qtbot.waitSignal(window.library_panel.import_character_requested, timeout=1000):
+        window.library_panel.import_button.click()
+
+
+def character_window(qtbot, tmp_path, make_api, **kwargs) -> MainWindow:
+    paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
+    library = Library(paths.library)
+    supervisor = FakeSupervisor(state=EngineState.loading)
+    api = make_api("http://127.0.0.1:9")
+    generation = GenerationViewModel(api, library, supervisor, Settings())
+    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(), checks=lambda _paths: [])
+    win = MainWindow(vm, viewer=StubViewer(), **kwargs)
+    win.ask_close_anyway = lambda: True
+    qtbot.addWidget(win)
+    return win
+
+
+def test_character_request_opens_its_dialog(qtbot, tmp_path, make_api):
+    asked, dialogs = [], []
+
+    def factory(character_id):
+        asked.append(character_id)
+        dialog = QDialog()
+        qtbot.addWidget(dialog)
+        dialogs.append(dialog)
+        return dialog
+
+    win = character_window(qtbot, tmp_path, make_api, character_dialog_factory=factory)
+    win.library_panel.character_requested.emit("char-1")
+    assert asked == ["char-1"]
+    assert dialogs[0].isVisible()
+    dialogs[0].close()
+    assert win._character_dialogs == []
+
+
+def test_character_request_without_factory_does_nothing(qtbot, tmp_path, make_api):
+    win = character_window(qtbot, tmp_path, make_api)
+    win.library_panel.character_requested.emit("char-1")
+    assert win.statusBar().currentMessage() == ""
+
+
+def test_export_character_passes_m3dchar_path(qtbot, tmp_path, make_api, png, monkeypatch):
+    win = character_window(qtbot, tmp_path, make_api)
+    entry = add_succeeded(win.vm.library, png, "Robot")
+    asked, exported = [], []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda *args: asked.append(args[2]) or (str(tmp_path / "robot"), "Character packages (*.m3dchar)"))
+    monkeypatch.setattr(win.vm, "export_character", lambda cid, target: exported.append((cid, target)))
+    win.library_panel.export_character_requested.emit(entry.entry_id)
+    assert asked == [str(Path(win.vm.settings.export_dir) / "Robot.m3dchar")]
+    assert exported == [(entry.entry_id, tmp_path / "robot.m3dchar")]
+
+
+def test_export_character_cancel_exports_nothing(qtbot, tmp_path, make_api, png, monkeypatch):
+    win = character_window(qtbot, tmp_path, make_api)
+    entry = add_succeeded(win.vm.library, png, "Robot")
+    exported = []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *args: ("", ""))
+    monkeypatch.setattr(win.vm, "export_character", lambda cid, target: exported.append((cid, target)))
+    win.library_panel.export_character_requested.emit(entry.entry_id)
+    assert exported == []
+
+
+def test_import_character_passes_chosen_package(qtbot, tmp_path, make_api, monkeypatch):
+    win = character_window(qtbot, tmp_path, make_api)
+    imported = []
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        lambda *args: (str(tmp_path / "robot.m3dchar"), "Character packages (*.m3dchar)"))
+    monkeypatch.setattr(win.vm, "import_character", lambda package: imported.append(package))
+    win.library_panel.import_character_requested.emit()
+    assert imported == [tmp_path / "robot.m3dchar"]
+
+
+def test_import_character_cancel_imports_nothing(qtbot, tmp_path, make_api, monkeypatch):
+    win = character_window(qtbot, tmp_path, make_api)
+    imported = []
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *args: ("", ""))
+    monkeypatch.setattr(win.vm, "import_character", lambda package: imported.append(package))
+    win.library_panel.import_character_requested.emit()
+    assert imported == []
+
+
+def test_character_failure_shows_warning(qtbot, tmp_path, make_api, monkeypatch):
+    win = character_window(qtbot, tmp_path, make_api)
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args))
+    win.vm.character_failed.emit("boom")
+    assert len(warnings) == 1
+    assert warnings[0][1] == "Character" and warnings[0][2] == "boom"
+
+
+def test_character_export_reports_its_path(qtbot, tmp_path, make_api):
+    win = character_window(qtbot, tmp_path, make_api)
+    win.vm.character_exported.emit(Path("/x/a.m3dchar"))
+    assert win.statusBar().currentMessage() == "Character exported to /x/a.m3dchar"
+
+
+def model_voice_window(qtbot, tmp_path, make_api):
+    from model3d_client.viewmodels.characters import CharacterViewModel
+    from model3d_client.views.model_voice_panel import ModelVoicePanel
+
+    class Player:
+        def play(self, path):
+            pass
+
+    holder = {}
+
+    def make_panel(win_api, library):
+        vm = CharacterViewModel(win_api, library, None, Player(), tmp_path / "cache")
+        holder["vm"] = vm
+        return ModelVoicePanel(vm)
+
+    paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
+    library = Library(paths.library)
+    api = make_api("http://127.0.0.1:9")
+    supervisor = FakeSupervisor(state=EngineState.loading)
+    generation = GenerationViewModel(api, library, supervisor, Settings())
+    vm = MainViewModel(paths, api, supervisor, library, generation, Settings(), checks=lambda _paths: [])
+    win = MainWindow(vm, viewer=StubViewer(), model_voice_panel=make_panel(api, library))
+    win.ask_close_anyway = lambda: True
+    qtbot.addWidget(win)
+    return win
+
+
+def test_selecting_a_version_points_the_voice_area_at_its_character(qtbot, tmp_path, make_api, png):
+    win = model_voice_window(qtbot, tmp_path, make_api)
+    root = add_succeeded(win.vm.library, png, "Robot")
+    derived = add_rigged_version(win.vm.library, root)
+    win.vm.entries_changed.emit()
+    assert win.model_voice_panel.vm.character_id is None
+    win.vm.select(derived.entry_id)
+    assert win.model_voice_panel.vm.character_id == root.entry_id
+    win.vm.select(None)
+    assert win.model_voice_panel.vm.character_id is None
+
+
+def test_character_request_selects_it_and_reveals_the_voice_area(qtbot, tmp_path, make_api, png):
+    win = model_voice_window(qtbot, tmp_path, make_api)
+    root = add_succeeded(win.vm.library, png, "Robot")
+    derived = add_rigged_version(win.vm.library, root)
+    win.vm.entries_changed.emit()
+    win.show()
+    win.library_panel.character_requested.emit(root.entry_id)
+    assert win.vm.selected.entry_id == derived.entry_id
+    assert win.model_voice_panel.vm.character_id == root.entry_id
+    assert win.model_voice_panel.isVisible()
+
+
+def test_selecting_a_character_does_not_grow_the_window(qtbot, tmp_path, make_api, png):
+    win = model_voice_window(qtbot, tmp_path, make_api)
+    win.resize(1400, 800)
+    win.show()
+    qtbot.waitExposed(win)
+    root = add_succeeded(win.vm.library, png, "Robot")
+    add_rigged_version(win.vm.library, root)
+    win.vm.entries_changed.emit()
+    qtbot.wait(10)
+    min_before = win.minimumSizeHint().height()
+    win.library_panel.tree.setCurrentItem(win.library_panel.tree.topLevelItem(0))
+    qtbot.wait(50)
+    assert win.minimumSizeHint().height() <= min_before
+    assert win.height() == 800
+
+
+def test_sharper_texture_check_follows_the_engine(qtbot, tmp_path, make_api):
+    paths = AppPaths(repo=tmp_path, data=tmp_path / "data")
+    for available in (False, True):
+        supervisor = FakeSupervisor(sharper_texture=available)
+        api = make_api("http://127.0.0.1:9")
+        library = Library(paths.library)
+        generation = GenerationViewModel(api, library, supervisor, Settings())
+        win = MainWindow(MainViewModel(paths, api, supervisor, library, generation, Settings()), viewer=StubViewer())
+        qtbot.addWidget(win)
+        check = win.generation_panel.sharper_check
+        assert check.text() == "Sharper texture"
+        assert check.isEnabled() is available
+        assert check.toolTip() == ("Sharper texture needs the TRELLIS.2 generator" if not available else check.toolTip())
+        assert check.toolTip()

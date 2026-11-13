@@ -12,19 +12,24 @@ from PySide6.QtWidgets import QApplication, QWidget
 import model3d_client
 from model3d_client.i18n import apply_language
 from model3d_client.paths import PACKAGE_DIR, REPO_ROOT, app_paths
+from model3d_client.services.audio import AudioPlayer
 from model3d_client.services.engine_api import EngineApi
-from model3d_client.services.head_pass import SCRIPT as HEAD_PASS_SCRIPT
-from model3d_client.services.head_pass import HeadPass
 from model3d_client.services.library import Library
+from model3d_client.services.recorder import Recorder
 from model3d_client.services.settings import load_settings
 from model3d_client.services.supervisor import EngineSupervisor
 from model3d_client.setup.checks import Toolchain
 from model3d_client.setup.recipe import Sources, build_recipe
 from model3d_client.setup.state import load_state, read_pointer
+from model3d_client.viewmodels.characters import CharacterViewModel
 from model3d_client.viewmodels.generation import GenerationViewModel
 from model3d_client.viewmodels.main import MainViewModel
+from model3d_client.viewmodels.voice import VoiceViewModel
+from model3d_client.views.character_dialog import CharacterDialog
 from model3d_client.views.main_window import MainWindow
+from model3d_client.views.model_voice_panel import ModelVoicePanel
 from model3d_client.views.scheme import prepare_webengine
+from model3d_client.views.voice_panel import VoicePanel
 
 
 INSTALLED_ROOT = Path("/opt/model3d")
@@ -76,8 +81,7 @@ def build_app(
     api = EngineApi(parent=app)
     library = Library(paths.library)
     supervisor = EngineSupervisor(api, paths, parent=app)
-    head_pass = HeadPass(paths.engine_python, paths.repo / HEAD_PASS_SCRIPT, paths.data, api.base_url, parent=app)
-    generation = GenerationViewModel(api, library, supervisor, settings, head_pass=head_pass, parent=app)
+    generation = GenerationViewModel(api, library, supervisor, settings, parent=app)
     vm = MainViewModel(paths, api, supervisor, library, generation, settings, parent=app)
     if viewer_factory is None:
         from model3d_client.views.viewer_widget import ViewerWidget
@@ -85,7 +89,26 @@ def build_app(
         viewer = ViewerWidget(paths.viewer_dir, paths.library)
     else:
         viewer = viewer_factory()
-    return app, MainWindow(vm, viewer)
+    player = AudioPlayer(app)
+    voice = VoiceViewModel(api, supervisor, paths.data / "voice_cache", player, Recorder, parent=app)
+
+    def character_dialog(character_id: str) -> CharacterDialog:
+        character_vm = CharacterViewModel(api, library, character_id, player, paths.data / "voice_cache", parent=app)
+        character_vm.refresh()
+        return CharacterDialog(character_vm, parent=window)
+
+    # One view model follows the selected model. It reads the saved voices when the selection moves and after
+    # "New voice…"; a voice made or deleted in the Voice section shows up here on the next selection change.
+    model_voice_vm = CharacterViewModel(api, library, None, player, paths.data / "voice_cache", parent=app)
+
+    def new_voice_dialog(parent: QWidget):
+        from model3d_client.views.new_voice_dialog import NewVoiceDialog
+
+        return NewVoiceDialog(voice, parent)
+
+    window = MainWindow(vm, viewer, voice_panel=VoicePanel(voice), character_dialog_factory=character_dialog,
+                        model_voice_panel=ModelVoicePanel(model_voice_vm, new_voice_dialog))
+    return app, window
 
 
 def build_setup(argv: list[str], env: Mapping[str, str], mode: str) -> tuple[QApplication, "SetupWizard"]:

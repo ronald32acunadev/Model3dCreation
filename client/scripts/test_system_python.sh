@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the client tests on the system Python with apt's PySide6 and pydantic, as the .deb does.
-# Needs: sudo apt install python3-pyside6.qtwidgets python3-pyside6.qtwebenginewidgets python3-pyside6.qtwebsockets python3-pydantic
+# Needs: sudo apt install python3-pyside6.qtwidgets python3-pyside6.qtwebenginewidgets python3-pyside6.qtwebsockets python3-pyside6.qtmultimedia python3-pydantic
 # and, for pytest-qt only: sudo apt install python3-pyside6.qttest
 set -euo pipefail
 cd "$(dirname "$0")/.."

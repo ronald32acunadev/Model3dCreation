@@ -1,5 +1,6 @@
 """Job records, their state machine, and their folders on disk."""
 
+import json
 import os
 import secrets
 import time
@@ -7,10 +8,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from model3d_contracts.jobs import FINAL_STATES, Job, JobError, JobLinks, JobOptions, JobState
+from model3d_contracts.jobs import FINAL_STATES, Job, JobError, JobKind, JobLinks, JobOptions, JobState
 
 from model3d_engine.stages.protocol import RIG_INPUT
 
+REQUEST_FILE = "speech_request.json"  # a speech job's input, read by the voice stage
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
@@ -36,12 +38,20 @@ class InvalidTransition(Exception):
 
 _ALLOWED: dict[JobState, frozenset[JobState]] = {
     # queued -> rigging is a rig-only job: an existing model that only gets a skeleton.
-    JobState.queued: frozenset({JobState.shaping, JobState.rigging, JobState.failed, JobState.cancelled}),
+    # queued -> speaking is a speech job: text spoken in a saved voice.
+    JobState.queued: frozenset(
+        {JobState.shaping, JobState.rigging, JobState.speaking, JobState.failed, JobState.cancelled}
+    ),
     JobState.shaping: frozenset(
         {JobState.painting, JobState.rigging, JobState.succeeded, JobState.failed, JobState.cancelled}
     ),
     JobState.painting: frozenset({JobState.rigging, JobState.succeeded, JobState.failed, JobState.cancelled}),
-    JobState.rigging: frozenset({JobState.succeeded, JobState.failed, JobState.cancelled}),
+    JobState.rigging: frozenset(
+        {JobState.texturing, JobState.detailing, JobState.succeeded, JobState.failed, JobState.cancelled}
+    ),
+    JobState.texturing: frozenset({JobState.detailing, JobState.succeeded, JobState.failed, JobState.cancelled}),
+    JobState.detailing: frozenset({JobState.succeeded, JobState.failed, JobState.cancelled}),
+    JobState.speaking: frozenset({JobState.succeeded, JobState.failed, JobState.cancelled}),
     JobState.succeeded: frozenset(),
     JobState.failed: frozenset(),
     JobState.cancelled: frozenset(),
@@ -63,6 +73,8 @@ class JobRecord:
     finished_at: datetime | None = None
     error: JobError | None = None
     cancel_requested: bool = False
+    notice: str | None = None
+    kind: JobKind = "model"
 
     def transition(self, new: JobState, *, error: JobError | None = None) -> None:
         """Move to a new state, or raise InvalidTransition."""
@@ -75,6 +87,12 @@ class JobRecord:
             self.stage, self.progress = "paint", 0.0
         elif new == JobState.rigging:
             self.stage, self.progress = "rig", 0.0
+        elif new == JobState.texturing:
+            self.stage, self.progress = "texture", 0.0
+        elif new == JobState.detailing:
+            self.stage, self.progress = "face", 0.0
+        elif new == JobState.speaking:
+            self.stage, self.progress = "voice", 0.0
         elif new in FINAL_STATES:
             self.stage = None
             self.finished_at = datetime.now(UTC)
@@ -88,8 +106,10 @@ class JobRecord:
     def to_job(self, queue_position: int | None) -> Job:
         """The API representation of this job."""
         base = f"/v1/jobs/{self.job_id}"
+        result = f"/v1/speech-jobs/{self.job_id}/result" if self.kind == "speech" else f"{base}/result"
         return Job(
             job_id=self.job_id,
+            kind=self.kind,
             state=self.state,
             stage=self.stage,
             progress=self.progress,
@@ -98,7 +118,8 @@ class JobRecord:
             created_at=self.created_at,
             finished_at=self.finished_at,
             error=self.error,
-            links=JobLinks(self=base, events=f"{base}/events", result=f"{base}/result"),
+            notice=self.notice,
+            links=JobLinks(self=base, events=f"{base}/events", result=result),
         )
 
 
@@ -117,13 +138,35 @@ class JobStore:
         """Register a rig-only job for an existing model (GLB bytes)."""
         return self._new(JobOptions(rig=True, texture=textured), RIG_INPUT, model_bytes)
 
-    def _new(self, options: JobOptions, input_name: str, data: bytes) -> JobRecord:
+    def create_speech(self, request: dict) -> JobRecord:
+        """Register a speech job; the voice stage reads `request` from REQUEST_FILE."""
+        return self._new(JobOptions(), REQUEST_FILE, json.dumps(request).encode(), kind="speech")
+
+    def create_transcription(self, language: str, filename: str, data: bytes) -> JobRecord:
+        """Register a job that transcribes an uploaded clip; the upload is saved in the job folder as `filename`."""
+        record = self._new(JobOptions(), REQUEST_FILE, b"{}", kind="speech")
+        upload = record.dir / filename
+        upload.write_bytes(data)
+        request = {
+            "type": "transcribe",
+            "text": "",
+            "language": language,
+            "ref_audio": str(upload.resolve()),
+            "ref_text": None,
+            "instruct": None,
+        }
+        (record.dir / REQUEST_FILE).write_text(json.dumps(request))
+        return record
+
+    def _new(self, options: JobOptions, input_name: str, data: bytes, kind: JobKind = "model") -> JobRecord:
         job_id = new_job_id()
         folder = self.jobs_dir / job_id
         folder.mkdir(parents=True)
         (folder / input_name).write_bytes(data)
         seed = options.seed if options.seed is not None else secrets.randbelow(2**32)
-        record = JobRecord(job_id=job_id, options=options, seed=seed, dir=folder, created_at=datetime.now(UTC))
+        record = JobRecord(
+            job_id=job_id, options=options, seed=seed, dir=folder, created_at=datetime.now(UTC), kind=kind
+        )
         self._records[job_id] = record
         return record
 

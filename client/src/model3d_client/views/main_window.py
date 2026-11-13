@@ -1,22 +1,28 @@
 """The main window: library on the left, viewer in the center, generation panel on the right."""
 
+from collections.abc import Callable
 from pathlib import Path
 
+from model3d_contracts.characters import Character, Characters
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
+    QFrame,
     QInputDialog,
     QMainWindow,
     QMessageBox,
+    QScrollArea,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from model3d_client.services.converter import FORMATS
+from model3d_client.services.formats import FORMATS
+from model3d_client.services.library import Outcome
 from model3d_client.viewmodels.main import CloseDecision, MainViewModel
 from model3d_client.views.diagnostics_panel import DiagnosticsPanel
 from model3d_client.views.generation_panel import GenerationPanel
@@ -25,10 +31,17 @@ from model3d_client.views.top_bar import TopBar
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, vm: MainViewModel, viewer: QWidget, parent: QWidget | None = None):
+    def __init__(self, vm: MainViewModel, viewer: QWidget, parent: QWidget | None = None,
+                 voice_panel: QWidget | None = None,
+                 character_dialog_factory: Callable[[str], QDialog] | None = None,
+                 model_voice_panel: QWidget | None = None):
         super().__init__(parent)
         self.vm = vm
         self.viewer = viewer
+        self.voice_panel = voice_panel
+        self.character_dialog_factory = character_dialog_factory
+        self.model_voice_panel = model_voice_panel
+        self._character_dialogs: list[QDialog] = []  # open character dialogs, kept alive until they finish
         self._closing = False  # shutdown finished: the next close is accepted
         self._shutting_down = False
 
@@ -43,13 +56,28 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.library_panel)
         splitter.addWidget(self.center)
-        splitter.addWidget(self.generation_panel)
+        if model_voice_panel is None:
+            splitter.addWidget(self.generation_panel)
+        else:
+            # Each panel scrolls inside its own area so that its content height
+            # does not add to the window's minimum height.
+            right = QSplitter(Qt.Orientation.Vertical)
+            right.addWidget(self._scrollable(self.generation_panel))
+            right.addWidget(self._scrollable(model_voice_panel))
+            right.setStretchFactor(1, 1)
+            splitter.addWidget(right)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([260, 700, 300])
         root = QWidget()
         layout = QVBoxLayout(root)
         layout.addWidget(self.top_bar)
-        layout.addWidget(splitter, 1)
+        self.sections = QStackedWidget()
+        self.sections.addWidget(splitter)
+        if voice_panel is not None:
+            self.sections.addWidget(voice_panel)
+            self.top_bar.show_sections(True)
+            self.top_bar.section_requested.connect(self.sections.setCurrentIndex)
+        layout.addWidget(self.sections, 1)
         self.setCentralWidget(root)
         self.resize(1300, 800)
 
@@ -84,8 +112,23 @@ class MainWindow(QMainWindow):
         vm.export_state_changed.connect(self._on_export_state)
         vm.export_finished.connect(self._on_export_finished)
         vm.export_failed.connect(self._on_export_failed)
+        self.library_panel.character_requested.connect(self._open_character)
+        self.library_panel.export_character_requested.connect(self._export_character)
+        self.library_panel.import_character_requested.connect(self._import_character)
+        vm.character_exported.connect(self._on_character_exported)
+        vm.character_imported.connect(self._on_character_imported)
+        vm.character_failed.connect(self._on_character_failed)
         self._refresh_library()
         self.retranslate()
+
+    @staticmethod
+    def _scrollable(widget: QWidget) -> QScrollArea:
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        area.setWidget(widget)
+        return area
 
     def open_settings(self) -> None:
         from model3d_client.views.settings_dialog import SettingsDialog
@@ -134,12 +177,29 @@ class MainWindow(QMainWindow):
 
     def _on_selection(self) -> None:
         self._refresh_library()
+        self._follow_character()
         model = self.vm.selected_model()
         if model is None:
             self.viewer.clear()
         else:
             self.viewer.show_model(model)
         self._update_save_button()
+
+    def _character_of(self, entry_id: str | None) -> str | None:
+        """The id of the character that owns the entry (the grouping is `Characters`'), or None."""
+        if entry_id is None:
+            return None
+        for character in Characters(self.vm.library).characters():
+            if entry_id in character.versions:
+                return character.character_id
+        return None
+
+    def _follow_character(self) -> None:
+        """Point the model's voice area at the selected entry's character."""
+        if self.model_voice_panel is None:
+            return
+        selected = self.vm.selected.entry_id if self.vm.selected is not None else None
+        self.model_voice_panel.vm.set_character(self._character_of(selected))
 
     def _on_diagnostics(self) -> None:
         self.diagnostics_panel.set_checks(self.vm.diagnostics)
@@ -240,6 +300,62 @@ class MainWindow(QMainWindow):
     def _on_export_failed(self, reason: str) -> None:
         self.statusBar().clearMessage()
         QMessageBox.warning(self, self.tr("Export model"), self.tr("Could not export the model: %1").replace("%1", reason))
+
+    def _reveal_model_voice(self, character_id: str) -> None:
+        """Select the character's newest finished version and show its voice area."""
+        character = Characters(self.vm.library).get(character_id)
+        if character is None:
+            return
+        outcomes = {entry.entry_id: entry.outcome for entry in self.vm.entries()}
+        finished = [v for v in character.versions if outcomes.get(v) == Outcome.succeeded]
+        self.vm.select((finished or character.versions)[-1])
+        if self.sections.currentIndex() != 0:
+            self.top_bar.sections.button(0).setChecked(True)
+            self.sections.setCurrentIndex(0)
+        self.model_voice_panel.setFocus()
+
+    def _open_character(self, character_id: str) -> None:
+        if self.model_voice_panel is not None:
+            self._reveal_model_voice(character_id)
+            return
+        if self.character_dialog_factory is None:
+            return
+        dialog = self.character_dialog_factory(character_id)
+        self._character_dialogs.append(dialog)
+        dialog.finished.connect(self._drop_finished_character_dialogs)
+        dialog.open()
+
+    def _drop_finished_character_dialogs(self, _result: int) -> None:
+        self._character_dialogs = [dialog for dialog in self._character_dialogs if dialog.isVisible()]
+
+    def _export_character(self, character_id: str) -> None:
+        character = Characters(self.vm.library).get(character_id)
+        name = character.name if character is not None else character_id
+        start = str(Path(self.vm.settings.export_dir) / f"{name}.m3dchar")
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self, self.tr("Export character"), start, self.tr("Character packages (*.m3dchar)"))
+        if not path:
+            return
+        target = Path(path)
+        if target.suffix.lower() != ".m3dchar":
+            target = Path(path + ".m3dchar")
+        self.vm.export_character(character_id, target)
+
+    def _import_character(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self, self.tr("Import character"), str(Path(self.vm.settings.export_dir)),
+            self.tr("Character packages (*.m3dchar)"))
+        if path:
+            self.vm.import_character(Path(path))
+
+    def _on_character_exported(self, path: Path) -> None:
+        self.statusBar().showMessage(self.tr("Character exported to %1").replace("%1", str(path)), 10000)
+
+    def _on_character_imported(self, character: Character) -> None:
+        self.statusBar().showMessage(self.tr("Imported %1").replace("%1", character.name), 10000)
+
+    def _on_character_failed(self, reason: str) -> None:
+        QMessageBox.warning(self, self.tr("Character"), reason)
 
 
 def _filter_extension(selected_filter: str) -> str:

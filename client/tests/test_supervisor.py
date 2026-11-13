@@ -80,6 +80,16 @@ def test_engine_gets_model3d_home(qtbot, paths, make_supervisor):
     assert f"HOME={paths.data}" in paths.engine_log.read_text()
 
 
+def test_engine_listens_on_the_polled_port(qtbot, paths, make_supervisor, monkeypatch):
+    monkeypatch.setenv("MODEL3D_PORT", "auto")
+    port = free_port()
+    program = [sys.executable, "-c", "import os, sys; print('PORT=' + os.environ['MODEL3D_PORT']); sys.exit(1)"]
+    sup = make_supervisor(port, program)
+    sup.start()
+    qtbot.waitUntil(lambda: sup.state == EngineState.crashed, timeout=15000)
+    assert f"PORT={port}" in paths.engine_log.read_text()
+
+
 GENERATOR_PROGRAM = [sys.executable, "-c", "import os, sys; print('GENERATOR=' + os.environ.get('MODEL3D_GENERATOR', 'unset')); sys.exit(1)"]
 
 

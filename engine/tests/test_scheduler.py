@@ -1,14 +1,16 @@
 import asyncio
 
 import pytest
+import trimesh
 
+from model3d_contracts.events import ResultStats
 from model3d_contracts.jobs import JobOptions, JobState
 from model3d_engine.jobs.events import EventBus
 from model3d_engine.jobs.scheduler import Scheduler
 from model3d_engine.jobs.store import JobStore
 from model3d_engine.stages.protocol import ProgressCallback, StageError, StageResult, StageTask
 
-from .fakes import FakeRunner
+from .fakes import FakeHeadPass, FakeRunner
 
 pytestmark = pytest.mark.anyio
 
@@ -671,3 +673,112 @@ async def test_textured_shape_result_skips_paint(tmp_path):
     assert paint.runs == []
     assert (record.dir / "model.glb").exists()
     assert received[-1].stats.textured is True
+
+
+async def test_succeeded_job_writes_its_stats(tmp_path):
+    scheduler, store, bus, _, _ = await make(tmp_path)
+    record, events = await submit(scheduler, store, bus)
+    await wait_final(record)
+    received = await drain(events)
+    await scheduler.stop()
+
+    assert record.state == JobState.succeeded
+    assert ResultStats.model_validate_json((record.dir / "stats.json").read_bytes()) == received[-1].stats
+
+
+async def make_face(tmp_path, mode="applied", swap=False, during=None):
+    store, bus = JobStore(tmp_path), EventBus()
+    shape, paint, rig = FakeRunner("shape.glb"), FakeRunner("model.glb"), FakeRunner("model.glb")
+    head = FakeHeadPass(tmp_path, mode=mode, during=during)
+    scheduler = Scheduler(store, bus, shape, paint, swap=swap, rig=rig, cards=DUAL_CARDS, head_pass=head)
+    await scheduler.start()
+    return scheduler, store, bus, head
+
+
+def box_bytes(tmp_path) -> bytes:
+    path = tmp_path / "reference_box.glb"
+    trimesh.creation.box().export(path)
+    return path.read_bytes()
+
+
+@pytest.mark.parametrize("swap", [False, True], ids=["dual", "swap"])
+
+
+async def test_detailed_face_replaces_the_model_and_keeps_the_original(tmp_path, swap):
+    seen: list[JobState] = []
+    async def during(job_id):
+        seen.append(store.get(job_id).state)
+    scheduler, store, bus, head = await make_face(tmp_path, mode="applied", swap=swap, during=during)
+    record, events = await submit(scheduler, store, bus, JobOptions(rig=True, detailed_face=True))
+    await wait_final(record)
+    assert record.state == JobState.succeeded
+    assert seen == [JobState.detailing]
+    assert record.notice is None
+    assert (record.dir / "model.glb").read_bytes() == head.model.read_bytes()
+    assert (record.dir / "model_original.glb").read_bytes() == box_bytes(tmp_path)
+    evs = await drain(events)
+    assert any(e.type == "progress" and e.stage == "face" and e.message == "step one" for e in evs)
+    await scheduler.stop()
+
+
+async def test_detailed_face_not_applied_keeps_the_plain_model(tmp_path):
+    scheduler, store, bus, head = await make_face(tmp_path, mode="skipped")
+    record, events = await submit(scheduler, store, bus, JobOptions(rig=True, detailed_face=True))
+    await wait_final(record)
+    assert record.state == JobState.succeeded
+    assert record.notice == "no usable head"
+    assert (record.dir / "model.glb").read_bytes() == box_bytes(tmp_path)
+    assert not (record.dir / "model_original.glb").exists()
+    await scheduler.stop()
+
+
+async def test_detailed_face_failure_keeps_the_plain_model(tmp_path):
+    scheduler, store, bus, head = await make_face(tmp_path, mode="fail")
+    record, events = await submit(scheduler, store, bus, JobOptions(rig=True, detailed_face=True))
+    await wait_final(record)
+    assert record.state == JobState.succeeded
+    assert record.notice == "Detailed face failed: boom: bad thing"
+    assert (record.dir / "model.glb").read_bytes() == box_bytes(tmp_path)
+    await scheduler.stop()
+
+
+async def test_cancel_while_detailing_keeps_the_plain_model(tmp_path):
+    scheduler, store, bus, head = await make_face(tmp_path, mode="wait")
+    record, events = await submit(scheduler, store, bus, JobOptions(rig=True, detailed_face=True))
+    await asyncio.wait_for(head.started.wait(), 5)
+    assert scheduler.cancel(record.job_id) is True
+    await wait_final(record)
+    assert record.state == JobState.succeeded
+    assert record.notice == "Detailed face was cancelled"
+    assert (record.dir / "model.glb").read_bytes() == box_bytes(tmp_path)
+    assert not (record.dir / "model_original.glb").exists()
+    await scheduler.stop()
+
+
+@pytest.mark.parametrize("swap", [False, True], ids=["dual", "swap"])
+
+
+async def test_other_jobs_finish_while_the_head_pass_runs(tmp_path, swap):
+    ctx: dict = {}
+    sub_states: list[JobState] = []
+    async def during(job_id):
+        sub = ctx["store"].create(JobOptions(), b"png", ".png")
+        ctx["scheduler"].submit(sub)
+        await wait_final(sub, 10)
+        sub_states.append(sub.state)
+    scheduler, store, bus, head = await make_face(tmp_path, mode="skipped", swap=swap, during=during)
+    ctx["scheduler"], ctx["store"] = scheduler, store
+    record, events = await submit(scheduler, store, bus, JobOptions(rig=True, detailed_face=True))
+    await wait_final(record, 10)
+    assert record.state == JobState.succeeded
+    assert sub_states == [JobState.succeeded]
+    await scheduler.stop()
+
+
+async def test_without_detailed_face_the_head_pass_is_not_used(tmp_path):
+    scheduler, store, bus, head = await make_face(tmp_path, mode="applied")
+    record, events = await submit(scheduler, store, bus, JobOptions(rig=True))
+    await wait_final(record)
+    assert record.state == JobState.succeeded
+    assert head.calls == []
+    await scheduler.stop()

@@ -3,6 +3,8 @@ plus an optional rig stage that adds a skeleton to finished models."""
 
 import asyncio
 import logging
+import shutil
+from pathlib import Path
 from collections.abc import Awaitable, Callable
 
 from model3d_contracts.events import CancelledEvent, CompletedEvent, FailedEvent, ProgressEvent, ResultStats
@@ -10,6 +12,7 @@ from model3d_contracts.jobs import JobError, JobState
 
 from model3d_engine.jobs.events import EventBus, utcnow
 from model3d_engine.jobs.store import JobRecord, JobStore
+from model3d_engine.stages.head_pass import HeadPassFailed, HeadPassResult, HeadPassRunner
 from model3d_engine.stages.protocol import (
     MODEL_OUTPUT,
     RIG_INPUT,
@@ -23,6 +26,9 @@ from model3d_engine.stages.protocol import (
 
 logger = logging.getLogger(__name__)
 
+STATS_FILE = "stats.json"  # the library save endpoint reads this file
+ORIGINAL_OUTPUT = "model_original.glb"  # the rigged model before the texture or head pass replaced it
+
 
 class Scheduler:
     """Moves jobs through shape then paint, so one job paints while the next shapes.
@@ -34,7 +40,8 @@ class Scheduler:
     With swap=True both stages share one GPU and one loop runs them: the loaded stage drains its
     queue, then the card swaps to the other stage if it has work.
 
-    Jobs with a skeleton go through `rig` last. `cards` maps "shape", "paint", and "rig" to a
+    Jobs with a skeleton go through `rig` last. Speech jobs run only on `voice`, whose worker loads
+    for its task like shape and paint. `cards` maps "shape", "paint", "rig", and "voice" to a
     device; stages on the same device take turns, one task at a time.
     """
 
@@ -47,19 +54,34 @@ class Scheduler:
         swap: bool = False,
         rig: StageRunner | None = None,
         cards: dict[str, str] | None = None,
+        head_pass: HeadPassRunner | None = None,
+        voice: StageRunner | None = None,
+        texture_pass: HeadPassRunner | None = None,
+        on_speech_succeeded: Callable[[JobRecord], None] | None = None,
     ):
+        self.on_speech_succeeded = on_speech_succeeded
         self._store = store
         self._bus = bus
         self._shape = shape
         self._paint = paint
         self._rig = rig
+        self._voice = voice
+        self._head_pass = head_pass
+        self._texture_pass = texture_pass
+        self._texture_queue: asyncio.Queue[str] = asyncio.Queue()
         self._shape_queue: asyncio.Queue[str] = asyncio.Queue()
         self._paint_queue: asyncio.Queue[str] = asyncio.Queue()
         self._rig_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._face_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._voice_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._face_results: dict[str, StageResult] = {}
+        self._background: set[asyncio.Task] = set()
         locks: dict[str, asyncio.Lock] = {}
         cards = cards or {}
         # One lock per device; without a device each stage gets its own lock.
-        self._card_lock = {name: locks.setdefault(cards.get(name, name), asyncio.Lock()) for name in ("shape", "paint", "rig")}
+        self._card_lock = {
+            name: locks.setdefault(cards.get(name, name), asyncio.Lock()) for name in ("shape", "paint", "rig", "voice")
+        }
         self._waiting: list[str] = []
         self._tasks: list[asyncio.Task] = []
         self._started = False
@@ -77,14 +99,20 @@ class Scheduler:
         """Whether jobs may ask for a skeleton."""
         return self._rig is not None and self._rig.ready
 
+    @property
+    def voice_available(self) -> bool:
+        """Whether speech jobs may run. The voice worker loads for its first task, so it is not ready yet."""
+        return self._voice is not None
+
     async def start(self) -> None:
         """Start the stage loops. No model is loaded until a task needs it."""
         if self._rig is not None:
             await self._rig.start()
         if self._swap:
-            self._tasks = [asyncio.create_task(self._swap_loop())]
+            self._tasks = [asyncio.create_task(loop) for loop in (self._swap_loop(), self._face_loop(), self._texture_loop())]
         else:
-            loops = [self._shape_loop(), self._paint_loop(), self._rig_loop()]
+            loops = [self._shape_loop(), self._paint_loop(), self._rig_loop(), self._face_loop(), self._voice_loop(),
+                     self._texture_loop()]
             self._tasks = [asyncio.create_task(loop) for loop in loops]
         self._started = True
 
@@ -97,6 +125,8 @@ class Scheduler:
         await self._paint.stop()
         if self._rig is not None:
             await self._rig.stop()
+        if self._voice is not None:
+            await self._voice.stop()
 
     def submit(self, record: JobRecord) -> None:
         """Queue a new job for the shape stage."""
@@ -109,6 +139,12 @@ class Scheduler:
         """Queue a rig-only job: its model is already in RIG_INPUT."""
         self._store.persist(record)
         self._rig_queue.put_nowait(record.job_id)
+        self._work.set()
+
+    def submit_speech(self, record: JobRecord) -> None:
+        """Queue a speech job: its request is already in the job folder."""
+        self._store.persist(record)
+        self._voice_queue.put_nowait(record.job_id)
         self._work.set()
 
     def queue_position(self, job_id: str) -> int | None:
@@ -126,6 +162,11 @@ class Scheduler:
             self._cancel(record)
         else:
             record.cancel_requested = True
+            running = {JobState.detailing: self._head_pass, JobState.texturing: self._texture_pass}.get(record.state)
+            if running is not None:
+                task = asyncio.get_running_loop().create_task(running.cancel(job_id))
+                self._background.add(task)
+                task.add_done_callback(self._background.discard)
         return True
 
     def _progress(self, record: JobRecord, stage: str) -> ProgressCallback:
@@ -156,6 +197,7 @@ class Scheduler:
             textured=textured,
             duration_s=(record.finished_at - record.created_at).total_seconds(),
         )
+        (record.dir / STATS_FILE).write_text(stats.model_dump_json())
         self._bus.publish(
             CompletedEvent(
                 job_id=record.job_id, ts=utcnow(), result_url=f"/v1/jobs/{record.job_id}/result", stats=stats
@@ -184,8 +226,8 @@ class Scheduler:
 
     async def _free_card(self, stage: str) -> None:
         """Called holding the card: unload whatever else is loaded on it, so `stage` gets all of it."""
-        for name, runner in (("shape", self._shape), ("paint", self._paint)):
-            if name != stage and runner.ready and self._shares_card(stage, name):
+        for name, runner in (("shape", self._shape), ("paint", self._paint), ("voice", self._voice)):
+            if runner is not None and name != stage and runner.ready and self._shares_card(stage, name):
                 await runner.unload()
 
     async def _on_card(self, record: JobRecord, runner: StageRunner, stage: str) -> StageResult | None:
@@ -295,8 +337,143 @@ class Scheduler:
             return
         if record.cancel_requested:
             self._cancel(record)
+        elif record.options.sharper_texture and self._texture_pass is not None:
+            self._face_results[job_id] = result
+            self._texture_queue.put_nowait(job_id)
+            self._work.set()
         else:
+            self._after_texture(record, result)
+
+    def _after_texture(self, record: JobRecord, result: StageResult) -> None:
+        """A rigged (and maybe retextured) model: on to Detailed face, or finished."""
+        if record.options.detailed_face and self._head_pass is not None:
+            self._face_results[record.job_id] = result
+            self._face_queue.put_nowait(record.job_id)
+            self._work.set()
+        else:
+            self._face_results.pop(record.job_id, None)
             self._succeed(record, result, record.options.texture)
+
+    @staticmethod
+    def _add_notice(record: JobRecord, notice: str | None) -> None:
+        if notice:
+            record.notice = f"{record.notice}; {notice}" if record.notice else notice
+
+    def _replace_model(self, record: JobRecord, model: Path) -> None:
+        """The pass's model becomes the job's; the first model before any pass stays as the original."""
+        current = record.dir / MODEL_OUTPUT
+        original = record.dir / ORIGINAL_OUTPUT
+        if not original.exists():
+            current.replace(original)
+        shutil.copyfile(model, current)
+
+    async def _texture_job(self, job_id: str) -> None:
+        """Run the texture pass holding every card: it drives the GPUs itself, so no stage may load
+        a model on them meanwhile (other jobs wait for it, unlike Detailed face)."""
+        record = self._store.get(job_id)
+        result = self._face_results.get(job_id)
+        if record is None or record.is_final or result is None or self._texture_pass is None:
+            return
+        if record.cancel_requested:
+            self._add_notice(record, "Sharper texture was cancelled")
+            self._after_texture(record, result)
+            return
+        self._begin(record, JobState.texturing, "texture")
+        progress = self._progress(record, "texture")
+
+        def on_step(step: str) -> None:
+            progress(record.progress, step)
+
+        outcome: HeadPassResult | None = None
+        failure = ""
+        locks = list({id(lock): lock for lock in self._card_lock.values()}.values())
+        for lock in locks:
+            await lock.acquire()
+        try:
+            for name, runner in (("shape", self._shape), ("paint", self._paint), ("voice", self._voice)):
+                if runner is not None and runner.ready:
+                    await runner.unload()
+            outcome = await self._texture_pass.run(job_id, on_step)
+        except HeadPassFailed as error:
+            failure = str(error).splitlines()[0] if str(error) else "unknown error"
+        finally:
+            for lock in reversed(locks):
+                lock.release()
+        if record.cancel_requested:
+            self._add_notice(record, "Sharper texture was cancelled")
+        elif outcome is None:
+            self._add_notice(record, f"Sharper texture failed: {failure}")
+        elif outcome.applied and outcome.model is not None:
+            self._replace_model(record, outcome.model)
+        else:
+            self._add_notice(record, outcome.reason)
+        if record.cancel_requested:
+            self._face_results.pop(job_id, None)
+            self._succeed(record, result, record.options.texture)
+        else:
+            self._after_texture(record, result)
+
+    async def _face_job(self, job_id: str) -> None:
+        record = self._store.get(job_id)
+        result = self._face_results.pop(job_id, None)
+        if record is None or record.is_final or result is None or self._head_pass is None:
+            return
+        if record.cancel_requested:
+            self._add_notice(record, "Detailed face was cancelled")
+            self._succeed(record, result, record.options.texture)
+            return
+        self._begin(record, JobState.detailing, "face")
+        progress = self._progress(record, "face")
+
+        def on_step(step: str) -> None:
+            progress(record.progress, step)
+
+        outcome: HeadPassResult | None = None
+        failure = ""
+        try:
+            outcome = await self._head_pass.run(job_id, on_step)
+        except HeadPassFailed as error:
+            failure = str(error).splitlines()[0] if str(error) else "unknown error"
+        if record.cancel_requested:
+            self._add_notice(record, "Detailed face was cancelled")
+        elif outcome is None:
+            self._add_notice(record, f"Detailed face failed: {failure}")
+        elif outcome.applied and outcome.model is not None:
+            self._replace_model(record, outcome.model)
+        else:
+            self._add_notice(record, outcome.reason)
+        self._succeed(record, result, record.options.texture)
+
+    def _succeed_speech(self, record: JobRecord) -> None:
+        record.transition(JobState.succeeded)
+        self._store.persist(record)
+        if self.on_speech_succeeded is not None:
+            try:
+                self.on_speech_succeeded(record)
+            except Exception:
+                logger.exception("Speech hook failed for job %s", record.job_id)
+        self._bus.publish(
+            CompletedEvent(job_id=record.job_id, ts=utcnow(), result_url=f"/v1/speech-jobs/{record.job_id}/result")
+        )
+
+    async def _voice_job(self, job_id: str) -> None:
+        record = self._store.get(job_id)
+        if record is None or record.is_final:
+            return
+        if record.cancel_requested:
+            self._cancel(record)
+            return
+        if self._voice is None:
+            self._fail(record, "voice_unavailable", "This engine has no voice stage")
+            return
+        self._begin(record, JobState.speaking, "voice")
+        result = await self._on_card(record, self._voice, "voice")
+        if result is None:
+            return
+        if record.cancel_requested:
+            self._cancel(record)
+        else:
+            self._succeed_speech(record)
 
     async def _guarded(self, job: Callable[[str], Awaitable[None]], job_id: str) -> None:
         """Run one job step; an unexpected error fails that job instead of ending its stage loop."""
@@ -324,6 +501,20 @@ class Scheduler:
         while True:
             await self._guarded(self._rig_job, await self._rig_queue.get())
 
+    async def _voice_loop(self) -> None:
+        while True:
+            await self._guarded(self._voice_job, await self._voice_queue.get())
+            if self._voice is not None:
+                await self._release(self._voice, self._voice_queue, "voice")
+
+    async def _texture_loop(self) -> None:
+        while True:
+            await self._guarded(self._texture_job, await self._texture_queue.get())
+
+    async def _face_loop(self) -> None:
+        while True:
+            await self._guarded(self._face_job, await self._face_queue.get())
+
     def _needs_run(self, job_id: str) -> bool:
         record = self._store.get(job_id)
         return record is not None and not record.is_final and not record.cancel_requested
@@ -343,13 +534,21 @@ class Scheduler:
             (self._shape, self._shape_queue, self._shape_job, "shape"),
             (self._paint, self._paint_queue, self._paint_job, "paint"),
         )
+        if self._voice is not None:
+            stages += ((self._voice, self._voice_queue, self._voice_job, "voice"),)
         while True:
-            for queue, job in ((self._shape_queue, self._shape_job), (self._paint_queue, self._paint_job), (self._rig_queue, self._rig_job)):
+            for queue, job in (
+                (self._shape_queue, self._shape_job),
+                (self._paint_queue, self._paint_job),
+                (self._voice_queue, self._voice_job),
+                (self._rig_queue, self._rig_job),
+            ):
                 for settled in self._settle_queue(queue, job):
                     await settled
             for runner, queue, _job, stage in stages:
                 await self._release(runner, queue, stage)
-            if self._shape_queue.empty() and self._paint_queue.empty() and self._rig_queue.empty():
+            queues = (self._shape_queue, self._paint_queue, self._voice_queue, self._rig_queue)
+            if all(queue.empty() for queue in queues):
                 self._work.clear()
                 await self._work.wait()
                 continue

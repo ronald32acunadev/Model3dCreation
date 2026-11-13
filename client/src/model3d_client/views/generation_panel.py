@@ -75,6 +75,9 @@ class GenerationPanel(QWidget):
         self.rig_hint = QLabel()  # why skeletons are unavailable, shown under the option
         self.rig_hint.setWordWrap(True)
         self.rig_hint.setStyleSheet("color: palette(placeholder-text);")
+        self.sharper_check = QCheckBox()
+        self.sharper_check.setChecked(vm.sharper_texture)
+        self.sharper_check.toggled.connect(vm.set_sharper_texture)
         self.detail_check = QCheckBox()
         self.detail_check.setChecked(vm.detailed_face)
         self.detail_check.toggled.connect(vm.set_detailed_face)
@@ -106,7 +109,7 @@ class GenerationPanel(QWidget):
         self.reset_camera_button.clicked.connect(self.reset_camera_requested)
 
         layout = QVBoxLayout(self)
-        for widget in (self.source_tabs, self.texture_check, self.rig_check, self.rig_hint, self.detail_check,
+        for widget in (self.source_tabs, self.texture_check, self.rig_check, self.rig_hint, self.sharper_check, self.detail_check,
                        self.quality_combo, self.generate_button,
                        self.progress_bar, self.stage_label, self.error_label, self.notice_label, self.save_button,
                        self.show_texture_check, self.reset_camera_button):
@@ -133,6 +136,7 @@ class GenerationPanel(QWidget):
         self.choose_button.setText(self.tr("Choose image…"))
         self.texture_check.setText(self.tr("Texture"))
         self.rig_check.setText(self.tr("With skeleton"))
+        self.sharper_check.setText(self.tr("Sharper texture"))
         self.detail_check.setText(self.tr("Detailed face"))
         self.quality_combo.setItemText(0, self.tr("Quality: draft"))
         self.quality_combo.setItemText(1, self.tr("Quality: final"))
@@ -166,18 +170,27 @@ class GenerationPanel(QWidget):
         # Only when the engine said why; before its first health answer there is nothing to explain.
         self.rig_hint.setText(vm.rig_reason or "")
         self.rig_hint.setVisible(not rig_available and bool(vm.rig_reason))
+        sharper_reason = vm.sharper_texture_reason
+        self.sharper_check.setEnabled(sharper_reason is None and vm.phase == Phase.idle)
+        self.sharper_check.setToolTip(
+            self.tr(
+                "Repaints the head, the torso, the arms and the legs one by one from their own close-up of the "
+                "image, so faces and clothes come out sharper, and adds the skeleton. Uses both GPUs. "
+                "About 8 minutes more per model."
+            )
+            if sharper_reason is None
+            else sharper_reason  # the engine's own explanation
+        )
         detail_reason = vm.detail_reason
         self.detail_check.setEnabled(detail_reason is None and vm.phase == Phase.idle)
-        detail_reasons = {
-            None: self.tr(
+        if detail_reason is None:
+            detail_tip = self.tr(
                 "Sculpts the head and shoulders again on their own for a sharper face, then puts the head on the "
                 "body and adds the skeleton. About 8 minutes more per model."
-            ),
-            "missing_tools": self.tr("The head-pass tools are not installed (scripts/kit_assembly)."),
-            "no_rig": self.tr("The detailed face needs skeletons, which this engine cannot add."),
-            "not_trellis": self.tr("The detailed face needs the TRELLIS.2 generator."),
-        }
-        self.detail_check.setToolTip(detail_reasons[detail_reason])
+            )
+        else:
+            detail_tip = detail_reason  # the engine's own explanation
+        self.detail_check.setToolTip(detail_tip)
         self.notice_label.setText(self._notice_text())
         self.notice_label.setVisible(bool(vm.notice))
         self.quality_combo.setEnabled(vm.phase == Phase.idle)
@@ -199,6 +212,7 @@ class GenerationPanel(QWidget):
             Phase.shaping: self.tr("Building the shape"),
             Phase.painting: self.tr("Painting the texture"),
             Phase.rigging: self.tr("Adding skeleton…"),
+            Phase.texturing: self.tr("Painting a sharper texture…"),
             Phase.detailing: self.tr("Sculpting the face…"),
             Phase.cancelling: self.tr("Cancelling: the engine finishes the current stage first…"),
         }
@@ -212,7 +226,7 @@ class GenerationPanel(QWidget):
             return ""
         if notice == "cancelled":
             return self.tr("Detailed face cancelled; the model is the regular one.")
-        return self.tr("The detailed face was not applied; the model is the regular one. Reason: {reason}").format(
+        return self.tr("A finishing pass was not applied; the model keeps its previous version. Reason: {reason}").format(
             reason=notice
         )
 

@@ -1,7 +1,8 @@
 """Give each piece of the fused surface its own UVs, material, and 4096 px texture.
 
 Run with the engine's interpreter, which ships bpy: `python paint.py RUN_DIR [--size 4096]`.
-Reads fused.glb, fused_labels.npy, kit.json, rig.json, mold.glb and aligned/<part>.glb; writes
+Reads fused.glb, fused_labels.npy, kit.json, rig.json, mold.glb and aligned/<part>.glb (a head
+swap reads patch.glb, remove_faces.npy and keep_head_faces.npy instead of the fused files); writes
 model.glb and paint.json. Each part's texture is baked from its own generated model; texels its
 surface does not reach are baked from the mold, and their share is recorded.
 """
@@ -17,11 +18,13 @@ from pathlib import Path
 import numpy as np
 import trimesh
 from PIL import Image, ImageDraw
+from scipy import ndimage
 from scipy.spatial import cKDTree
 
 CAGE_EXTRUSION = 0.004  # glTF units; the body is about 1.0 tall and the fused grid is about 0.002
 MAX_RAY_DISTANCE = 0.012
 MARGIN_PX = 8
+MAX_UNCOVERED = 0.01  # a head swap whose seam leaves more of its visible texels black is skipped
 
 
 def gltf_point(vector) -> tuple[float, float, float]:
@@ -113,12 +116,14 @@ def pixels(image) -> np.ndarray:
     return buffer.reshape(image.size[1], image.size[0], 4)
 
 
-def island_mask(obj, size: int) -> np.ndarray:
-    """Texels covered by the object's UV triangles (image rows bottom-up, as Blender stores them)."""
+def island_mask(obj, size: int, polygons=None) -> np.ndarray:
+    """Texels covered by the object's UV triangles (image rows bottom-up, as Blender stores them);
+    `polygons` limits them to those polygon indices."""
     mask = Image.new("L", (size, size), 0)
     draw = ImageDraw.Draw(mask)
     uv = obj.data.uv_layers.active.data
-    for polygon in obj.data.polygons:
+    chosen = obj.data.polygons if polygons is None else [obj.data.polygons[int(i)] for i in polygons]
+    for polygon in chosen:
         draw.polygon([(uv[i].uv[0] * size, uv[i].uv[1] * size) for i in polygon.loop_indices], fill=1)
     return np.asarray(mask, bool)
 
@@ -160,42 +165,78 @@ def label_mask(bpy, target, mold, own: np.ndarray, size: int) -> np.ndarray:
     return mask
 
 
+def visible_polygons(target, plane: dict | None) -> np.ndarray | None:
+    """Indices of the target's polygons above the cut plane; those below sit inside the kept body."""
+    if plane is None:
+        return None
+    centers = np.array([gltf_point(target.matrix_world @ p.center) for p in target.data.polygons])
+    return np.flatnonzero((centers - np.asarray(plane["point"])) @ np.asarray(plane["normal"]) > 0)
+
+
+def combine(mold: np.ndarray, part: np.ndarray | None, weight: np.ndarray | None) -> tuple[np.ndarray, np.ndarray]:
+    """Texel colors (rows x columns x RGBA) from the mold's bake and the part's bake blended by
+    `weight` (the part's share), and the mask of texels neither bake reached.
+
+    A bake marks the texels it reached with alpha 1. A texel only the part reached takes the
+    part's color whatever its weight: the mold bake stops 12 mm from its surface, and taking its
+    empty color there left a black band across the armoured character's mouth. Texels neither bake
+    reached take the color of the nearest reached texel instead of black.
+    """
+    color = mold.copy()
+    mold_hit = mold[:, :, 3] > 0.5
+    reached = mold_hit.copy()
+    if part is not None:
+        hit = part[:, :, 3] > 0.5
+        share = np.where(mold_hit, 1.0 if weight is None else weight, 1.0)[hit][:, None]
+        color[hit] = share * part[hit] + (1 - share) * color[hit]
+        reached |= hit
+    if reached.any() and not reached.all():
+        _, (rows, columns) = ndimage.distance_transform_edt(~reached, return_indices=True)
+        color[~reached] = color[rows[~reached], columns[~reached]]
+    return color, ~reached
+
+
 def bake_piece(bpy, target, name: str, mold, source, kit: dict, size: int,
-               own_vertices: np.ndarray | None = None) -> float | None:
+               own_vertices: np.ndarray | None = None) -> tuple[float | None, float, float]:
     """Bake the mold, then the sculpted source blended over it, into the target's 'Bake' image.
 
     With `own_vertices` (0/1 per mold vertex), the source's colors are kept only where the mold
     surface belongs to the part. Returns the share of the target's texels the source reached
-    (None when the source is the mold).
+    (None when the source is the mold), the share of its visible texels (above the cut) that
+    neither bake reached, and the share of visible texels left black (no reached texel to copy).
     """
     base = bpy.data.images.new(f"{name}_mold", size, size, alpha=True)
-    bake(bpy, target, mold, base, clear=True)
-    color = pixels(base)
+    base.pixels.foreach_set(np.zeros(size * size * 4, np.float32))
+    bake(bpy, target, mold, base, clear=False)
+    mold_pixels = pixels(base)
+    part_pixels, weight = None, None
     part_share = None
     if source is not mold:
         own = bpy.data.images.new(f"{name}_part", size, size, alpha=True)
         own.pixels.foreach_set(np.zeros(size * size * 4, np.float32))
         bake(bpy, target, source, own, clear=False)
-        own_pixels = pixels(own)
-        hit = own_pixels[:, :, 3] > 0.5
-        weight = np.ones(color.shape[:2], np.float32)
+        part_pixels = pixels(own)
+        hit = part_pixels[:, :, 3] > 0.5
+        weight = np.ones(hit.shape, np.float32)
         plane = kit.get("planes", {}).get(name)
         if plane is not None:
             weight = blend_weight(bpy, target, source, plane, kit["blend"], size)
         if own_vertices is not None:
             weight = weight * label_mask(bpy, target, mold, own_vertices, size)
-        mixed = weight[hit][:, None]
-        color[hit] = mixed * own_pixels[hit] + (1 - mixed) * color[hit]
         islands = island_mask(target, size)
         part_share = float((hit & islands).sum() / max(islands.sum(), 1))
         bpy.data.images.remove(own)
+    color, unreached = combine(mold_pixels, part_pixels, weight)
+    visible = island_mask(target, size, visible_polygons(target, kit.get("planes", {}).get(name)))
+    unreached_share = float((unreached & visible).sum() / max(visible.sum(), 1))
+    uncovered = unreached_share if unreached.all() else 0.0
     color[:, :, 3] = 1.0
     final = bpy.data.images.new(f"{name}_color", size, size, alpha=False)
     final.pixels.foreach_set(color.ravel())
     final.pack()
     target.active_material.node_tree.nodes["Bake"].image = final
     bpy.data.images.remove(base)
-    return part_share
+    return part_share, unreached_share, uncovered
 
 
 def bake_material(bpy, name: str):
@@ -212,57 +253,78 @@ def bake_material(bpy, name: str):
     return material
 
 
-def paint_head_swap(bpy, run: Path, kit: dict, size: int, started: float) -> int:
-    """The mold's body as it is, minus the head region, plus the head patch with its own texture."""
+def delete_flagged(bpy, obj, reference: trimesh.Trimesh, flags: np.ndarray, keep: bool = False) -> int:
+    """Delete the object's faces flagged in `flags` (per face of `reference`, the same file as
+    trimesh reads it), matched by face center; with `keep`, delete the unflagged ones instead.
+    Returns how many faces were deleted."""
     import bmesh
 
-    from sdf import CutterField
-
-    body = import_glb(bpy, run / "mold.glb")
-    body.name = "body"
-    cut = kit["remove_cutter"]
-    remove = CutterField(cut["point"], cut["normal"], [(a, b, r) for a, b, r in cut["segments"]])
-    centers = np.array([gltf_point(body.matrix_world @ p.center) for p in body.data.polygons])
-    doomed = np.flatnonzero(remove(centers) < 0)
+    centers = np.array([gltf_point(obj.matrix_world @ p.center) for p in obj.data.polygons])
+    _, nearest = cKDTree(np.asarray(reference.triangles_center)).query(centers)
+    doomed = np.flatnonzero(flags[nearest] != keep)
     mesh = bmesh.new()
-    mesh.from_mesh(body.data)
+    mesh.from_mesh(obj.data)
     mesh.faces.ensure_lookup_table()
     bmesh.ops.delete(mesh, geom=[mesh.faces[int(i)] for i in doomed], context="FACES")
-    mesh.to_mesh(body.data)
+    mesh.to_mesh(obj.data)
     mesh.free()
+    return len(doomed)
 
-    patch = import_glb(bpy, run / "patch.glb")
-    patch.name = "head"
-    patch.data.materials.clear()
-    patch.data.materials.append(bake_material(bpy, "head"))
+
+def paint_head_swap(bpy, run: Path, kit: dict, size: int, started: float) -> int:
+    """The mold's body minus the old head, the sculpted head as it was made (its own triangles and
+    texture), and the seam band between them with a texture baked here."""
+    from kit import load_mesh
+
+    head_file = run / "aligned" / kit["volume_check"]["head"]["file"]
+    body = import_glb(bpy, run / "mold.glb")
+    body.name = "body"
+    removed = delete_flagged(bpy, body, trimesh.load(run / "mold.glb", force="mesh"), np.load(run / "remove_faces.npy"))
+
+    head = import_glb(bpy, head_file)
+    head.name = "head"
+    delete_flagged(bpy, head, load_mesh(head_file), np.load(run / "keep_head_faces.npy"), keep=True)
+
+    band = import_glb(bpy, run / "patch.glb")
+    band.name = "seam"
+    band.data.materials.clear()
+    band.data.materials.append(bake_material(bpy, "head"))
     bpy.ops.object.select_all(action="DESELECT")
-    patch.select_set(True)
-    bpy.context.view_layer.objects.active = patch
+    band.select_set(True)
+    bpy.context.view_layer.objects.active = band
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
     bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.002)
     bpy.ops.object.mode_set(mode="OBJECT")
 
     mold = import_glb(bpy, run / "mold.glb")
-    part = import_glb(bpy, run / "aligned" / kit["volume_check"]["head"]["file"])
+    part = import_glb(bpy, head_file)
     reference = trimesh.load(run / "mold.glb", force="mesh")
     head_index = json.loads((run / "rig.json").read_text())["parts"].index("head")
     positions = np.array([gltf_point(mold.matrix_world @ v.co) for v in mold.data.vertices])
     _, nearest = cKDTree(np.asarray(reference.vertices)).query(positions)
     own = np.load(run / "mold_labels.npy")[nearest] == head_index
-    part_share = bake_piece(bpy, patch, "head", mold, part, kit, size, own_vertices=own)
+    part_share, unreached, uncovered = bake_piece(bpy, band, "head", mold, part, kit, size, own_vertices=own)
     for source in (mold, part):
         bpy.data.objects.remove(source, do_unlink=True)
+    if uncovered > MAX_UNCOVERED:
+        reason = f"{100 * uncovered:.1f} % of the neck seam got no color"
+        (run / "paint.json").write_text(json.dumps({"skipped": reason, "uncovered_texel_share": uncovered}, indent=2))
+        print(json.dumps({"skipped": reason}))
+        return 0
 
     bpy.ops.object.select_all(action="DESELECT")
-    patch.select_set(True)
-    bpy.context.view_layer.objects.active = patch
+    band.select_set(True)
+    bpy.context.view_layer.objects.active = band
     bpy.ops.object.shade_smooth()
+    head.select_set(True)
     body.select_set(True)
     bpy.ops.export_scene.gltf(filepath=str(run / "model.glb"), export_format="GLB", use_selection=True,
                               export_image_format="AUTO")
-    report = {"mode": "head_swap", "removed_body_faces": len(doomed), "kept_body_faces": len(body.data.polygons),
-              "head": {"faces": len(patch.data.polygons), "texture_px": size, "part_texel_share": part_share},
+    report = {"mode": "head_swap", "removed_body_faces": removed, "kept_body_faces": len(body.data.polygons),
+              "kept_head_faces": len(head.data.polygons),
+              "head": {"faces": len(band.data.polygons), "texture_px": size, "part_texel_share": part_share,
+                       "unreached_texel_share": unreached, "uncovered_texel_share": uncovered},
               "seconds": round(time.monotonic() - started, 1)}
     (run / "paint.json").write_text(json.dumps(report, indent=2))
     print(json.dumps(report))
@@ -334,9 +396,9 @@ def main(argv: list[str]) -> int:
         bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.002)
         bpy.ops.object.mode_set(mode="OBJECT")
 
-        part_share = bake_piece(bpy, target, name, mold, sources[name], kit, size)
-        report[name] = {"faces": len(target.data.polygons), "texture_px": size,
-                        "part_texel_share": part_share,
+        part_share, unreached, uncovered = bake_piece(bpy, target, name, mold, sources[name], kit, size)
+        report[name] = {"faces": len(target.data.polygons), "texture_px": size, "part_texel_share": part_share,
+                        "unreached_texel_share": unreached, "uncovered_texel_share": uncovered,
                         "mold_texel_share": None if part_share is None else 1.0 - part_share}
         print(json.dumps({name: report[name]}), flush=True)
 

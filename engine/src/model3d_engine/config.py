@@ -18,6 +18,10 @@ class Settings:
     hunyuan_dir: Path
     host: str = "127.0.0.1"
     port: int = 8765
+    # Extra address, besides loopback, that the engine listens on for other machines on the LAN.
+    lan_host: str | None = None
+    # Bearer keys that LAN clients must present; required when lan_host is set.
+    api_keys: tuple[str, ...] = ()
     # Unset buses and mode mean automatic placement from the detected GPUs.
     shape_bus: str | None = None
     paint_bus: str | None = None
@@ -35,10 +39,16 @@ class Settings:
     generator: str = "hunyuan"
     # TRELLIS.2's clone with its own .venv; jobs fail with a clear error when it is missing.
     trellis_dir: Path = REPO_ROOT / "vendor/TRELLIS.2"
+    # Qwen3-TTS's clone with its own .venv; speech jobs are unavailable when it is missing.
+    qwen_tts_dir: Path = REPO_ROOT / "vendor/Qwen3-TTS"
 
     @property
     def jobs_dir(self) -> Path:
         return self.home / "jobs"
+
+    @property
+    def voices_dir(self) -> Path:
+        return self.home / "voices"
 
     @property
     def hf_home(self) -> Path:
@@ -56,6 +66,37 @@ def is_loopback_host(host: str) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+def _parse_port(value: str) -> int:
+    """A TCP port number, or 0 for `auto`, which binds a free port."""
+    message = f"MODEL3D_PORT must be a port number or auto; got '{value}'"
+    if value == "auto":
+        return 0
+    try:
+        port = int(value)
+    except ValueError as error:
+        raise ValueError(message) from error
+    if not 0 <= port <= 65535:
+        raise ValueError(message)
+    return port
+
+
+def _parse_lan_host(value: str | None) -> str | None:
+    """The normalized LAN address, or None when unset; loopback and wildcard addresses are refused."""
+    if not value:
+        return None
+    message = (
+        "MODEL3D_LAN_HOST must be this machine's network IP address, like 192.168.90.10; "
+        f"got '{value}'"
+    )
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError as error:
+        raise ValueError(message) from error
+    if address.is_loopback or address.is_unspecified:
+        raise ValueError(message)
+    return str(address)
 
 
 def normalize_origin(origin: str) -> str:
@@ -79,6 +120,7 @@ def load_settings(env: Mapping[str, str] | None = None, repo_root: Path | None =
     if generator not in GENERATORS:
         raise ValueError(f"MODEL3D_GENERATOR must be one of {', '.join(GENERATORS)}; got {generator!r}")
     trellis_dir = env.get("MODEL3D_TRELLIS_DIR")
+    qwen_tts_dir = env.get("MODEL3D_QWEN_TTS_DIR")
     if generator == "trellis2" and any(env.get(name) is not None for name in ("MODEL3D_MODE", "MODEL3D_SHAPE_BUS", "MODEL3D_PAINT_BUS")):
         raise ValueError("MODEL3D_MODE, MODEL3D_SHAPE_BUS and MODEL3D_PAINT_BUS apply only to MODEL3D_GENERATOR=hunyuan")
     return Settings(
@@ -87,8 +129,11 @@ def load_settings(env: Mapping[str, str] | None = None, repo_root: Path | None =
         unirig_dir=Path(unirig_dir).expanduser() if unirig_dir else repo_root / "vendor/UniRig",
         generator=generator,
         trellis_dir=Path(trellis_dir).expanduser() if trellis_dir else repo_root / "vendor/TRELLIS.2",
+        qwen_tts_dir=Path(qwen_tts_dir).expanduser() if qwen_tts_dir else repo_root / "vendor/Qwen3-TTS",
         host=env.get("MODEL3D_HOST", "127.0.0.1"),
-        port=int(env.get("MODEL3D_PORT", "8765")),
+        port=_parse_port(env.get("MODEL3D_PORT", "8765")),
+        lan_host=_parse_lan_host(env.get("MODEL3D_LAN_HOST")),
+        api_keys=tuple(key.strip() for key in env.get("MODEL3D_API_KEYS", "").split(",") if key.strip()),
         shape_bus=normalize_bus_id(shape_bus) if shape_bus is not None else None,
         paint_bus=normalize_bus_id(paint_bus) if paint_bus is not None else None,
         mode=mode,

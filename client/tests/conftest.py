@@ -1,3 +1,4 @@
+import gc
 import os
 import struct
 import zlib
@@ -22,6 +23,15 @@ def png_bytes(width: int = 2, height: int = 2) -> bytes:
     rows = b"".join(b"\x00" + b"\x80\x40\x20" * width for _ in range(height))
     header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+
+
+@pytest.fixture(autouse=True)
+def collect_on_main_thread():
+    """Collect garbage only on the main thread: Qt objects freed in the fake engine's thread crash PySide6."""
+    gc.disable()
+    yield
+    gc.collect()
+    gc.enable()
 
 
 @pytest.fixture(autouse=True)
