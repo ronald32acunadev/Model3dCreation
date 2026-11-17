@@ -1,6 +1,6 @@
 # Material UI Theme for PySide6 Client
 
-Status: US-01..US-03 approved 2026-11-17 ("Dale las apruebo subamos todas"), execution mode: all stories. US-01, US-02, and US-03 completed. Branch: `feat/material-ui`.
+Status: US-01..US-03 approved 2026-11-17 ("Dale las apruebo subamos todas"), execution mode: all stories. US-01, US-02, and US-03 completed in commit `13d94e8`. Branch: `feat/material-ui`.
 
 ## Context
 
