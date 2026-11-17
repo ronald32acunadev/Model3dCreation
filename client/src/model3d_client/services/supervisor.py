@@ -6,7 +6,7 @@ from collections.abc import Callable
 from enum import Enum
 
 from model3d_contracts.health import Health
-from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, QUrl, Signal
 
 from model3d_client.paths import AppPaths
 from model3d_client.services.engine_api import EngineApi
@@ -98,6 +98,8 @@ class EngineSupervisor(QObject):
         process = QProcess(self)
         env = QProcessEnvironment.systemEnvironment()
         env.insert("MODEL3D_HOME", str(self._paths.data))
+        # The engine must listen where the app polls, whatever MODEL3D_PORT (even "auto") the shell sets.
+        env.insert("MODEL3D_PORT", str(QUrl(self._api.base_url).port()))
         # The engine defaults to Hunyuan3D; the app prefers TRELLIS.2 when it is installed and nothing chose otherwise.
         if not env.contains("MODEL3D_GENERATOR") and self._paths.trellis_python.is_file():
             env.insert("MODEL3D_GENERATOR", "trellis2")

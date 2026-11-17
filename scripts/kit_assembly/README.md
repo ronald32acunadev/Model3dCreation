@@ -15,6 +15,23 @@ python3 scripts/kit_assembly/run.py JOB_ID --extra-seeds 11,22   # more tries fo
 
 It takes about 11 minutes with two seeds and writes `data/kit_runs/<JOB_ID>/model.glb` plus `compare_head.png` and `compare_front.png`. A rerun skips finished steps; delete the run folder to start over. A job without a skeleton ends with its own model. Only the head is sculpted: in the experiment, torsos came out as flat sheets and limbs bent differently from the body (see `docs/userstories/kit-assembly/`).
 
+How the head swap works (`docs/userstories/detailed-face-general/`):
+
+1. `align.py` fits the generated bust onto everything above the shoulders, then moves it (never turns it) onto the old head alone.
+2. `landmarks.py` reads the new head's nose, chin and throat from horizontal solid sections around its crown, leaving out collars, armour or hair beside the head.
+3. `kit.py --head-swap` cuts at the throat, below the chin. It keeps the bust's own triangles above a thin neck band, removes only the old head's faces, and rebuilds only the band from distance fields.
+4. `paint.py` bakes the band's texture; the kept head keeps its own texture.
+5. The pass keeps the original model, with the reason, when the heads sit more than 2.5 cm apart on average, when the seam would reach the face, or when more than 1 % of the band gets no color.
+
+## Evaluation set
+
+```bash
+engine/.venv/bin/python scripts/kit_assembly/evaluate.py OUT_DIR        # every run in data/kit_runs with a sculpted head
+cd scripts/kit_assembly && ../../engine/.venv/bin/python -m pytest tests  # unit tests
+```
+
+`evaluate.py` reruns align, kit and paint from each run folder's saved inputs into `OUT_DIR/<run>` (the run folders stay as they are), renders each head before and after, and prints a table: cut height against the chin and the head joint, alignment, head fit, and uncovered seam texels. Measure every head-pass change on it.
+
 ## Frame and units
 
 All coordinates are in the glTF frame of the GLB files: +Y up, the subject faces +Z (toward the camera), the body is about 1.0 tall. Blender imports glTF as (x, -z, y); convert Blender world coordinates back with `(x, y, z)_gltf = (bx, bz, -by)`.
@@ -33,7 +50,8 @@ One folder per test image, `data/kit_runs/<job_id>/`:
 | `parts/<part>.glb`, `parts.json` | engine jobs | Each crop generated alone (TRELLIS.2 `high`, same seed) |
 | `aligned/<part>.glb`, `align.json` | `align.py` | Parts moved onto the mold |
 | `pieces/<piece>.glb`, `fused.glb`, `fused_labels.npy`, `kit.json` | `kit.py` | Cut and capped pieces, fused surface, piece of each fused face |
-| `model.glb`, `paint.json` | `paint.py` | Fused mesh with one material and 4096 px texture per piece |
+| `patch.glb`, `remove_faces.npy`, `keep_head_faces.npy`, `kit.json` | `kit.py --head-swap` | Neck band; mold faces removed (mold.glb face order); bust faces kept (aligned bust face order) |
+| `model.glb`, `paint.json` | `paint.py` | Fused mesh with one material and 4096 px texture per piece; for a head swap, the body, the kept head and the baked band |
 | `compare_*.png`, `exploded.png` | `compare.py` | Review renders |
 
 ## Interfaces
@@ -59,4 +77,6 @@ One folder per test image, `data/kit_runs/<job_id>/`:
 
 `crops.json`: `{"flip": 1 or -1, "scale": s, "offset": [u0, v0], "iou": f, "head_ratio": f, "parts": {part: {"box": [x0, y0, x1, y1], "mask_box": [x0, y0, x1, y1]}}}`. Projection of a glTF point to input-image pixels: `u = scale * flip * x + offset[0]`, `v = -scale * y + offset[1]`.
 
-`align.json`: `{part: {"matrix": 4x4 list, "scale": f, "mean_distance": f, "fitness": f}}`, the matrix maps the generated part onto the mold.
+`align.json`: `{part: {"matrix": 4x4 list, "scale": f, "mean_distance": f, "fitness": f, "head": {...} or null}}`, the matrix maps the generated part onto the mold. For a bust, `head` holds the head-only shift: `method` (`start` or `shifted`), the two-way mean distances between the heads before (`start_*`) and after it, or `error`.
+
+`kit.json` (head swap): `face` (nose, chin, throat and cut heights, head axis, band radius), `blend` (band width), `removed_body_faces`, `kept_head_faces`, `planes`, or `skipped` with the reason. `paint.json` (head swap): the band's `part_texel_share`, `unreached_texel_share` and `uncovered_texel_share`, or `skipped`.

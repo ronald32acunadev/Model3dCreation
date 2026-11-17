@@ -1,15 +1,21 @@
 """Non-blocking client for the engine's REST and WebSocket API, on the Qt event loop."""
 
+import io
+import json
 import logging
 import os
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
+from model3d_contracts.characters import Character, Phrase
 from model3d_contracts.events import parse_event
 from model3d_contracts.health import Health
 from model3d_contracts.jobs import ErrorBody, Job, JobOptions
-from pydantic import ValidationError
+from model3d_contracts.library import Entry
+from model3d_contracts.voices import Voice
+from pydantic import TypeAdapter, ValidationError
 from PySide6.QtCore import QByteArray, QObject, QUrl, Signal
 from PySide6.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWebSockets import QWebSocket
@@ -17,7 +23,21 @@ from PySide6.QtWebSockets import QWebSocket
 logger = logging.getLogger(__name__)
 HEALTH_TIMEOUT_MS = 3000
 REQUEST_TIMEOUT_MS = 30000
+UPLOAD_TIMEOUT_MS = 600000
+DOWNLOAD_TIMEOUT_MS = 120000
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+AUDIO_TYPES = {
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+}
+_VOICE = TypeAdapter(Voice)
+_VOICES = TypeAdapter(list[Voice])
+_CHARACTER = TypeAdapter(Character)
+_CHARACTERS = TypeAdapter(list[Character])
+_PHRASES = TypeAdapter(list[Phrase])
 
 
 @dataclass
@@ -132,22 +152,155 @@ class EngineApi(QObject):
     def job(self, job_id: str, on_done: Callable[[Job | ApiError], None]) -> None:
         self._send(self._manager.get(self._request(f"/v1/jobs/{job_id}")), self._job_handler(200, on_done))
 
-    def download_result(self, job_id: str, target: Path, on_done: Callable[[Path | ApiError], None]) -> None:
+    def download_result(self, job_id: str, target: Path, on_done: Callable[[Path | ApiError], None], variant: str | None = None) -> None:
         def done(reply: QNetworkReply) -> None:
             if self._status(reply) != 200:
                 on_done(self._error(reply))
                 return
-            part = target.with_suffix(".part")
-            try:
-                part.write_bytes(bytes(reply.readAll().data()))
-                os.replace(part, target)
-            except OSError as error:
-                on_done(ApiError(status=None, code="write_failed", message=str(error)))
-                return
-            on_done(target)
+            self._write_file(reply, target, on_done)
 
-        # The paint stage can make a large GLB; it still comes from loopback.
-        self._send(self._manager.get(self._request(f"/v1/jobs/{job_id}/result", 120000)), done)
+        path = f"/v1/jobs/{job_id}/result"
+        if variant is not None:
+            path += f"?variant={variant}"
+        self._send(self._manager.get(self._request(path, 120000)), done)
+
+    def start_export(self, entry_id: str, fmt: str, on_done: Callable[[ApiError | None], None]) -> None:
+        def done(reply: QNetworkReply) -> None:
+            if self._status(reply) == 202:
+                on_done(None)
+            else:
+                on_done(self._error(reply))
+
+        self._send(self._post_json(f"/v1/library/{entry_id}/exports", {"format": fmt}), done)
+
+    def download_export(self, entry_id: str, fmt: str, target: Path, on_done: Callable[[Path | ApiError], None]) -> None:
+        def done(reply: QNetworkReply) -> None:
+            status = self._status(reply)
+            if status != 200:
+                on_done(self._error(reply))
+                return
+            content_type = reply.header(QNetworkRequest.KnownHeaders.ContentTypeHeader)
+            if content_type is not None and content_type.startswith("application/zip"):
+                self._extract_zip(bytes(reply.readAll().data()), target, on_done)
+            else:
+                self._write_file(reply, target, on_done)
+
+        self._send(self._manager.get(self._request(f"/v1/library/{entry_id}/exports/{fmt}", 120000)), done)
+
+    def entry(self, entry_id: str, on_done: Callable[[Entry | ApiError], None]) -> None:
+        def done(reply: QNetworkReply) -> None:
+            if self._status(reply) != 200:
+                on_done(self._error(reply))
+                return
+            try:
+                on_done(Entry.model_validate_json(bytes(reply.readAll().data())))
+            except ValidationError as error:
+                on_done(ApiError(status=200, code="internal_error", message=str(error)))
+
+        self._send(self._manager.get(self._request(f"/v1/library/{entry_id}")), done)
+
+    def body(self, entry_id: str, on_done: Callable[[dict | ApiError], None]) -> None:
+        def done(reply: QNetworkReply) -> None:
+            if self._status(reply) != 200:
+                on_done(self._error(reply))
+                return
+            try:
+                data = json.loads(bytes(reply.readAll().data()).decode())
+                if not isinstance(data, dict):
+                    raise ValueError
+                on_done(data)
+            except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
+                on_done(ApiError(status=200, code="internal_error", message="Unreadable body detection answer"))
+
+        self._send(self._manager.get(self._request(f"/v1/library/{entry_id}/body")), done)
+
+    def start_walk(self, entry_id: str, body: str, on_done: Callable[[Entry | ApiError], None]) -> None:
+        def done(reply: QNetworkReply) -> None:
+            if self._status(reply) != 202:
+                on_done(self._error(reply))
+                return
+            try:
+                on_done(Entry.model_validate_json(bytes(reply.readAll().data())))
+            except ValidationError as error:
+                on_done(ApiError(status=202, code="internal_error", message=str(error)))
+
+        self._send(self._post_json(f"/v1/library/{entry_id}/walk", {"body": body}), done)
+
+    def voices(self, on_done: Callable[[list[Voice] | ApiError], None]) -> None:
+        self._send(self._manager.get(self._request("/v1/voices")), self._parsed_handler(200, _VOICES, on_done))
+
+    def rename_voice(self, voice_id: str, name: str, on_done: Callable[[Voice | ApiError], None]) -> None:
+        self._send(self._patch_json(f"/v1/voices/{voice_id}", {"name": name}), self._parsed_handler(200, _VOICE, on_done))
+
+    def delete_voice(self, voice_id: str, on_done: Callable[[ApiError | None], None]) -> None:
+        self._send(self._manager.deleteResource(self._request(f"/v1/voices/{voice_id}")), self._empty_handler(on_done))
+
+    def download_voice_sample(self, voice_id: str, target: Path, on_done: Callable[[Path | ApiError], None]) -> None:
+        self._download(f"/v1/voices/{voice_id}/sample", target, on_done)
+
+    def preview_voice(self, description: str, language: str, sample_text: str, on_done: Callable[[Job | ApiError], None]) -> None:
+        payload = {"description": description, "language": language, "sample_text": sample_text}
+        self._send(self._post_json("/v1/voice-previews", payload), self._job_handler(202, on_done))
+
+    def save_designed_voice(self, name: str, preview_id: str, on_done: Callable[[Voice | ApiError], None]) -> None:
+        payload = {"name": name, "kind": "designed", "preview_id": preview_id}
+        self._send(self._post_json("/v1/voices", payload), self._parsed_handler(201, _VOICE, on_done))
+
+    def save_recorded_voice(self, name: str, language: str, audio: Path, on_done: Callable[[Voice | ApiError], None]) -> None:
+        """Upload a recording; the engine transcribes it before answering, which can take a while."""
+        reply = self._post_multipart(
+            "/v1/voices", {"name": name, "language": language}, "audio", audio,
+            AUDIO_TYPES.get(audio.suffix.lower(), "application/octet-stream"),
+        )
+        self._send(reply, self._parsed_handler(201, _VOICE, on_done))
+
+    def speak(self, voice_id: str, language: str, text: str, on_done: Callable[[Job | ApiError], None]) -> None:
+        payload = {"voice_id": voice_id, "language": language, "text": text}
+        self._send(self._post_json("/v1/speech-jobs", payload), self._job_handler(202, on_done))
+
+    def download_speech(self, job_id: str, target: Path, on_done: Callable[[Path | ApiError], None]) -> None:
+        self._download(f"/v1/speech-jobs/{job_id}/result", target, on_done)
+
+    def characters(self, on_done: Callable[[list[Character] | ApiError], None]) -> None:
+        self._send(self._manager.get(self._request("/v1/characters")), self._parsed_handler(200, _CHARACTERS, on_done))
+
+    def character(self, character_id: str, on_done: Callable[[Character | ApiError], None]) -> None:
+        reply = self._manager.get(self._request(f"/v1/characters/{character_id}"))
+        self._send(reply, self._parsed_handler(200, _CHARACTER, on_done))
+
+    def set_character_voice(self, character_id: str, voice_id: str | None, on_done: Callable[[ApiError | None], None]) -> None:
+        """Link a voice to the character, or unlink it when `voice_id` is None."""
+        path = f"/v1/characters/{character_id}/voice"
+        if voice_id is None:
+            self._send(self._manager.deleteResource(self._request(path)), self._empty_handler(on_done))
+            return
+
+        def done(reply: QNetworkReply) -> None:
+            on_done(None if self._status(reply) == 200 else self._error(reply))
+
+        self._send(self._put_json(path, {"voice_id": voice_id}), done)
+
+    def character_speak(self, character_id: str, text: str, language: str, on_done: Callable[[Job | ApiError], None]) -> None:
+        reply = self._post_json(f"/v1/characters/{character_id}/speech", {"text": text, "language": language})
+        self._send(reply, self._job_handler(202, on_done))
+
+    def phrases(self, character_id: str, on_done: Callable[[list[Phrase] | ApiError], None]) -> None:
+        reply = self._manager.get(self._request(f"/v1/characters/{character_id}/phrases"))
+        self._send(reply, self._parsed_handler(200, _PHRASES, on_done))
+
+    def download_phrase(self, character_id: str, phrase_id: str, target: Path, on_done: Callable[[Path | ApiError], None]) -> None:
+        self._download(f"/v1/characters/{character_id}/phrases/{phrase_id}/audio", target, on_done)
+
+    def delete_phrase(self, character_id: str, phrase_id: str, on_done: Callable[[ApiError | None], None]) -> None:
+        reply = self._manager.deleteResource(self._request(f"/v1/characters/{character_id}/phrases/{phrase_id}"))
+        self._send(reply, self._empty_handler(on_done))
+
+    def export_character(self, character_id: str, target: Path, on_done: Callable[[Path | ApiError], None]) -> None:
+        self._download(f"/v1/characters/{character_id}/package", target, on_done, UPLOAD_TIMEOUT_MS)
+
+    def import_character(self, package: Path, on_done: Callable[[Character | ApiError], None]) -> None:
+        reply = self._post_multipart("/v1/characters/import", {}, "package", package, "application/zip")
+        self._send(reply, self._parsed_handler(201, _CHARACTER, on_done))
 
     def open_events(self, job_id: str) -> EventStream:
         url = QUrl(f"{self.base_url}/v1/jobs/{job_id}/events")
@@ -158,6 +311,69 @@ class EngineApi(QObject):
         request = QNetworkRequest(QUrl(self.base_url + path))
         request.setTransferTimeout(timeout_ms)
         return request
+
+    def _post_json(self, path: str, payload: dict) -> QNetworkReply:
+        request = self._request(path)
+        request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
+        return self._manager.post(request, QByteArray(json.dumps(payload).encode()))
+
+    def _put_json(self, path: str, payload: dict) -> QNetworkReply:
+        return self._manager.put(self._json_request(path), QByteArray(json.dumps(payload).encode()))
+
+    def _patch_json(self, path: str, payload: dict) -> QNetworkReply:
+        return self._manager.sendCustomRequest(self._json_request(path), QByteArray(b"PATCH"), QByteArray(json.dumps(payload).encode()))
+
+    def _json_request(self, path: str) -> QNetworkRequest:
+        request = self._request(path)
+        request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
+        return request
+
+    def _post_multipart(self, path: str, fields: dict[str, str], file_field: str, file: Path, content_type: str) -> QNetworkReply:
+        multi = QHttpMultiPart(QHttpMultiPart.ContentType.FormDataType)
+        for name, value in fields.items():
+            part = QHttpPart()
+            part.setHeader(QNetworkRequest.KnownHeaders.ContentDispositionHeader, f'form-data; name="{name}"')
+            part.setBody(QByteArray(value.encode()))
+            multi.append(part)
+        file_part = QHttpPart()
+        file_part.setHeader(
+            QNetworkRequest.KnownHeaders.ContentDispositionHeader,
+            f'form-data; name="{file_field}"; filename="{file.name}"',
+        )
+        file_part.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, content_type)
+        file_part.setBody(QByteArray(file.read_bytes()))
+        multi.append(file_part)
+        reply = self._manager.post(self._request(path, UPLOAD_TIMEOUT_MS), multi)
+        multi.setParent(reply)
+        return reply
+
+    def _download(self, path: str, target: Path, on_done: Callable[[Path | ApiError], None], timeout_ms: int = DOWNLOAD_TIMEOUT_MS) -> None:
+        def done(reply: QNetworkReply) -> None:
+            if self._status(reply) != 200:
+                on_done(self._error(reply))
+                return
+            self._write_file(reply, target, on_done)
+
+        self._send(self._manager.get(self._request(path, timeout_ms)), done)
+
+    def _parsed_handler(self, success: int, adapter: TypeAdapter, on_done: Callable[[object], None]) -> Callable[[QNetworkReply], None]:
+        def done(reply: QNetworkReply) -> None:
+            status = self._status(reply)
+            if status != success:
+                on_done(self._error(reply))
+                return
+            try:
+                on_done(adapter.validate_json(bytes(reply.readAll().data())))
+            except ValidationError as error:
+                on_done(ApiError(status=status, code="internal_error", message=str(error)))
+
+        return done
+
+    def _empty_handler(self, on_done: Callable[[ApiError | None], None]) -> Callable[[QNetworkReply], None]:
+        def done(reply: QNetworkReply) -> None:
+            on_done(None if self._status(reply) == 204 else self._error(reply))
+
+        return done
 
     def _send(self, reply: QNetworkReply, handler: Callable[[QNetworkReply], None]) -> None:
         # Keep the reply referenced until it finishes, or Python may collect it mid-flight.
@@ -180,6 +396,57 @@ class EngineApi(QObject):
                 on_done(self._error(reply))
 
         return done
+
+    def _write_file(self, reply: QNetworkReply, target: Path, on_done: Callable[[Path | ApiError], None]) -> None:
+        part = target.with_suffix(".part")
+        try:
+            part.write_bytes(bytes(reply.readAll().data()))
+            os.replace(part, target)
+        except OSError as error:
+            on_done(ApiError(status=None, code="write_failed", message=str(error)))
+            return
+        on_done(target)
+
+    def _extract_zip(self, data: bytes, target: Path, on_done: Callable[[Path | ApiError], None]) -> None:
+        suffix = target.suffix.lower()
+        model_name = f"model{suffix}"
+        mtl_name = "model.mtl"
+        target_stem = target.stem
+        mtl_target_name = f"{target_stem}.mtl"
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                for member in zf.infolist():
+                    if member.is_dir():
+                        continue
+                    parts = PurePosixPath(member.filename).parts
+                    if PurePosixPath(member.filename).is_absolute() or ".." in parts:
+                        continue
+                    if member.filename == model_name:
+                        out_path = target
+                        content = zf.read(member)
+                        content = content.replace(b"mtllib model.mtl", f"mtllib {target_stem}.mtl".encode())
+                        out_path.parent.mkdir(parents=True, exist_ok=True)
+                        part = out_path.with_suffix(".part")
+                        part.write_bytes(content)
+                        os.replace(part, out_path)
+                    elif member.filename == mtl_name:
+                        out_path = target.parent / mtl_target_name
+                        content = zf.read(member)
+                        out_path.parent.mkdir(parents=True, exist_ok=True)
+                        part = out_path.with_suffix(".part")
+                        part.write_bytes(content)
+                        os.replace(part, out_path)
+                    else:
+                        out_path = target.parent / member.filename
+                        content = zf.read(member)
+                        out_path.parent.mkdir(parents=True, exist_ok=True)
+                        part = out_path.with_suffix(".part")
+                        part.write_bytes(content)
+                        os.replace(part, out_path)
+        except (OSError, zipfile.BadZipFile) as error:
+            on_done(ApiError(status=None, code="write_failed", message=str(error)))
+            return
+        on_done(target)
 
     @staticmethod
     def _status(reply: QNetworkReply) -> int | None:

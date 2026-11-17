@@ -82,7 +82,7 @@ def walk_to_folder(vm):
 def test_starts_on_welcome(make_vm):
     vm = make_vm()
     assert vm.page == SetupPage.welcome
-    assert vm.components == ["base", "skeletons"]
+    assert vm.components == ["base", "skeletons", "voice"]
 
 
 def test_failed_driver_blocks_requirements_page(make_vm):
@@ -106,11 +106,14 @@ def test_recheck_after_fix_unblocks(make_vm):
     assert vm.page == SetupPage.components
 
 
-def test_skeletons_default_on_and_changes_needed_space(make_vm):
+def test_skeletons_and_voice_default_on_and_changes_needed_space(make_vm):
     vm = make_vm()
-    both = vm.needed_bytes
-    assert both == int((COMPONENT_SIZES["base"] + COMPONENT_SIZES["skeletons"]) * 1.1)
+    all_components = vm.needed_bytes
+    assert all_components == int((COMPONENT_SIZES["base"] + COMPONENT_SIZES["skeletons"] + COMPONENT_SIZES["voice"]) * 1.1)
     vm.set_skeletons(False)
+    assert vm.components == ["base", "voice"]
+    assert vm.needed_bytes == int((COMPONENT_SIZES["base"] + COMPONENT_SIZES["voice"]) * 1.1)
+    vm.set_voice(False)
     assert vm.components == ["base"]
     assert vm.needed_bytes == int(COMPONENT_SIZES["base"] * 1.1)
 
@@ -136,7 +139,7 @@ def test_install_writes_pointer_then_runs_steps(make_vm, tmp_path):
     assert read_pointer(make_vm.env) == (tmp_path / "Disco 2" / "M3D").resolve()
     runner = FakeRunner.instances[0]
     assert runner.install_dir == tmp_path / "Disco 2" / "M3D"
-    assert runner.components == ["base", "skeletons"]
+    assert runner.components == ["base", "skeletons", "voice"]
     assert vm.page == SetupPage.done
     assert finished == [True]
     assert vm.log_lines == ["working"]
@@ -178,6 +181,17 @@ def test_add_skeletons_runs_with_skeletons_added(make_vm, tmp_path):
         env=make_vm.env, check=lambda: (requirements(), TOOLCHAIN), runner_factory=FakeRunner,
         recipe=fake_recipe, background=lambda work: work())
     assert FakeRunner.instances[0].components == ["base", "skeletons"]
+    assert vm.page == SetupPage.done
+
+
+def test_add_voice_runs_with_voice_added(make_vm, tmp_path):
+    folder = tmp_path / "m3d"
+    save_state(folder, InstallState(app_version="0.1.0", components=["base", "skeletons"]))
+    vm = SetupViewModel.for_existing(
+        folder, "add_voice", sources=Sources(tmp_path / "opt", tmp_path / "opt/bin/uv", "0.1.0"),
+        env=make_vm.env, check=lambda: (requirements(), TOOLCHAIN), runner_factory=FakeRunner,
+        recipe=fake_recipe, background=lambda work: work())
+    assert FakeRunner.instances[0].components == ["base", "skeletons", "voice"]
     assert vm.page == SetupPage.done
 
 

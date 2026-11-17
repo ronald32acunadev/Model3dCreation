@@ -47,6 +47,18 @@ def test_wizard_next_disabled_while_blocked(wizard, make_vm):  # noqa: F811
     assert view.next_button.isEnabled()
 
 
+def test_wizard_components_page_toggles_voice(wizard):
+    view = wizard()
+    view.next_button.click()
+    view.next_button.click()
+    assert view.stack.currentWidget() is view.pages[SetupPage.components]
+    assert view.voice_check.isChecked()
+    assert "voice" in view.vm.components
+    view.voice_check.click()
+    assert not view.voice_check.isChecked()
+    assert "voice" not in view.vm.components
+
+
 def test_wizard_folder_problem_is_explained(wizard, tmp_path):
     from model3d_client.setup.checks import FolderCheck
 

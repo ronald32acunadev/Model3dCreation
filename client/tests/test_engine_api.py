@@ -7,6 +7,7 @@ from model3d_contracts.jobs import Job, JobOptions, Quality
 
 from fake_engine import CLOSE, FakeEngine, error_body, free_port, make_job
 from model3d_client.services.engine_api import ApiError
+from model3d_client.services.library import Library
 
 
 @pytest.fixture
@@ -41,7 +42,8 @@ def test_submit_sends_multipart_and_returns_job(qtbot, engine, png, make_api):
     assert job.job_id == "J1" and job.seed == 42
     sent = engine.controller.submissions[0]
     assert json.loads(sent["options"]) == {"texture": False, "quality": "draft", "seed": None,
-                                           "remove_background": True, "target_faces": None, "rig": False}
+                                           "remove_background": True, "target_faces": None, "rig": False, "detailed_face": False,
+                                           "sharper_texture": False}
     assert sent["filename"] == "penguin.png"
     assert sent["image"] == png.read_bytes()
     assert engine.controller.origins == [None]
@@ -111,3 +113,123 @@ def test_submit_rig_posts_model_part(qtbot, engine, tmp_path, make_api):
     assert isinstance(job, Job) and job.job_id == "J1"
     sent = engine.controller.rig_submissions[0]
     assert (sent["filename"], sent["content_type"], sent["model"]) == ("model.glb", "model/gltf-binary", b"glTF model bytes")
+
+
+def test_download_result_original_variant(qtbot, engine, make_api, tmp_path):
+    api = make_api(engine.url)
+    target = tmp_path / "result.glb"
+    engine.controller.original = b"glTF original"
+    result = call(qtbot, lambda on_done: api.download_result("J1", target, on_done, variant="original"))
+    assert result == target
+    assert target.read_bytes() == b"glTF original"
+    assert engine.controller.result_requests == ["original"]
+
+
+def test_download_result_original_variant_missing(qtbot, engine, make_api, tmp_path):
+    api = make_api(engine.url)
+    target = tmp_path / "result.glb"
+    engine.controller.original = None
+    result = call(qtbot, lambda on_done: api.download_result("J1", target, on_done, variant="original"))
+    assert isinstance(result, ApiError)
+    assert result.status == 404
+    assert result.code == "result_not_found"
+    assert not target.exists()
+
+
+def test_start_export_posts_the_format(qtbot, engine, make_api):
+    api = make_api(engine.url)
+    result = call(qtbot, api.start_export, "E1", "fbx")
+    assert result is None
+    assert engine.controller.export_posts == [("E1", "fbx")]
+    engine.controller.export_start = (409, error_body("entry_busy", "busy"))
+    result2 = call(qtbot, api.start_export, "E1", "fbx")
+    assert isinstance(result2, ApiError)
+    assert result2.status == 409
+    assert result2.code == "entry_busy"
+    assert result2.message == "busy"
+
+
+def test_download_export_writes_the_file(qtbot, engine, make_api, tmp_path):
+    api = make_api(engine.url)
+    target = tmp_path / "out.fbx"
+    engine.controller.export_file = b"fbx data"
+    result = call(qtbot, api.download_export, "E1", "fbx", target)
+    assert result == target
+    assert target.read_bytes() == b"fbx data"
+    assert engine.controller.export_gets == [("E1", "fbx")]
+
+
+def test_download_export_not_ready_maps_the_error(qtbot, engine, make_api, tmp_path):
+    api = make_api(engine.url)
+    target = tmp_path / "out.fbx"
+    engine.controller.export_answers = [(409, error_body("export_not_ready", "Export fbx is running"))]
+    result = call(qtbot, api.download_export, "E1", "fbx", target)
+    assert isinstance(result, ApiError)
+    assert result.status == 409
+    assert result.code == "export_not_ready"
+    assert result.message == "Export fbx is running"
+    assert not target.exists()
+
+
+def test_download_export_zip_is_extracted_next_to_the_target(qtbot, engine, make_api, tmp_path):
+    api = make_api(engine.url)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    target = out_dir / "robot.obj"
+    engine.controller.export_zip = {
+        "model.obj": b"mtllib model.mtl\no a\n",
+        "model.mtl": b"newmtl a\n",
+        "tex/a.png": b"png",
+    }
+    result = call(qtbot, api.download_export, "E1", "obj", target)
+    assert result == target
+    assert target.read_bytes() == b"mtllib robot.mtl\no a\n"
+    assert (out_dir / "robot.mtl").read_bytes() == b"newmtl a\n"
+    assert (out_dir / "tex" / "a.png").read_bytes() == b"png"
+    assert not (out_dir / "model.obj").exists()
+    assert not (out_dir / "model.mtl").exists()
+
+
+def test_entry_reads_a_library_entry(qtbot, engine, make_api, tmp_path, png):
+    api = make_api(engine.url)
+    library = Library(tmp_path / "library")
+    created = library.create(png, JobOptions())
+    engine.controller.library_dir = library.root
+    result = call(qtbot, api.entry, created.entry_id)
+    assert result == created
+    result2 = call(qtbot, api.entry, "nope")
+    assert isinstance(result2, ApiError)
+    assert result2.code == "entry_not_found"
+
+
+def test_body_returns_the_detection(qtbot, engine, make_api):
+    api = make_api(engine.url)
+    result = call(qtbot, api.body, "E1")
+    assert result == {"body": "biped", "legs": [], "arms": [], "up": 1}
+    engine.controller.body_answer = (409, error_body("no_skeleton", "no skeleton"))
+    result2 = call(qtbot, api.body, "E1")
+    assert isinstance(result2, ApiError)
+    assert result2.status == 409
+    assert result2.code == "no_skeleton"
+    assert result2.message == "no skeleton"
+
+
+def test_start_walk_returns_the_new_entry(qtbot, engine, make_api, tmp_path, png):
+    api = make_api(engine.url)
+    library = Library(tmp_path / "library")
+    source = library.create(png, JobOptions())
+
+    def handler(entry_id, body):
+        derived = library.create_derived(entry_id, suffix=" (walk)")
+        return (202, json.loads(derived.model_dump_json()))
+
+    engine.controller.walk = handler
+    result = call(qtbot, api.start_walk, source.entry_id, "quadruped")
+    assert result.name == source.name + " (walk)"
+    assert result.source_entry_id == source.entry_id
+    assert engine.controller.walk_posts == [(source.entry_id, "quadruped")]
+
+    engine.controller.walk = None
+    result2 = call(qtbot, api.start_walk, source.entry_id, "quadruped")
+    assert isinstance(result2, ApiError)
+    assert result2.code == "no_skeleton"

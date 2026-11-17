@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator, model_validator
 
 
 class JobState(str, Enum):
@@ -14,6 +14,9 @@ class JobState(str, Enum):
     shaping = "shaping"
     painting = "painting"
     rigging = "rigging"
+    texturing = "texturing"
+    detailing = "detailing"
+    speaking = "speaking"
     succeeded = "succeeded"
     failed = "failed"
     cancelled = "cancelled"
@@ -50,6 +53,8 @@ class JobOptions(BaseModel):
     remove_background: bool = True
     target_faces: int | None = None
     rig: bool = False  # add a skeleton (UniRig) after shape and paint
+    detailed_face: bool = False  # sculpt a detailed head after rigging (needs rig and TRELLIS.2)
+    sharper_texture: bool = False  # retexture each skeleton part from its close-up after rigging (needs rig and TRELLIS.2)
 
     @field_validator("target_faces")
     @classmethod
@@ -57,6 +62,14 @@ class JobOptions(BaseModel):
         if value is not None and value < 1000:
             raise ValueError("target_faces must be at least 1000")
         return value
+
+    @model_validator(mode="after")
+    def _check_detailed_face(self) -> "JobOptions":
+        if self.detailed_face and not self.rig:
+            raise ValueError("detailed_face needs rig: true")
+        if self.sharper_texture and not self.rig:
+            raise ValueError("sharper_texture needs rig: true")
+        return self
 
 
 class JobLinks(BaseModel):
@@ -80,13 +93,15 @@ class ErrorBody(BaseModel):
     error: JobError
 
 
-Stage = Literal["shape", "paint", "rig"]
+Stage = Literal["shape", "paint", "rig", "texture", "face", "voice"]
+JobKind = Literal["model", "speech"]
 
 
 class Job(BaseModel):
     """A generation job as returned by the API."""
 
     job_id: str
+    kind: JobKind = "model"
     state: JobState
     stage: Stage | None = None
     progress: float = 0.0
@@ -95,4 +110,5 @@ class Job(BaseModel):
     created_at: UtcDatetime
     finished_at: UtcDatetime | None = None
     error: JobError | None = None
+    notice: str | None = None
     links: JobLinks

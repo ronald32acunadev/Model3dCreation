@@ -17,6 +17,7 @@ class DiagnosticsPanel(QWidget):
         self.body.setWordWrap(True)
         self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.restart_button = QPushButton()
+        self.restart_button.setProperty("primary", True)
         self.restart_button.clicked.connect(self.restart_requested)
         layout = QVBoxLayout(self)
         layout.addWidget(self.title)

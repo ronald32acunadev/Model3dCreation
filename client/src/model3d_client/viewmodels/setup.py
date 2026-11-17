@@ -86,7 +86,7 @@ class SetupViewModel(QObject):
         self.page = SetupPage.welcome
         self.requirements: list[Requirement] = []
         self.toolchain: Toolchain | None = None
-        self.components = ["base", "skeletons"]
+        self.components = ["base", "skeletons", "voice"]
         self.folder: Path | None = None
         self.folder_check: FolderCheck | None = None
         self.error: StepFailed | None = None
@@ -136,7 +136,19 @@ class SetupViewModel(QObject):
         self._background(lambda: signal.emit(check()))
 
     def set_skeletons(self, on: bool) -> None:
-        self.components = ["base", "skeletons"] if on else ["base"]
+        if on and "skeletons" not in self.components:
+            self.components.append("skeletons")
+        elif not on and "skeletons" in self.components:
+            self.components.remove("skeletons")
+        if self.folder is not None:
+            self.choose_folder(self.folder)
+        self.changed.emit()
+
+    def set_voice(self, on: bool) -> None:
+        if on and "voice" not in self.components:
+            self.components.append("voice")
+        elif not on and "voice" in self.components:
+            self.components.remove("voice")
         if self.folder is not None:
             self.choose_folder(self.folder)
         self.changed.emit()
@@ -202,6 +214,8 @@ class SetupViewModel(QObject):
         vm.components = list(state.components) if state is not None else ["base"]
         if mode == "add_skeletons" and "skeletons" not in vm.components:
             vm.components.append("skeletons")
+        if mode == "add_voice" and "voice" not in vm.components:
+            vm.components.append("voice")
         vm.folder_check = vm._folder_check(install_dir, 0)
         vm.page = SetupPage.requirements
         vm._auto_install = True  # install as soon as the requirements pass

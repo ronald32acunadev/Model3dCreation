@@ -28,6 +28,18 @@ from model3d_engine.stages.protocol import (
 
 TRELLIS_FACTORY = "model3d_engine.stages.trellis:make_trellis_stage"
 PIPELINE_TYPES = {"draft": "512", "final": "1024_cascade", "high": "1024_cascade"}
+# Split across two cards, high quality runs at 1536: on two 12 GB RTX 5070 it peaked at 5.3 GB
+# on the generating card and 6.6 GB on the decoding one, in 95 s against 63 s at 1024, and was
+# sharper (docs/userstories/sharper-body-texture/README.md, US-05). On one card it was never
+# measured, so it stays at 1024 there.
+SPLIT_PIPELINE_TYPES = {**PIPELINE_TYPES, "high": "1536_cascade"}
+# At 1536, decimating to the usual 150 000 faces threw away the beard's and eyelids' relief.
+# The owner chose the most the cards finish: 1 000 000 faces and an 8192 px texture, baked in
+# 4096 px tiles (trellis_bake.py) within 6.6 GB, in about 4 minutes
+# (docs/userstories/gpu-memory-pool/README.md).
+SPLIT_HIGH_FACES = 1_000_000
+SPLIT_HIGH_TEXTURE = 8192
+TEXTURE_SIZE = 4096
 WORKER_SCRIPT = Path(__file__).with_name("trellis_worker.py")
 TRELLIS_INPUT = "trellis_input.png"
 
@@ -54,6 +66,8 @@ class TrellisStage:
     ):
         python = python if python is not None else f"{trellis_dir}/.venv/bin/python"
         worker_script = worker_script if worker_script is not None else str(WORKER_SCRIPT)
+        self._split = post_device not in (None, device)
+        self._pipeline_types = SPLIT_PIPELINE_TYPES if self._split else PIPELINE_TYPES
         if not Path(python).is_file():
             raise StageError(
                 "generator_unavailable",
@@ -144,9 +158,10 @@ class TrellisStage:
             "type": "run",
             "image": str(input_path.resolve()),
             "output": str(output.resolve()),
-            "pipeline_type": PIPELINE_TYPES[task.options.quality.value],
+            "pipeline_type": self._pipeline_types[task.options.quality.value],
             "seed": task.seed,
-            "faces": paint_face_target(task.options),
+            "faces": self._face_target(task.options),
+            "texture_size": self._texture_size(task.options),
             "texture": textured,
         }
         try:
@@ -179,6 +194,15 @@ class TrellisStage:
                 )
             elif kind == "error":
                 raise StageError(message["code"], message["message"])
+
+    def _face_target(self, options) -> int:
+        """Faces the generated model keeps: the job's own target, else its quality level's."""
+        if self._split and options.target_faces is None and options.quality.value == "high":
+            return SPLIT_HIGH_FACES
+        return paint_face_target(options)
+
+    def _texture_size(self, options) -> int:
+        return SPLIT_HIGH_TEXTURE if self._split and options.quality.value == "high" else TEXTURE_SIZE
 
     def close(self) -> None:
         """Stop the worker; kill it when it does not exit within 5 seconds."""

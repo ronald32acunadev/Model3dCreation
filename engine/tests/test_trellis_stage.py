@@ -135,3 +135,51 @@ def test_same_post_device_is_one_card(build_stage, job_dir):
     request = json.loads((job_dir / "model.glb.request.json").read_text())
     assert request["cuda_visible_devices"] == "1"
     assert request["post_device"] is None
+
+
+@pytest.mark.parametrize(
+    ("post_device", "quality", "expected"),
+    [
+        ("cuda:0", Quality.high, "1536_cascade"),  # split across two cards: 1536 measured at 5.3 + 6.6 GB
+        ("cuda:1", Quality.high, "1024_cascade"),  # one card: 1536 was never measured there
+        (None, Quality.high, "1024_cascade"),
+        ("cuda:0", Quality.final, "1024_cascade"),
+        ("cuda:0", Quality.draft, "512"),
+    ],
+)
+def test_high_quality_uses_1536_only_across_two_cards(build_stage, job_dir, post_device, quality, expected):
+    stage = build_stage(post_device=post_device)
+    stage.run(run_task(job_dir, JobOptions(quality=quality)), lambda v, m: None)
+    request = json.loads((job_dir / "model.glb.request.json").read_text())
+    assert request["pipeline_type"] == expected
+
+
+@pytest.mark.parametrize(
+    ("post_device", "options", "expected"),
+    [
+        ("cuda:0", JobOptions(quality=Quality.high), 1_000_000),  # split: 1536 keeps its detail
+        ("cuda:1", JobOptions(quality=Quality.high), 150_000),  # one card: as before
+        ("cuda:0", JobOptions(quality=Quality.final), 40_000),
+        ("cuda:0", JobOptions(quality=Quality.high, target_faces=80_000), 80_000),  # the job's own target wins
+    ],
+)
+def test_high_quality_keeps_1m_faces_across_two_cards(build_stage, job_dir, post_device, options, expected):
+    stage = build_stage(post_device=post_device)
+    stage.run(run_task(job_dir, options), lambda v, m: None)
+    request = json.loads((job_dir / "model.glb.request.json").read_text())
+    assert request["faces"] == expected
+
+
+@pytest.mark.parametrize(
+    ("post_device", "quality", "expected"),
+    [
+        ("cuda:0", Quality.high, 8192),  # split: baked in 4096 px tiles (trellis_bake.py)
+        ("cuda:1", Quality.high, 4096),
+        ("cuda:0", Quality.final, 4096),
+    ],
+)
+def test_high_quality_bakes_8192_px_across_two_cards(build_stage, job_dir, post_device, quality, expected):
+    stage = build_stage(post_device=post_device)
+    stage.run(run_task(job_dir, JobOptions(quality=quality)), lambda v, m: None)
+    request = json.loads((job_dir / "model.glb.request.json").read_text())
+    assert request.get("texture_size", 4096) == expected

@@ -2,7 +2,8 @@
 
 `python kit.py RUN_DIR [--h 0.001953125] [--faces 500000]` reads mold.glb, mold_labels.npy,
 rig.json and aligned/<part>.glb, and writes pieces/<piece>.glb, fused.glb, fused_labels.npy
-(the piece of each fused face) and kit.json. A part with no aligned model keeps the mold there.
+(the piece of each fused face) and kit.json. With --head-swap it writes the seam band (patch.glb),
+remove_faces.npy and keep_head_faces.npy instead (see head_swap). A part with no aligned model keeps the mold there.
 A model with no parts (an object, or no skeleton) is copied unchanged to fused.glb and model.glb.
 
 Fields are signed distances (negative inside): torso = mold minus every cutter, a piece = its part
@@ -11,6 +12,7 @@ within its cutter, and the fused surface is their union.
 
 import argparse
 import json
+from dataclasses import dataclass
 import resource
 import shutil
 import sys
@@ -23,6 +25,7 @@ import trimesh
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
+from landmarks import find_face, head_members, plane_height
 from sdf import CutterField, MeshField, capsule_distance, edge_counts, extract_surface, signed_volume, weld
 
 GRID_CELLS = 256  # occupancy cells along each model's longest side
@@ -52,6 +55,21 @@ BLEND = 0.03  # glTF units over which the mold turns into the sculpted part abov
 # SWAP_OVERLAP further down, inside the kept body (glTF units, body about 1.0 tall).
 SWAP_MARGIN = 0.01
 SWAP_OVERLAP = 0.01
+# Head swap: the cut comes from the sculpted head's own face (landmarks.py), at its throat and
+# always far enough below its chin for a blend of at least BLEND_MIN. The band's capsules reach
+# CUT_MARGIN past both heads at the band's heights; BAND_OVERLAP is how far the rebuilt band runs
+# into the kept sculpted head, so no gap opens between them.
+BLEND_MIN = 0.008
+CUT_MARGIN = 0.01
+BAND_OVERLAP = 0.004
+# The pass keeps the original model when its own result is worse. The heads' two-way mean distance
+# after alignment ran 0.0067 to 0.0157 on the evaluation set the owner marked good
+# (docs/userstories/detailed-face-general/README.md, US-04); MAX_HEAD_GAP leaves room above that.
+MAX_HEAD_GAP = 0.025
+STRAY_SHARE = 0.05  # a leftover piece of old head below this share of the removed faces goes too
+SEAM_SLACK = 0.004  # sections are read this far below the lowest face they classify
+CELL_TOP = 0.004  # sections are read this far above the highest point
+NO_BUST_DROP = 0.1  # a head without a bust crop is searched this far below its joint
 # Blended fields change faster than a distance (mold and part differ inside the band), so block
 # skipping in extract_surface allows for twice the slope.
 LIPSCHITZ = 2.0
@@ -176,14 +194,116 @@ def raise_plane(cut: CutterField, region: np.ndarray, part, mold, mold_points: n
     return 0.0
 
 
-class Blend:
-    """The mold just above a cut, turning into the sculpted part over BLEND, so the seam has no step."""
+def absorb_strays(mesh: trimesh.Trimesh, removed: np.ndarray, candidates: np.ndarray, share: float) -> np.ndarray:
+    """`removed` plus every connected piece of `candidates` faces that touches it and has fewer than
+    `share` times its faces: thin ends of the old head (a dog's ear tips) that the sections, read in
+    3 mm cells, miss. Armour beside the head is not joined to it and stays."""
+    result = removed.copy()
+    loose = candidates & ~removed
+    if not loose.any() or not removed.any():
+        return result
+    welded = trimesh.Trimesh(np.asarray(mesh.vertices), np.asarray(mesh.faces), process=False)
+    welded.merge_vertices(merge_tex=True, merge_norm=True)  # TRELLIS meshes are split at UV seams
+    pairs = welded.face_adjacency
+    inner = pairs[loose[pairs[:, 0]] & loose[pairs[:, 1]]]
+    pieces = trimesh.graph.connected_components(inner, nodes=np.flatnonzero(loose), min_len=1)
+    touching = set(pairs[loose[pairs[:, 0]] & removed[pairs[:, 1]], 0]) | set(pairs[loose[pairs[:, 1]] & removed[pairs[:, 0]], 1])
+    limit = share * removed.sum()
+    for piece in pieces:
+        piece = np.asarray(piece, dtype=np.int64)  # trimesh returns lone faces as lists
+        if len(piece) < limit and touching.intersection(piece.tolist()):
+            result[piece] = True
+    return result
 
-    def __init__(self, cut: CutterField, mold, part):
-        self.cut, self.mold, self.part = cut, mold, part
+
+def quality_problem(head_fit: dict | None, info: dict, width: float) -> str | None:
+    """Why the head swap would make the model worse, or None: the new head sits too far from the
+    old one, or the neck seam would reach the face."""
+    if head_fit and "mean_distance" in head_fit:
+        gap = head_fit["mean_distance"] + head_fit["reverse_mean_distance"]
+        if gap > MAX_HEAD_GAP:
+            return f"the new head does not match the old one ({100 * gap:.1f} cm apart on average)"
+    if info["cut_y"] + width > info["chin_y"] + 1e-6:
+        return "the neck seam would reach the face"
+    return None
+
+
+@dataclass
+class HeadCut:
+    """Where the head swap cuts, and which faces it keeps and removes (face_cut)."""
+
+    cutter: CutterField  # the cut plane, with capsules as wide as the heads at the seam band
+    width: float  # blend width: the band runs from the cut to `width` above it
+    keep_part: np.ndarray  # per sculpted-head face: kept as sculpted (head, above the band)
+    remove_mold: np.ndarray  # per mold face: removed (old head, above the cut)
+    info: dict
+
+
+def face_cut(cut: CutterField, part, mold, part_mesh: trimesh.Trimesh, mold_mesh: trimesh.Trimesh, joint_y: float,
+             lowest: float, h: float, mold_labeled: np.ndarray | None = None) -> HeadCut:
+    """The head swap's cut at the sculpted head's throat, from its own face, with the faces it keeps.
+
+    Only the seam band (the cut to the blend width above it) is rebuilt from the fields; above it
+    the sculpted head keeps its own triangles and texture (rebuilding the whole head through a 2 mm
+    grid made faces look like stacked bricks). Faces count as head when they lie on the head's
+    own region of each horizontal section, so a collar, pauldrons or hair beside the head stay out
+    of both what is removed and what is kept. Raises ValueError when the sculpted head has no
+    readable face or is not solid at the cut.
+
+    Raising the cut until the mold around it was labeled head put it through the armoured
+    character's nose: its pauldrons and collar reach ear height and carry the head label.
+    """
+    face = find_face(part, lowest, float(part.hi[1]), joint_y)
+    cut_y = min(face.throat_y, face.chin_y - BLEND_MIN)
+    width = float(np.clip(face.chin_y - cut_y, BLEND_MIN, BLEND))
+    normal = np.asarray(cut.normal, float)
+    here = plane_height({"point": cut.point, "normal": normal}, face.axis[0], face.chin_z)
+    point = np.asarray(cut.point, float) + (cut_y - here) * normal[1] * normal
+
+    def members(field, centers: np.ndarray, below: float) -> np.ndarray:
+        """Faces (by center) at most `below` under the cut that lie on the head's own region."""
+        chosen = (centers - point) @ normal > -below
+        result = np.zeros(len(centers), bool)
+        if chosen.any():
+            top = float(centers[chosen, 1].max()) + CELL_TOP
+            bottom = cut_y - below - SEAM_SLACK
+            result[chosen] = head_members(field, face.axis, bottom, top, joint_y, centers[chosen])
+        return result
+
+    part_centers = np.asarray(part_mesh.triangles_center)
+    mold_centers = np.asarray(mold_mesh.triangles_center)
+    part_head = members(part, part_centers, SWAP_MARGIN + SWAP_OVERLAP)
+    mold_head = members(mold, mold_centers, SWAP_MARGIN + SWAP_OVERLAP)
+    heights = lambda centers: (centers - point) @ normal
+    keep_part = part_head & (heights(part_centers) > width)
+    remove_mold = mold_head & (heights(mold_centers) > -SWAP_MARGIN)
+    if mold_labeled is not None:  # mold faces labeled head, per face
+        remove_mold = absorb_strays(mold_mesh, remove_mold, mold_labeled & (heights(mold_centers) > 0), STRAY_SHARE)
+    if not keep_part.any():
+        raise ValueError("the sculpted head has no surface above its neck")
+    # The band's capsules reach the heads at the band's heights only, so they stay neck-sized.
+    band = lambda centers, head: centers[head & (heights(centers) < width + BAND_OVERLAP)]
+    reached = np.vstack([band(part_centers, part_head), band(mold_centers, mold_head)])
+    segments = [(np.asarray(a, float), np.asarray(b, float)) for a, b, _ in cut.segments]
+    reach = np.min([_segment_distance(reached, a, b) for a, b in segments], axis=0) if len(reached) else np.zeros(1)
+    radius = float(reach.max()) + CUT_MARGIN + 2 * h
+    moved = CutterField(point, normal, [(a, b, radius) for a, b in segments])
+    solid, outline, _ = section(point, moved, part)
+    if not outline.sum() or solid.sum() < SOLID_SHARE * outline.sum():
+        raise ValueError("the sculpted head is not solid at its neck")
+    info = {"nose_y": face.nose_y, "chin_y": face.chin_y, "throat_y": face.throat_y, "chin_z": face.chin_z,
+            "axis": list(face.axis), "alone_from_y": face.alone_from_y, "cut_y": cut_y, "radius": radius}
+    return HeadCut(moved, width, keep_part, remove_mold, info)
+
+
+class Blend:
+    """The mold just above a cut, turning into the sculpted part over `width`, so the seam has no step."""
+
+    def __init__(self, cut: CutterField, mold, part, width: float = BLEND):
+        self.cut, self.mold, self.part, self.width = cut, mold, part, width
 
     def __call__(self, points: np.ndarray) -> np.ndarray:
-        t = np.clip((points - self.cut.point) @ self.cut.normal / BLEND, 0.0, 1.0)
+        t = np.clip((points - self.cut.point) @ self.cut.normal / self.width, 0.0, 1.0)
         weight = t * t * (3 - 2 * t)
         values = self.part(points)
         mixed = np.flatnonzero(weight < 1.0)
@@ -212,47 +332,48 @@ def decimate(vertices: np.ndarray, faces: np.ndarray, target: int) -> tuple[np.n
     return np.asarray(mesh.vertices), np.asarray(mesh.triangles).astype(np.int64)
 
 
-def cutter_json(cut: CutterField) -> dict:
-    return {"point": cut.point.tolist(), "normal": cut.normal.tolist(),
-            "segments": [[a.tolist(), b.tolist(), r] for a, b, r in cut.segments]}
-
-
 def head_swap(run: Path, h: float, faces_target: int, report: dict, mold_mesh: trimesh.Trimesh,
-              sources: dict, cutters: dict, started: float) -> int:
-    """Write a head patch and the mold faces it replaces; the rest of the mold stays as it is.
+              sources: dict, cutters: dict, started: float, head_cut: HeadCut | None) -> int:
+    """Write the seam band (patch.glb) and which faces of the mold and of the sculpted head stay.
 
-    Remeshing and re-baking the whole body blurred the alien's and the cat's shirts. The patch is
-    the sculpted head plus a neck band that turns from the mold into it; mold faces whose centers
-    lie SWAP_MARGIN below the cut are removed, and the patch reaches SWAP_OVERLAP further down,
-    inside the kept body, so no gap opens between them.
+    Remeshing and re-baking the whole body blurred the alien's and the cat's shirts, and rebuilding
+    the whole head made it blocky. Only the band, which turns from the mold into the sculpted head
+    over the blend width, is rebuilt: it reaches SWAP_OVERLAP into the kept body below and
+    BAND_OVERLAP into the kept head above, so no gap opens. remove_faces.npy flags the mold faces
+    the old head made (mold.glb face order) and keep_head_faces.npy the sculpted head faces kept
+    (face order of the aligned head as kit.load_mesh reads it).
     """
     report["mode"] = "head_swap"
-    if not isinstance(sources.get("head"), Blend):
+    if head_cut is None:
         shutil.copy(run / "mold.glb", run / "model.glb")
-        report["skipped"] = "no sculpted head passed the volume check"
+        report["skipped"] = report.pop("skip_reason", None) or "no sculpted head passed the volume check"
         (run / "kit.json").write_text(json.dumps(report, indent=2))
         print(json.dumps({"skipped": report["skipped"]}))
         return 0
     cut = cutters["head"]
-    remove = CutterField(cut.point - SWAP_MARGIN * cut.normal, cut.normal, cut.segments)
     reach = CutterField(cut.point - (SWAP_MARGIN + SWAP_OVERLAP) * cut.normal, cut.normal, cut.segments)
+    band_top = cut.point + (head_cut.width + BAND_OVERLAP) * cut.normal
     head = sources["head"]
-    vertices, faces = extract_surface(lambda p: np.maximum(head(p), reach(p)), *cutter_box(reach), h, lipschitz=LIPSCHITZ)
+    within = lambda p: np.maximum(np.maximum(head(p), reach(p)), (p - band_top) @ cut.normal)
+    lo, hi = cutter_box(reach)
+    vertices, faces = extract_surface(within, lo, hi, h, lipschitz=LIPSCHITZ)
     report["patch_raw"] = mesh_stats(vertices, faces)
     vertices, faces = decimate(vertices, faces, faces_target)
     report["patch"] = mesh_stats(vertices, faces)
     save(run / "patch.glb", vertices, faces)
-    removed = remove(np.asarray(mold_mesh.triangles_center)) < 0
-    report["removed_body_faces"] = int(removed.sum())
-    report["kept_body_faces"] = int((~removed).sum())
-    report["remove_cutter"] = cutter_json(remove)
-    report["blend"] = BLEND
+    np.save(run / "remove_faces.npy", head_cut.remove_mold)
+    np.save(run / "keep_head_faces.npy", head_cut.keep_part)
+    report["removed_body_faces"] = int(head_cut.remove_mold.sum())
+    report["kept_body_faces"] = int((~head_cut.remove_mold).sum())
+    report["kept_head_faces"] = int(head_cut.keep_part.sum())
+    report["blend"] = head_cut.width
+    report["band_overlap"] = BAND_OVERLAP
     report["planes"] = {"head": {"point": cut.point.tolist(), "normal": cut.normal.tolist()}}
     report["seconds"] = round(time.monotonic() - started, 1)
     report["peak_rss_gib"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20, 2)
     (run / "kit.json").write_text(json.dumps(report, indent=2))
     print(json.dumps({"patch": report["patch"], "removed_body_faces": report["removed_body_faces"],
-                      "kept_body_faces": report["kept_body_faces"], "seconds": report["seconds"]}))
+                      "kept_head_faces": report["kept_head_faces"], "seconds": report["seconds"]}))
     return 0
 
 
@@ -315,6 +436,34 @@ def main(argv: list[str]) -> int:
 
     sculpted = {part: sources[part] for part in names if sources.get(part, mold) is not mold}
     report["raised"] = {}
+    if args.head_swap and "head" in sculpted:
+        joint_y = float(rig["joints"]["head"]["point"][1])
+        crops = json.loads((run / "crops.json").read_text()) if (run / "crops.json").exists() else {"parts": {}}
+        lowest = crops["parts"].get("head_bust", {}).get("y_cut", joint_y - NO_BUST_DROP)
+        try:
+            bust = load_mesh(run / "aligned" / report["volume_check"]["head"]["file"])
+            corner = labels[np.asarray(mold_mesh.faces)]
+            face_labels = np.where(corner[:, 1] == corner[:, 2], corner[:, 1], corner[:, 0])
+            head_cut = face_cut(cutters["head"], sculpted["head"], mold, bust, mold_mesh, joint_y, lowest, h,
+                                face_labels == names.index("head") + 1)
+            cutters["head"], width, report["face"] = head_cut.cutter, head_cut.width, head_cut.info
+            align = json.loads((run / "align.json").read_text()) if (run / "align.json").exists() else {}
+            head_fit = align.get(Path(report["volume_check"]["head"]["file"]).stem, {}).get("head")
+            problem = quality_problem(head_fit, head_cut.info, width)
+            if problem is not None:
+                raise ValueError(problem)
+        except ValueError as error:
+            report["skip_reason"] = f"{error}"
+            sources["head"] = mold
+        else:
+            field = sculpted["head"]
+            blend = Blend(cutters["head"], mold, field, width)
+            box_lo, box_hi = cutter_box(cutters["head"])
+            blend.lo, blend.hi = np.minimum(field.lo, box_lo), np.maximum(field.hi, box_hi)
+            sources["head"] = blend
+            report["blend"] = width
+            print(json.dumps({"head": {"face": report["face"], "blend": width}}), flush=True)
+        sculpted = {}
     for part, field in sculpted.items():
         region = np.asarray(mold_mesh.vertices)[labels == names.index(part) + 1]
         offset = raise_plane(cutters[part], region, field, mold, np.asarray(mold_mesh.vertices),
@@ -329,7 +478,8 @@ def main(argv: list[str]) -> int:
         print(json.dumps({part: {"raised_by": round(offset, 4)}}), flush=True)
 
     if args.head_swap:
-        return head_swap(run, h, args.faces, report, mold_mesh, sources, cutters, started)
+        return head_swap(run, h, args.faces, report, mold_mesh, sources, cutters, started,
+                         head_cut if isinstance(sources.get("head"), Blend) else None)
 
     def piece_values(points: np.ndarray) -> np.ndarray:
         """Field value of every piece at the points: torso first, then the parts in `names` order."""

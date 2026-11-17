@@ -60,6 +60,8 @@ class SetupWizard(QWidget):
         self.recheck_button.clicked.connect(vm.recheck)
         self.skeletons_check = QCheckBox()
         self.skeletons_check.toggled.connect(vm.set_skeletons)
+        self.voice_check = QCheckBox()
+        self.voice_check.toggled.connect(vm.set_voice)
         self.space_label = QLabel()
         self.folder_edit = QLineEdit()
         self.folder_edit.setReadOnly(True)
@@ -79,6 +81,7 @@ class SetupWizard(QWidget):
         self.retry_button.clicked.connect(vm.retry)
         self.done_label = QLabel()
         self.open_button = QPushButton()
+        self.open_button.setProperty("primary", True)
         self.open_button.clicked.connect(self.completed)
         self.missing_label = _wrapped(selectable=True)
         self.choose_button = QPushButton()
@@ -92,7 +95,7 @@ class SetupWizard(QWidget):
         contents = {
             SetupPage.welcome: [self.welcome_label],
             SetupPage.requirements: [self.requirements_label, _row(self.recheck_button)],
-            SetupPage.components: [self.skeletons_check, self.space_label],
+            SetupPage.components: [self.skeletons_check, self.voice_check, self.space_label],
             SetupPage.folder: [folder_row, self.folder_status],
             SetupPage.install: [self.step_label, self.progress_bar, self.log_view, self.error_label,
                                 _row(self.cancel_button, self.retry_button)],
@@ -117,6 +120,7 @@ class SetupWizard(QWidget):
         self.back_button = QPushButton()
         self.back_button.clicked.connect(vm.back)
         self.next_button = QPushButton()
+        self.next_button.setProperty("primary", True)
         self.next_button.clicked.connect(vm.next)
         nav = QHBoxLayout()
         nav.addWidget(self.back_button)
@@ -137,6 +141,7 @@ class SetupWizard(QWidget):
         self.back_button.setText(self.tr("Back"))
         self.recheck_button.setText(self.tr("Check again"))
         self.skeletons_check.setText(self.tr("Skeletons for animation (UniRig)"))
+        self.voice_check.setText(self.tr("Voice generation (Qwen3-TTS & Whisper)"))
         self.browse_button.setText(self.tr("Browse…"))
         self.cancel_button.setText(self.tr("Cancel"))
         self.retry_button.setText(self.tr("Retry"))
@@ -238,6 +243,9 @@ class SetupWizard(QWidget):
         self.skeletons_check.blockSignals(True)
         self.skeletons_check.setChecked("skeletons" in vm.components)
         self.skeletons_check.blockSignals(False)
+        self.voice_check.blockSignals(True)
+        self.voice_check.setChecked("voice" in vm.components)
+        self.voice_check.blockSignals(False)
         self.space_label.setText(self.tr("Space needed: %1 GB").replace("%1", _gb(vm.needed_bytes)))
         self.folder_edit.setText(str(vm.folder) if vm.folder is not None else "")
         self.folder_status.setText(self.folder_text())

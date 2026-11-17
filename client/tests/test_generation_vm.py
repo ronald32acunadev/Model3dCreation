@@ -2,7 +2,6 @@ import json
 
 import pytest
 from model3d_contracts.jobs import JobOptions, JobState, Quality
-from PySide6.QtCore import QObject, QTimer, Signal
 
 from fake_engine import CLOSE, FakeEngine, error_body, make_job
 from fakes import FakeSupervisor
@@ -322,117 +321,141 @@ def test_regenerate_refused_for_failed_entry(make_vm, library, png):
     assert len(library.entries()) == 1
 
 
-class FakeHeadPass(QObject):
-    """Stands in for services.head_pass.HeadPass: records the job and answers as configured."""
-
-    step = Signal(str)
-    finished = Signal(object)
-    skipped = Signal(str)
-    failed = Signal(str)
-
-    def __init__(self, outcome: str | None, payload=None, installed: bool = True):
-        super().__init__()
-        self.outcome, self.payload, self.installed = outcome, payload, installed
-        self.started: list[str] = []
-
-    def start(self, job_id: str) -> None:
-        self.started.append(job_id)
-        self.step.emit("sculpt the head")
-        if self.outcome is not None:
-            QTimer.singleShot(0, lambda: getattr(self, self.outcome).emit(self.payload))
-
-    def cancel(self) -> None:
-        QTimer.singleShot(0, lambda: self.skipped.emit("cancelled"))
-
-
-def trellis_supervisor():
-    supervisor = FakeSupervisor()
-    mode = supervisor.health.mode.model_copy(update={"reason": "TRELLIS.2 generates on 0000:29:00.0"})
-    supervisor.health = supervisor.health.model_copy(update={"mode": mode})
-    return supervisor
-
-
-@pytest.fixture
-def make_detail_vm(make_api, engine, library):
-    def make(head_pass, supervisor=None):
-        return GenerationViewModel(make_api(engine.url), library, supervisor or trellis_supervisor(), Settings(),
-                                   head_pass=head_pass)
-
-    return make
-
-
-def test_detailed_face_replaces_the_model_and_keeps_the_original(qtbot, engine, make_detail_vm, library, png, tmp_path):
-    detailed = tmp_path / "final.glb"
-    detailed.write_bytes(b"glTF detailed model")
+def test_face_progress_event_maps_to_detailing_phase(qtbot, engine, make_vm, library, png):
+    vm = make_vm(supervisor=FakeSupervisor(detailed_face=True))
+    vm.set_image(png)
+    vm.set_detailed_face(True)
+    engine.controller.push(progress("face", 0.4, "sculpt the head"))
+    vm.generate()
+    qtbot.waitUntil(lambda: vm.phase == Phase.detailing, timeout=10000)
+    assert (vm.progress, vm.message) == (0.4, "sculpt the head")
+    assert vm.can_cancel
     engine.controller.push(completed(), CLOSE)
-    head_pass = FakeHeadPass("finished", detailed)
-    vm = make_detail_vm(head_pass)
+    qtbot.waitUntil(lambda: vm.phase == Phase.idle, timeout=10000)
+
+
+def test_detailed_face_saves_the_final_and_the_original_model(qtbot, engine, make_vm, library, png):
+    engine.controller.result = b"glTF detailed model"
+    engine.controller.jobs["J1"] = make_job("J1", JobState.succeeded)
+    engine.controller.push(progress("face", 0.4, "sculpt the head"), completed(), CLOSE)
+    vm = make_vm(supervisor=FakeSupervisor(detailed_face=True))
     vm.set_image(png)
     vm.set_detailed_face(True)
     entry = run_to_end(qtbot, vm)
-    assert json.loads(engine.controller.submissions[0]["options"])["rig"] is True
-    assert head_pass.started == ["J1"]
+    options = json.loads(engine.controller.submissions[-1]["options"])
+    assert options["rig"] is True
+    assert options["detailed_face"] is True
     assert entry.outcome == Outcome.succeeded
     assert library.model_path(entry.entry_id).read_bytes() == b"glTF detailed model"
-    assert (library.folder(entry.entry_id) / "model_original.glb").read_bytes() == b"glTF fake model"
-    assert vm.notice is None and vm.phase == Phase.idle
+    assert (library.folder(entry.entry_id) / "model_original.glb").read_bytes() == b"glTF original model"
+    assert engine.controller.result_requests == [None, "original"]
+    assert vm.notice is None
+    assert vm.phase == Phase.idle
 
 
-def test_detailed_face_not_applied_keeps_the_job_model_with_a_notice(qtbot, engine, make_detail_vm, library, png):
-    engine.controller.push(completed(), CLOSE)
-    vm = make_detail_vm(FakeHeadPass("skipped", "no sculpted head passed the volume check"))
+def test_detailed_face_not_applied_keeps_the_plain_model_with_the_notice(qtbot, engine, make_vm, library, png):
+    engine.controller.result = b"glTF fake model"
+    job = make_job("J1", JobState.succeeded)
+    job["notice"] = "no sculpted head passed the volume check"
+    engine.controller.jobs["J1"] = job
+    engine.controller.push(progress("face", 0.4, "sculpt the head"), completed(), CLOSE)
+    vm = make_vm(supervisor=FakeSupervisor(detailed_face=True))
     vm.set_image(png)
     vm.set_detailed_face(True)
     entry = run_to_end(qtbot, vm)
     assert entry.outcome == Outcome.succeeded
     assert library.model_path(entry.entry_id).read_bytes() == b"glTF fake model"
     assert not (library.folder(entry.entry_id) / "model_original.glb").exists()
+    assert engine.controller.result_requests == [None]
     assert vm.notice == "no sculpted head passed the volume check"
 
 
-def test_failed_head_pass_keeps_the_job_model(qtbot, engine, make_detail_vm, library, png):
-    engine.controller.push(completed(), CLOSE)
-    vm = make_detail_vm(FakeHeadPass("failed", "align the head failed with exit code 1"))
+def test_cancel_during_the_face_pass_keeps_the_plain_model(qtbot, engine, make_vm, library, png):
+    engine.controller.result = b"glTF fake model"
+    job = make_job("J1", JobState.succeeded)
+    job["notice"] = "cancelled"
+    engine.controller.jobs["J1"] = job
+    engine.controller.push(progress("face", 0.4, "sculpt the head"))
+    vm = make_vm(supervisor=FakeSupervisor(detailed_face=True))
     vm.set_image(png)
     vm.set_detailed_face(True)
-    entry = run_to_end(qtbot, vm)
-    assert entry.outcome == Outcome.succeeded
-    assert library.model_path(entry.entry_id).read_bytes() == b"glTF fake model"
-    assert vm.notice == "align the head failed with exit code 1"
-
-
-def test_cancel_during_the_head_pass_keeps_the_job_model(qtbot, engine, make_detail_vm, library, png):
-    engine.controller.push(completed(), CLOSE)
-    vm = make_detail_vm(FakeHeadPass(None))
-    vm.set_image(png)
-    vm.set_detailed_face(True)
-    done = []
-    vm.finished.connect(done.append)
     vm.generate()
     qtbot.waitUntil(lambda: vm.phase == Phase.detailing, timeout=10000)
-    assert vm.can_cancel
     vm.cancel()
-    qtbot.waitUntil(lambda: bool(done), timeout=10000)
-    assert done[0].outcome == Outcome.succeeded
-    assert library.model_path(done[0].entry_id).read_bytes() == b"glTF fake model"
-    assert vm.notice == "cancelled"
-
-
-def test_detailed_face_needs_trellis(qtbot, engine, make_detail_vm, png):
+    assert vm.phase == Phase.cancelling
+    qtbot.waitUntil(lambda: engine.controller.cancels == ["J1"], timeout=10000)
+    done = []
+    vm.finished.connect(done.append)
     engine.controller.push(completed(), CLOSE)
-    head_pass = FakeHeadPass("finished", None)
-    vm = make_detail_vm(head_pass, supervisor=FakeSupervisor())
-    assert vm.detail_reason == "not_trellis"
+    qtbot.waitUntil(lambda: bool(done), timeout=10000)
+    entry = done[0]
+    assert entry.outcome == Outcome.succeeded
+    assert library.model_path(entry.entry_id).read_bytes() == b"glTF fake model"
+    assert vm.notice == "cancelled"
+    assert not (library.folder(entry.entry_id) / "model_original.glb").exists()
+
+
+def test_detailed_face_follows_the_engine_health(qtbot, engine, make_vm, library, png):
+    vm = make_vm(supervisor=FakeSupervisor(detailed_face=False, detailed_face_reason="Detailed face needs the TRELLIS.2 generator"))
     vm.set_image(png)
+    assert vm.detail_reason == "Detailed face needs the TRELLIS.2 generator"
+    engine.controller.push(completed(), CLOSE)
     vm.set_detailed_face(True)
     run_to_end(qtbot, vm)
-    assert head_pass.started == []
-    assert json.loads(engine.controller.submissions[0]["options"])["rig"] is False
+    options = json.loads(engine.controller.submissions[-1]["options"])
+    assert options["detailed_face"] is False
+    assert options["rig"] is False
+    assert make_vm(supervisor=FakeSupervisor(detailed_face=True)).detail_reason is None
 
 
-def test_detailed_face_needs_the_tools_and_skeletons(make_detail_vm):
-    assert make_detail_vm(None).detail_reason == "missing_tools"
-    assert make_detail_vm(FakeHeadPass(None, installed=False)).detail_reason == "missing_tools"
-    no_rig = FakeSupervisor(rig=False, rig_reason="UniRig is not installed")
-    assert make_detail_vm(FakeHeadPass(None), supervisor=no_rig).detail_reason == "no_rig"
-    assert make_detail_vm(FakeHeadPass(None)).detail_reason is None
+def test_texture_progress_event_maps_to_texturing_phase(qtbot, engine, make_vm, library, png):
+    vm = make_vm(supervisor=FakeSupervisor(sharper_texture=True))
+    vm.set_image(png)
+    vm.set_sharper_texture(True)
+    engine.controller.push(progress("texture", 0.3, "painted head (1 of 6)"))
+    vm.generate()
+    qtbot.waitUntil(lambda: vm.phase == Phase.texturing, timeout=10000)
+    assert (vm.progress, vm.message) == (0.3, "painted head (1 of 6)")
+    assert vm.can_cancel
+    engine.controller.push(completed(), CLOSE)
+    qtbot.waitUntil(lambda: vm.phase == Phase.idle, timeout=10000)
+
+
+def test_sharper_texture_asks_for_rig_and_saves_the_final_and_the_original_model(qtbot, engine, make_vm, library, png):
+    engine.controller.result = b"glTF sharper model"
+    engine.controller.jobs["J1"] = make_job("J1", JobState.succeeded)
+    engine.controller.push(progress("texture", 0.4, "painted head"), completed(), CLOSE)
+    vm = make_vm(supervisor=FakeSupervisor(sharper_texture=True))
+    vm.set_image(png)
+    vm.set_sharper_texture(True)
+    entry = run_to_end(qtbot, vm)
+    options = json.loads(engine.controller.submissions[-1]["options"])
+    assert (options["rig"], options["sharper_texture"], options["detailed_face"]) == (True, True, False)
+    assert library.model_path(entry.entry_id).read_bytes() == b"glTF sharper model"
+    assert (library.folder(entry.entry_id) / "model_original.glb").read_bytes() == b"glTF original model"
+    assert engine.controller.result_requests == [None, "original"]
+
+
+def test_sharper_texture_is_not_asked_when_the_engine_cannot(qtbot, engine, make_vm, library, png):
+    engine.controller.push(completed(), CLOSE)
+    vm = make_vm(supervisor=FakeSupervisor(sharper_texture=False))
+    vm.set_image(png)
+    vm.set_sharper_texture(True)
+    assert vm.sharper_texture_reason == "Sharper texture needs the TRELLIS.2 generator"
+    run_to_end(qtbot, vm)
+    options = json.loads(engine.controller.submissions[-1]["options"])
+    assert (options["rig"], options["sharper_texture"]) == (False, False)
+
+
+def test_regenerate_keeps_sharper_texture(qtbot, engine, make_vm, library, png):
+    source = finished_entry(library, png)
+    library.update(source.model_copy(update={"options": source.options.model_copy(update={"rig": True, "sharper_texture": True})}))
+    source = library._read(source.entry_id)
+    engine.controller.push(completed(), CLOSE)
+    vm = make_vm(supervisor=FakeSupervisor(sharper_texture=True))
+    done = []
+    vm.finished.connect(done.append)
+    vm.regenerate(source.entry_id)
+    qtbot.waitUntil(lambda: bool(done), timeout=10000)
+    sent = json.loads(engine.controller.submissions[-1]["options"])
+    assert (sent["rig"], sent["sharper_texture"]) == (True, True)

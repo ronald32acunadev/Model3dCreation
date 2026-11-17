@@ -89,3 +89,40 @@ def test_hunyuan_keeps_placement_overrides(tmp_path):
     s = load_settings({"MODEL3D_MODE": "dual_gpu"}, repo_root=tmp_path)
     assert s.generator == "hunyuan"
     assert s.mode == "dual_gpu"
+
+
+def test_default_lan_host_is_none(tmp_path):
+    assert load_settings({}, repo_root=tmp_path).lan_host is None
+
+
+def test_port_auto_means_zero(tmp_path):
+    assert load_settings({"MODEL3D_PORT": "auto"}, repo_root=tmp_path).port == 0
+
+
+@pytest.mark.parametrize("value", ["abc", "70000"])
+def test_invalid_port_is_rejected(tmp_path, value):
+    with pytest.raises(ValueError) as raised:
+        load_settings({"MODEL3D_PORT": value}, repo_root=tmp_path)
+    assert str(raised.value) == f"MODEL3D_PORT must be a port number or auto; got '{value}'"
+
+
+def test_lan_host_is_stored_normalized(tmp_path):
+    s = load_settings({"MODEL3D_LAN_HOST": "192.168.90.10"}, repo_root=tmp_path)
+    assert s.lan_host == "192.168.90.10"
+
+
+@pytest.mark.parametrize("value", ["127.0.0.1", "0.0.0.0", "myhost"])
+def test_invalid_lan_host_is_rejected(tmp_path, value):
+    with pytest.raises(ValueError) as raised:
+        load_settings({"MODEL3D_LAN_HOST": value}, repo_root=tmp_path)
+    assert str(raised.value) == (
+        "MODEL3D_LAN_HOST must be this machine's network IP address, like 192.168.90.10; got '" + value + "'"
+    )
+
+
+def test_api_keys_default_is_empty(tmp_path):
+    assert load_settings({}, repo_root=tmp_path).api_keys == ()
+
+
+def test_api_keys_are_split_stripped_and_emptied(tmp_path):
+    assert load_settings({"MODEL3D_API_KEYS": " k1, ,k2 "}, repo_root=tmp_path).api_keys == ("k1", "k2")

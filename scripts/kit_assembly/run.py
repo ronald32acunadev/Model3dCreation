@@ -219,7 +219,9 @@ def main(argv: list[str]) -> int:
         step("cut the head and blend the neck", [tool("kit"), str(run), "--head-swap"], run / "kit.json", log)
         step("paint each piece", [tool("paint"), str(run)], run / "paint.json", log)
         kit = json.loads((run / "kit.json").read_text())
-        applied = "skipped" not in kit
+        painted = json.loads((run / "paint.json").read_text())
+        skipped = kit.get("skipped") or painted.get("skipped")  # the pass's own checks keep the original
+        applied = skipped is None
         if applied:
             try:
                 step("render the comparison", [tool("compare"), str(run)], run / "compare.json", log)
@@ -248,8 +250,8 @@ def main(argv: list[str]) -> int:
         print(f"Model: {final}")
         print(f"Compare: {run / 'compare_head.png'}, {run / 'compare_front.png'}")
     else:
-        print(f"No head pass: {kit.get('skipped') or rig['reason']}. The job's model is unchanged.")
-    report(final, applied, None if applied else (kit.get("skipped") or rig["reason"]))
+        print(f"No head pass: {skipped or rig['reason']}. The job's model is unchanged.")
+    report(final, applied, None if applied else (skipped or rig["reason"]))
     return 0
 
 

@@ -76,8 +76,14 @@ def write_config(snapshot: Path, config_dir: Path) -> None:
     args["args"]["low_vram"] = True
     (config_dir / "pipeline.json").write_text(json.dumps(args))
     link = config_dir / "ckpts"
-    if not os.path.lexists(link):
-        link.symlink_to(snapshot / "ckpts")
+    target = snapshot / "ckpts"
+    if os.path.islink(link):
+        if os.readlink(link) == str(target) and link.exists():
+            return
+        link.unlink()
+    elif os.path.lexists(link):
+        return
+    link.symlink_to(target)
 
 
 def guard_fill_holes() -> None:
@@ -164,9 +170,10 @@ def run_job(pipeline, message: dict) -> dict:
 
 def bake_glb(mesh, message: dict) -> dict:
     """Simplify, remesh, unwrap, and bake on the card that holds the decoded mesh."""
-    import o_voxel
     import torch
     import trimesh
+
+    import trellis_bake  # beside this script: TRELLIS.2's bake, tile by tile
 
     # CuMesh allocates outside PyTorch's cache, so hand the cached blocks back to CUDA first.
     torch.cuda.empty_cache()
@@ -175,7 +182,7 @@ def bake_glb(mesh, message: dict) -> dict:
     send({"type": "progress", "value": 0.9, "message": "Baking the texture"})
 
     def bake(remesh: bool):
-        return o_voxel.postprocess.to_glb(
+        return trellis_bake.to_glb(
             vertices=mesh.vertices,
             faces=mesh.faces,
             attr_volume=mesh.attrs,

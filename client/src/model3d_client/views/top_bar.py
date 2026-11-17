@@ -1,23 +1,42 @@
-"""Engine state, run mode, and GPU use, with the settings button."""
-
 from model3d_contracts.health import Health
 from PySide6.QtCore import QEvent, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from model3d_client.services.supervisor import EngineState
+from model3d_client.views.theme import PALETTE_COLORS
 
 
 class TopBar(QWidget):
     settings_requested = Signal()
+    section_requested = Signal(int)  # 0: 3D models, 1: Voice
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.setObjectName("topBar")
         self.state_label = QLabel()
+        self.state_label.setObjectName("stateBadge")
         self.mode_label = QLabel()
+        self.mode_label.setObjectName("metaBadge")
         self.gpu_label = QLabel()
+        self.gpu_label.setObjectName("metaBadge")
+        self.models_button = QPushButton()
+        self.models_button.setObjectName("tabButton")
+        self.voice_button = QPushButton()
+        self.voice_button.setObjectName("tabButton")
+        self.sections = QButtonGroup(self)
+        for index, button in enumerate((self.models_button, self.voice_button)):
+            button.setCheckable(True)
+            self.sections.addButton(button, index)
+        self.models_button.setChecked(True)
+        self.sections.idClicked.connect(self.section_requested)
         self.settings_button = QPushButton()
+        self.settings_button.setObjectName("settingsButton")
         self.settings_button.clicked.connect(self.settings_requested)
         layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 6, 12, 6)
+        layout.setSpacing(10)
+        layout.addWidget(self.models_button)
+        layout.addWidget(self.voice_button)
         layout.addWidget(self.state_label)
         layout.addWidget(self.mode_label)
         layout.addWidget(self.gpu_label)
@@ -25,7 +44,12 @@ class TopBar(QWidget):
         layout.addWidget(self.settings_button)
         self._state = EngineState.stopped
         self._health: Health | None = None
+        self.show_sections(False)
         self.retranslate()
+
+    def show_sections(self, shown: bool) -> None:
+        self.models_button.setVisible(shown)
+        self.voice_button.setVisible(shown)
 
     def set_state(self, state: EngineState) -> None:
         self._state = state
@@ -36,6 +60,8 @@ class TopBar(QWidget):
         self._render()
 
     def retranslate(self) -> None:
+        self.models_button.setText(self.tr("3D models"))
+        self.voice_button.setText(self.tr("Voice"))
         self.settings_button.setText(self.tr("Settings"))
         self._render()
 
@@ -53,9 +79,19 @@ class TopBar(QWidget):
             EngineState.error: self.tr("● Engine error"),
             EngineState.crashed: self.tr("● Engine stopped unexpectedly"),
         }
-        colors = {EngineState.ready: "#2e9d4f", EngineState.error: "#c0392b", EngineState.crashed: "#c0392b"}
+        badge_styles = {
+            EngineState.ready: (PALETTE_COLORS["success"], "rgba(16, 185, 129, 0.15)", "rgba(16, 185, 129, 0.3)"),
+            EngineState.starting: (PALETTE_COLORS["warning"], "rgba(245, 158, 11, 0.15)", "rgba(245, 158, 11, 0.3)"),
+            EngineState.loading: (PALETTE_COLORS["warning"], "rgba(245, 158, 11, 0.15)", "rgba(245, 158, 11, 0.3)"),
+            EngineState.error: (PALETTE_COLORS["error"], "rgba(239, 68, 68, 0.15)", "rgba(239, 68, 68, 0.3)"),
+            EngineState.crashed: (PALETTE_COLORS["error"], "rgba(239, 68, 68, 0.15)", "rgba(239, 68, 68, 0.3)"),
+            EngineState.stopped: (PALETTE_COLORS["placeholder"], "rgba(107, 114, 128, 0.15)", "rgba(107, 114, 128, 0.3)"),
+        }
+        fg, bg, border = badge_styles.get(self._state, (PALETTE_COLORS["warning"], "rgba(245, 158, 11, 0.15)", "rgba(245, 158, 11, 0.3)"))
         self.state_label.setText(texts[self._state])
-        self.state_label.setStyleSheet(f"color: {colors.get(self._state, '#d4a017')}; font-weight: bold;")
+        self.state_label.setStyleSheet(
+            f"color: {fg}; background-color: {bg}; border: 1px solid {border}; border-radius: 12px; padding: 3px 10px; font-weight: bold;"
+        )
         health = self._health
         if health is None:
             self.mode_label.setText("")
