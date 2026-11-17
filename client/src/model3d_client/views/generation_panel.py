@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from model3d_client.viewmodels.generation import GenerationViewModel, Phase
+from model3d_client.views.theme import PALETTE_COLORS
 
 PREVIEW = 220
 
@@ -29,10 +30,10 @@ class DropArea(QLabel):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.setObjectName("dropArea")
         self.setAcceptDrops(True)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(PREVIEW, PREVIEW * 3 // 4)
-        self.setStyleSheet("border: 2px dashed #888; border-radius: 6px;")
         self.setWordWrap(True)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
@@ -83,7 +84,7 @@ class GenerationPanel(QWidget):
         self.detail_check.toggled.connect(vm.set_detailed_face)
         self.notice_label = QLabel()  # why the last detailed face was not applied
         self.notice_label.setWordWrap(True)
-        self.notice_label.setStyleSheet("color: #b9770e;")
+        self.notice_label.setStyleSheet(f"color: {PALETTE_COLORS['warning']};")
         self.quality_combo = QComboBox()
         self.quality_combo.addItem("", Quality.draft)
         self.quality_combo.addItem("", Quality.final)
@@ -91,6 +92,7 @@ class GenerationPanel(QWidget):
         self.quality_combo.setCurrentIndex(self.quality_combo.findData(vm.quality))
         self.quality_combo.currentIndexChanged.connect(lambda _i: vm.set_quality(self.quality_combo.currentData()))
         self.generate_button = QPushButton()
+        self.generate_button.setProperty("primary", True)
         self.generate_button.clicked.connect(self._on_generate)
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
@@ -98,8 +100,9 @@ class GenerationPanel(QWidget):
         self.stage_label.setWordWrap(True)
         self.error_label = QLabel()
         self.error_label.setWordWrap(True)
-        self.error_label.setStyleSheet("color: #c0392b;")
+        self.error_label.setStyleSheet(f"color: {PALETTE_COLORS['error']};")
         self.save_button = QPushButton()
+        self.save_button.setProperty("primary", True)
         self.save_button.setEnabled(False)
         self.save_button.clicked.connect(self.save_requested)
         self.show_texture_check = QCheckBox()

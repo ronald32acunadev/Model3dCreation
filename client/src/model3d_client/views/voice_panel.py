@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from model3d_client.viewmodels.voice import VoiceViewModel
 from model3d_client.views.new_voice_dialog import NewVoiceDialog
+from model3d_client.views.theme import PALETTE_COLORS
 
 LANGUAGE_CODES = ("es", "en")
 
@@ -38,11 +39,11 @@ class VoicePanel(QWidget):
         self.banner = QLabel()
         self.banner.setObjectName("voiceBanner")
         self.banner.setWordWrap(True)
-        self.banner.setStyleSheet("color: #b9770e;")
+        self.banner.setStyleSheet(f"color: {PALETTE_COLORS['warning']};")
         self.error_label = QLabel()
         self.error_label.setObjectName("voiceError")
         self.error_label.setWordWrap(True)
-        self.error_label.setStyleSheet("color: #c0392b;")
+        self.error_label.setStyleSheet(f"color: {PALETTE_COLORS['error']};")
 
         self.voices_title = QLabel()
         self.voice_list = QListWidget()
@@ -53,6 +54,7 @@ class VoicePanel(QWidget):
         self.empty_hint.setWordWrap(True)
         self.new_voice_button = QPushButton()
         self.new_voice_button.setObjectName("newVoiceButton")
+        self.new_voice_button.setProperty("primary", True)
 
         left = QVBoxLayout()
         left.addWidget(self.voices_title)
@@ -74,6 +76,7 @@ class VoicePanel(QWidget):
         self.generate_text_edit.setObjectName("generateTextEdit")
         self.generate_button = QPushButton()
         self.generate_button.setObjectName("speakButton")
+        self.generate_button.setProperty("primary", True)
         self.generate_progress_bar = QProgressBar()
         self.generate_progress_bar.setObjectName("speakProgress")
         self.generate_progress_bar.setRange(0, 100)

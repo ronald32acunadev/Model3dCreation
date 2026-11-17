@@ -29,6 +29,7 @@ from model3d_client.views.character_dialog import CharacterDialog
 from model3d_client.views.main_window import MainWindow
 from model3d_client.views.model_voice_panel import ModelVoicePanel
 from model3d_client.views.scheme import prepare_webengine
+from model3d_client.views.theme import apply_theme
 from model3d_client.views.voice_panel import VoicePanel
 
 
@@ -75,6 +76,7 @@ def build_app(
         prepare_webengine()
         app = QApplication(argv)
     app.setApplicationName("Model3D")
+    apply_theme(app)
     paths = app_paths(env)
     settings = load_settings(paths.settings_file, QLocale.system().name())
     apply_language(app, settings.language)
@@ -122,6 +124,7 @@ def build_setup(argv: list[str], env: Mapping[str, str], mode: str) -> tuple[QAp
         prepare_webengine()
         app = QApplication(argv)
     app.setApplicationName("Model3D")
+    apply_theme(app)
     apply_language(app, load_settings(app_paths(env).settings_file, QLocale.system().name()).language)
     kwargs = dict(sources=default_sources(), env=env, check=default_check(env), parent=app)
     folder = read_pointer(env)

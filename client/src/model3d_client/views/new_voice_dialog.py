@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from model3d_client.services.recorder import Recorder
 from model3d_client.viewmodels.voice import VoiceViewModel
+from model3d_client.views.theme import PALETTE_COLORS
 
 LANGUAGE_CODES = ("es", "en")
 
@@ -45,7 +46,7 @@ class NewVoiceDialog(QDialog):
         self.error_label = QLabel()
         self.error_label.setObjectName("newVoiceError")
         self.error_label.setWordWrap(True)
-        self.error_label.setStyleSheet("color: #c0392b;")
+        self.error_label.setStyleSheet(f"color: {PALETTE_COLORS['error']};")
 
         footer = QHBoxLayout()
         footer.addWidget(self.back_button)
@@ -113,6 +114,7 @@ class NewVoiceDialog(QDialog):
         self.sample_edit.setMaximumHeight(70)
         self.preview_button = QPushButton()
         self.preview_button.setObjectName("previewButton")
+        self.preview_button.setProperty("primary", True)
         self.play_preview_button = QPushButton()
         self.play_preview_button.setObjectName("playPreviewButton")
         self.preview_status = QLabel()
@@ -125,6 +127,7 @@ class NewVoiceDialog(QDialog):
         self.preview_name_edit.setObjectName("previewNameEdit")
         self.save_preview_button = QPushButton()
         self.save_preview_button.setObjectName("savePreviewButton")
+        self.save_preview_button.setProperty("primary", True)
         layout = QVBoxLayout(page)
         for widget in (self.description_label, self.description_edit, self.describe_language_label,
                        self.describe_language, self.sample_label, self.sample_edit):
@@ -160,6 +163,7 @@ class NewVoiceDialog(QDialog):
         self.record_language = self._language_combo("recordLanguage")
         self.save_recording_button = QPushButton()
         self.save_recording_button.setObjectName("saveRecordingButton")
+        self.save_recording_button.setProperty("primary", True)
         self.transcript_label = QLabel()
         self.transcript_label.setObjectName("transcriptLabel")
         self.transcript_label.setWordWrap(True)
