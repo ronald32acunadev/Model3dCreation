@@ -108,8 +108,10 @@ def build_app(
 
         return NewVoiceDialog(voice, parent)
 
+    setup_wizard_factory = lambda mode: build_setup([], env or {}, mode)[1]
     window = MainWindow(vm, viewer, voice_panel=VoicePanel(voice), character_dialog_factory=character_dialog,
-                        model_voice_panel=ModelVoicePanel(model_voice_vm, new_voice_dialog))
+                        model_voice_panel=ModelVoicePanel(model_voice_vm, new_voice_dialog),
+                        setup_wizard_factory=setup_wizard_factory)
     return app, window
 
 
@@ -128,6 +130,8 @@ def build_setup(argv: list[str], env: Mapping[str, str], mode: str) -> tuple[QAp
     apply_language(app, load_settings(app_paths(env).settings_file, QLocale.system().name()).language)
     kwargs = dict(sources=default_sources(), env=env, check=default_check(env), parent=app)
     folder = read_pointer(env)
+    if folder is None and (REPO_ROOT / "engine/pyproject.toml").is_file():
+        folder = REPO_ROOT
     if mode == "setup" or folder is None:
         vm = SetupViewModel(**kwargs)
     else:

@@ -34,13 +34,15 @@ class MainWindow(QMainWindow):
     def __init__(self, vm: MainViewModel, viewer: QWidget, parent: QWidget | None = None,
                  voice_panel: QWidget | None = None,
                  character_dialog_factory: Callable[[str], QDialog] | None = None,
-                 model_voice_panel: QWidget | None = None):
+                 model_voice_panel: QWidget | None = None,
+                 setup_wizard_factory: Callable[[str], QWidget] | None = None):
         super().__init__(parent)
         self.vm = vm
         self.viewer = viewer
         self.voice_panel = voice_panel
         self.character_dialog_factory = character_dialog_factory
         self.model_voice_panel = model_voice_panel
+        self.setup_wizard_factory = setup_wizard_factory
         self._character_dialogs: list[QDialog] = []  # open character dialogs, kept alive until they finish
         self._closing = False  # shutdown finished: the next close is accepted
         self._shutting_down = False
@@ -77,6 +79,8 @@ class MainWindow(QMainWindow):
             self.sections.addWidget(voice_panel)
             self.top_bar.show_sections(True)
             self.top_bar.section_requested.connect(self.sections.setCurrentIndex)
+            if hasattr(voice_panel, "install_voice_requested"):
+                voice_panel.install_voice_requested.connect(self._open_voice_setup)
         layout.addWidget(self.sections, 1)
         self.setCentralWidget(root)
         self.resize(1300, 800)
@@ -134,6 +138,21 @@ class MainWindow(QMainWindow):
         from model3d_client.views.settings_dialog import SettingsDialog
 
         SettingsDialog(self.vm, self).exec()
+
+    def _open_voice_setup(self) -> None:
+        if self.setup_wizard_factory is None:
+            return
+        wizard = self.setup_wizard_factory("add_voice")
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self.tr("Install Voice Models"))
+        dialog.resize(700, 500)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(wizard)
+        if hasattr(wizard, "completed"):
+            wizard.completed.connect(dialog.accept)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.vm.restart_engine()
 
     def ask_close_anyway(self) -> bool:
         answer = QMessageBox.question(self, self.tr("Close Model3D"),

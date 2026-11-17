@@ -9,7 +9,7 @@ import pytest
 
 from model3d_client.setup.actions import apply_patch, download, extract_tarball, patch_file
 from model3d_client.setup.checks import Toolchain
-from model3d_client.setup.recipe import HUNYUAN_COMMIT, UNIRIG_COMMIT, Sources, build_recipe
+from model3d_client.setup.recipe import HUNYUAN_COMMIT, QWEN_COMMIT, UNIRIG_COMMIT, Sources, build_recipe
 from model3d_client.setup.runner import Command, StepContext
 
 FOLDER = Path("/media/pumba/Disco 2/Modelos 3D")
@@ -45,9 +45,17 @@ def test_skeletons_appends_unirig_steps(sources):
     assert {s.component for s in steps[-3:]} == {"skeletons"}
 
 
+def test_voice_appends_qwen_steps(sources):
+    steps = build_recipe(sources, FOLDER, TOOLCHAIN, ["base", "voice"])
+    voice_steps = [s for s in steps if s.component == "voice"]
+    assert [s.id for s in voice_steps] == ["voice-source", "voice-env", "voice-weights"]
+    assert by_id(steps)["voice-weights"].size_bytes == 9 * 10**9
+
+
 def test_pinned_commits():
     assert HUNYUAN_COMMIT == "82920d643c0dc2f7bfd7255f45f62d386edfe60c"
     assert UNIRIG_COMMIT == "6793c6640ff01c8fb389f3993434124bb43d2933"
+    assert QWEN_COMMIT == "022e286b98fbec7e1e916cb940cdf532cd9f488e"
 
 
 def test_build_steps_get_toolchain_env(sources):

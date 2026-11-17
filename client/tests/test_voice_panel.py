@@ -1,5 +1,6 @@
 import pytest
-from PySide6.QtWidgets import QLabel, QTabWidget, QWidget
+from PySide6.QtCore import QTimer, Signal
+from PySide6.QtWidgets import QDialog, QLabel, QTabWidget, QWidget
 
 from fake_engine import FakeEngine
 from fakes import FakePlayer, FakeRecorder, FakeSupervisor, StubViewer
@@ -179,3 +180,71 @@ def test_no_voice_panel_means_no_switch(qtbot, window_parts):
     qtbot.addWidget(window)
     assert window.top_bar.voice_button.isHidden() and window.top_bar.models_button.isHidden()
     assert window.sections.count() == 1
+
+
+def test_install_button_visibility_matches_missing_voice_state(qtbot, make_api, engine, tmp_path):
+    supervisor = FakeSupervisor(voice=False, voice_reason="Qwen3-TTS is not installed")
+    widget = VoicePanel(VoiceViewModel(make_api(engine.url), supervisor, tmp_path / "cache", FakePlayer(), FakeRecorder))
+    qtbot.addWidget(widget)
+    widget.show()
+    assert widget.install_button.objectName() == "installVoiceButton"
+    assert widget.install_button.property("primary") is True
+    assert widget.install_button.text() == "Install voice models…"
+    assert widget.install_button.isVisible()
+
+    supervisor.set_voice(False, "CUDA error")
+    assert not widget.install_button.isVisible()
+
+    supervisor.set_voice(False, "Voice model not installed")
+    assert widget.install_button.isVisible()
+
+    supervisor.set_voice(True)
+    assert not widget.install_button.isVisible()
+
+    loading_supervisor = FakeSupervisor(state=EngineState.loading, voice=False)
+    loading_widget = VoicePanel(
+        VoiceViewModel(make_api(engine.url), loading_supervisor, tmp_path / "cache", FakePlayer(), FakeRecorder)
+    )
+    qtbot.addWidget(loading_widget)
+    loading_widget.show()
+    assert not loading_widget.install_button.isVisible()
+
+
+def test_install_button_emits_install_voice_requested(qtbot, make_api, engine, tmp_path):
+    supervisor = FakeSupervisor(voice=False, voice_reason="Qwen3-TTS is not installed")
+    widget = VoicePanel(VoiceViewModel(make_api(engine.url), supervisor, tmp_path / "cache", FakePlayer(), FakeRecorder))
+    qtbot.addWidget(widget)
+    widget.show()
+    with qtbot.waitSignal(widget.install_voice_requested, timeout=1000):
+        widget.install_button.click()
+
+
+def test_install_voice_requested_opens_setup_dialog_and_restarts_engine(qtbot, window_parts, make_api, engine, tmp_path):
+    supervisor = FakeSupervisor(voice=False, voice_reason="Qwen3-TTS is not installed")
+    voice_panel = VoicePanel(
+        VoiceViewModel(make_api(engine.url), supervisor, tmp_path / "cache", FakePlayer(), FakeRecorder)
+    )
+    modes = []
+    parent_types = []
+
+    class FakeWizard(QWidget):
+        completed = Signal()
+
+    def factory(mode):
+        modes.append(mode)
+        wizard = FakeWizard()
+        def on_timeout():
+            parent_types.append(type(wizard.parentWidget()))
+            wizard.completed.emit()
+        QTimer.singleShot(0, on_timeout)
+        return wizard
+
+    window = MainWindow(window_parts, StubViewer(), voice_panel=voice_panel, setup_wizard_factory=factory)
+    window.ask_close_anyway = lambda: True
+    qtbot.addWidget(window)
+
+    assert window_parts.supervisor.restarted == 0
+    voice_panel.install_voice_requested.emit()
+    assert modes == ["add_voice"]
+    assert parent_types == [QDialog]
+    assert window_parts.supervisor.restarted == 1

@@ -11,14 +11,16 @@ from model3d_client.setup.runner import Command, Step, StepContext, StepFailed
 
 HUNYUAN_COMMIT = "82920d643c0dc2f7bfd7255f45f62d386edfe60c"
 UNIRIG_COMMIT = "6793c6640ff01c8fb389f3993434124bb43d2933"
+QWEN_COMMIT = "022e286b98fbec7e1e916cb940cdf532cd9f488e"
 HUNYUAN_TARBALL = f"https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1/archive/{HUNYUAN_COMMIT}.tar.gz"
 UNIRIG_TARBALL = f"https://github.com/VAST-AI-Research/UniRig/archive/{UNIRIG_COMMIT}.tar.gz"
+QWEN_TARBALL = f"https://github.com/QwenLM/Qwen3-TTS/archive/{QWEN_COMMIT}.tar.gz"
 REALESRGAN_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
 PYTORCH_INDEX = "https://download.pytorch.org/whl/cu130"
 PYG_WHEELS = "https://data.pyg.org/whl/torch-2.9.1+cu130.html"
 PATCH = Path("engine/patches/hunyuan3d-paint-device.patch")
 SITE = ".venv/lib/python3.11/site-packages"
-COMPONENT_SIZES = {"base": 31 * 10**9, "skeletons": 8 * 10**9}  # measured on the reference install
+COMPONENT_SIZES = {"base": 31 * 10**9, "skeletons": 8 * 10**9, "voice": 9 * 10**9}  # measured on the reference install
 
 # Run by the engine's Python: upstream's build script picks the system python3-config and the wrong ABI suffix.
 INPAINT_SCRIPT = """\
@@ -42,6 +44,12 @@ from huggingface_hub import hf_hub_download as get
 for name in {UNIRIG_CHECKPOINTS!r}:
     get("VAST-AI/UniRig", name)
 get("facebook/opt-350m", "config.json")
+"""
+VOICE_WEIGHTS_SCRIPT = """\
+from huggingface_hub import snapshot_download as get
+get("Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign")
+get("Qwen/Qwen3-TTS-12Hz-1.7B-Base")
+get("openai/whisper-large-v3-turbo")
 """
 # Exits 1 when the engine would start in mode unsupported (no GPU with the free VRAM for any mode).
 MODE_SCRIPT = """\
@@ -79,9 +87,9 @@ def build_recipe(sources: Sources, install_dir: Path, toolchain: Toolchain, comp
     f = install_dir
     uv = str(sources.uv)
     engine, contracts = f / "engine", f / "contracts"
-    hunyuan, unirig = f / "vendor/Hunyuan3D-2.1", f / "vendor/UniRig"
+    hunyuan, unirig, qwen = f / "vendor/Hunyuan3D-2.1", f / "vendor/UniRig", f / "vendor/Qwen3-TTS"
     hf, downloads = f / "data/hf", f / "data/downloads"
-    engine_python, unirig_python = str(engine / ".venv/bin/python"), str(unirig / ".venv/bin/python")
+    engine_python, unirig_python, qwen_python = str(engine / ".venv/bin/python"), str(unirig / ".venv/bin/python"), str(qwen / ".venv/bin/python")
     patch = engine / "patches" / PATCH.name
     lock = (sources.app_root / "engine/uv.lock").read_bytes()
     patch_bytes = (sources.app_root / PATCH).read_bytes() if (sources.app_root / PATCH).is_file() else b""
@@ -137,6 +145,16 @@ def build_recipe(sources: Sources, install_dir: Path, toolchain: Toolchain, comp
         checkpoints = any(all((snapshot / name).is_file() for name in UNIRIG_CHECKPOINTS)
                           for snapshot in snapshots.glob("*"))
         return checkpoints and _any(folder / "data/hf", "hub/models--facebook--opt-350m/snapshots/*/config.json")
+
+    def fetch_qwen(ctx: StepContext) -> None:
+        archive = downloads / f"qwen3-tts-{QWEN_COMMIT}.tar.gz"
+        download(QWEN_TARBALL, archive, ctx)
+        extract_tarball(archive, qwen, ctx)
+
+    def voice_weights_done(folder: Path) -> bool:
+        return (_any(folder / "data/hf", "hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-VoiceDesign/snapshots/*")
+                and _any(folder / "data/hf", "hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-Base/snapshots/*")
+                and _any(folder / "data/hf", "hub/models--openai--whisper-large-v3-turbo/snapshots/*"))
 
     def uv_pip(*args: str, env: dict[str, str] | None = None) -> Command:
         return Command([uv, "pip", "install", "--python", ".venv", *args], cwd=unirig, env=env or uv_build_env)
@@ -195,5 +213,23 @@ def build_recipe(sources: Sources, install_dir: Path, toolchain: Toolchain, comp
                  _fingerprint("unirig-weights", UNIRIG_COMMIT),
                  [Command([unirig_python, "-c", UNIRIG_WEIGHTS_SCRIPT], env={"HF_HOME": str(hf)})],
                  unirig_weights_done),
+        ]
+    if "voice" in components:
+        steps += [
+            Step("voice-source", "Qwen3-TTS", "voice", 0, _fingerprint("voice-source", QWEN_COMMIT),
+                 [fetch_qwen], lambda folder: (folder / "vendor/Qwen3-TTS/README.md").is_file() or (folder / "vendor/Qwen3-TTS/setup.py").is_file()),
+            Step("voice-env", "Voice environment", "voice", 0,
+                 _fingerprint("voice-env", QWEN_COMMIT, toolchain.arch_list),
+                 [Command([uv, "venv", "--python", "3.11", ".venv"], cwd=qwen, env=uv_build_env),
+                  Command([uv, "pip", "install", "--python", ".venv", "torch==2.9.1", "torchvision==0.24.1",
+                           "--index-url", PYTORCH_INDEX], cwd=qwen, env=uv_build_env),
+                  Command([uv, "pip", "install", "--python", ".venv", "qwen-tts", "soundfile", "librosa",
+                           "transformers", "huggingface_hub"], cwd=qwen, env=uv_build_env)],
+                 lambda folder: (folder / "vendor/Qwen3-TTS/.venv/bin/python").is_file()
+                 and _any(folder / "vendor/Qwen3-TTS" / SITE, "qwen_tts*")),
+            Step("voice-weights", "Voice weights", "voice", COMPONENT_SIZES["voice"],
+                 _fingerprint("voice-weights", QWEN_COMMIT),
+                 [Command([qwen_python, "-c", VOICE_WEIGHTS_SCRIPT], env={"HF_HOME": str(hf)})],
+                 voice_weights_done),
         ]
     return steps

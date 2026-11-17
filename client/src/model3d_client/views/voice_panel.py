@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtCore import QEvent, QPoint, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -30,6 +30,8 @@ LANGUAGE_CODES = ("es", "en")
 
 
 class VoicePanel(QWidget):
+    install_voice_requested = Signal()
+
     def __init__(self, vm: VoiceViewModel, parent: QWidget | None = None):
         super().__init__(parent)
         self.vm = vm
@@ -40,6 +42,9 @@ class VoicePanel(QWidget):
         self.banner.setObjectName("voiceBanner")
         self.banner.setWordWrap(True)
         self.banner.setStyleSheet(f"color: {PALETTE_COLORS['warning']};")
+        self.install_button = QPushButton()
+        self.install_button.setObjectName("installVoiceButton")
+        self.install_button.setProperty("primary", True)
         self.error_label = QLabel()
         self.error_label.setObjectName("voiceError")
         self.error_label.setWordWrap(True)
@@ -114,11 +119,15 @@ class VoicePanel(QWidget):
         body = QHBoxLayout()
         body.addLayout(left, 1)
         body.addLayout(right, 2)
+        banner_row = QHBoxLayout()
+        banner_row.addWidget(self.banner, 1)
+        banner_row.addWidget(self.install_button)
         layout = QVBoxLayout(self)
-        layout.addWidget(self.banner)
+        layout.addLayout(banner_row)
         layout.addLayout(body, 1)
         layout.addWidget(self.error_label)
 
+        self.install_button.clicked.connect(self.install_voice_requested)
         self.voice_list.customContextMenuRequested.connect(self._on_context_menu)
         self.new_voice_button.clicked.connect(self._on_new_voice)
         self.generate_button.clicked.connect(self._on_generate)
@@ -134,6 +143,7 @@ class VoicePanel(QWidget):
         self._on_voices_changed()
 
     def retranslate(self) -> None:
+        self.install_button.setText(self.tr("Install voice models…"))
         self.voices_title.setText(self.tr("My voices"))
         self.empty_hint.setText(self.tr('No voices yet. Click "New voice" to create one.'))
         self.new_voice_button.setText(self.tr("New voice"))
@@ -197,6 +207,9 @@ class VoicePanel(QWidget):
         idle = on and not vm.busy and not vm.recording
         self.banner.setText(self._unavailable_text())
         self.banner.setVisible(not on)
+        self.install_button.setVisible(
+            not on and any(term in (vm.unavailable_reason or "").lower() for term in ("qwen", "not installed"))
+        )
         self.voice_list.setEnabled(on)
         self.empty_hint.setVisible(not self.vm.voices)
         self.new_voice_button.setEnabled(idle)
