@@ -57,20 +57,23 @@ def test_parse_nvidia_smi_rejects_bad_lines():
         verify_gpus.parse_nvidia_smi("00000000:25:00.0, RTX 5070, 2, [N/A], 12227")
 
 
-def test_plan_placement_puts_paint_on_the_widest_link():
+def test_plan_placement_prioritizes_fastest_link_for_shape():
     links = verify_gpus.parse_nvidia_smi(NVIDIA_SMI_OUTPUT)
     for ordering in (links, list(reversed(links))):
         placement = verify_gpus.plan_placement(ordering)
-        assert placement["shape"].bus_id == "0000:25:00.0"
-        assert placement["paint"].bus_id == "0000:29:00.0"
+        assert placement["shape"].bus_id == "0000:29:00.0"
+        assert placement["paint"].bus_id == "0000:25:00.0"
 
 
-def test_plan_placement_tie_goes_to_lower_bus_id():
+def test_plan_placement_prioritizes_headless():
     links = [
-        verify_gpus.GpuLink("0000:29:00.0", "RTX 5070", 3, 16, 12227),
-        verify_gpus.GpuLink("0000:25:00.0", "RTX 5070", 3, 16, 12227),
+        verify_gpus.GpuLink("0000:25:00.0", "RTX 5070", 3, 16, 12227, display_active=True),
+        verify_gpus.GpuLink("0000:29:00.0", "RTX 5070", 2, 2, 12227, display_active=False),
     ]
-    assert verify_gpus.plan_placement(links)["paint"].bus_id == "0000:25:00.0"
+    placement = verify_gpus.plan_placement(links)
+    assert placement["shape"].bus_id == "0000:29:00.0"
+    assert placement["paint"].bus_id == "0000:25:00.0"
+
 
 
 def test_plan_placement_requires_two_gpus():

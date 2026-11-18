@@ -38,6 +38,7 @@ class GpuInfo:
     capability: tuple[int, int]
     supported: bool
     bandwidth_gbps: float
+    display_active: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,7 @@ def merge_inventory(
             capability=(raw["major"], raw["minor"]),
             supported=raw["supported"],
             bandwidth_gbps=_bandwidth(by_bus.get(raw["bus_id"])),
+            display_active=by_bus[raw["bus_id"]].display_active if raw["bus_id"] in by_bus else False,
         )
         for raw in torch_gpus
     )

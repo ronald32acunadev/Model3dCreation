@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 NVIDIA_SMI_COMMAND = [
     "nvidia-smi",
-    "--query-gpu=pci.bus_id,name,pcie.link.gen.max,pcie.link.width.current,memory.total",
+    "--query-gpu=pci.bus_id,name,pcie.link.gen.max,pcie.link.width.current,memory.total,display_active",
     "--format=csv,noheader,nounits",
 ]
 BUS_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{4,8}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$")
@@ -33,6 +33,7 @@ class GpuLink:
     pcie_gen: int
     pcie_width: int
     memory_mib: int
+    display_active: bool = False
 
     @property
     def bandwidth_gbps(self) -> float:
@@ -47,13 +48,16 @@ def parse_nvidia_smi(text: str) -> list[GpuLink]:
         if not line:
             continue
         parts = [part.strip() for part in line.split(",")]
-        if len(parts) != 5:
-            raise ValueError(f"Expected 5 fields, got {len(parts)}: {line!r}")
+        if len(parts) not in (5, 6):
+            raise ValueError(f"Expected 5 or 6 fields, got {len(parts)}: {line!r}")
         try:
             gen, width, memory = int(parts[2]), int(parts[3]), int(parts[4])
         except ValueError as error:
             raise ValueError(f"Non-integer numeric field: {line!r}") from error
-        links.append(GpuLink(normalize_bus_id(parts[0]), parts[1], gen, width, memory))
+        display_active = False
+        if len(parts) == 6:
+            display_active = parts[5].strip().lower() in ("enabled", "true", "yes", "1")
+        links.append(GpuLink(normalize_bus_id(parts[0]), parts[1], gen, width, memory, display_active))
     return links
 
 

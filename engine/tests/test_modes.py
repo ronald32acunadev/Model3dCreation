@@ -19,8 +19,18 @@ from model3d_engine.gpu.probe import GpuInfo, Inventory
 BOTH_STAGES_MIB = max(SHAPE_HELD_MIB + PAINT_NEED_MIB, PAINT_HELD_MIB + SHAPE_NEED_MIB) + MARGIN_MIB
 
 
-def gpu(bus, free_mib, total_mib=12227, bandwidth=15.76, supported=True, index=0):
-    return GpuInfo(index, bus, "GPU", total_mib, free_mib, (12, 0) if supported else (6, 1), supported, bandwidth)
+def gpu(bus, free_mib, total_mib=12227, bandwidth=15.76, supported=True, index=0, display_active=False):
+    return GpuInfo(
+        index,
+        bus,
+        "GPU",
+        total_mib,
+        free_mib,
+        (12, 0) if supported else (6, 1),
+        supported,
+        bandwidth,
+        display_active,
+    )
 
 
 def inventory(*gpus):
@@ -195,3 +205,27 @@ def test_generator_mode_without_gpus():
     plan = choose_generator_mode(Inventory((), "x"))
     assert plan.name == ModeName.unsupported
     assert plan.reason == "x"
+
+
+def test_headless_gpu_prioritized_for_generation():
+    # Both fit dual-GPU for TRELLIS.2; gen must be placed on the headless card
+    display_card = gpu("0000:25:00.0", 11000, bandwidth=1.0, index=0, display_active=True)
+    headless_card = gpu("0000:29:00.0", 11760, bandwidth=15.76, index=1, display_active=False)
+    inv = inventory(display_card, headless_card)
+
+    plan = choose_generator_mode(inv)
+    # The generative stage (plan.shape) must run on the headless card
+    assert plan.shape.bus_id == "0000:29:00.0"
+
+    hunyuan_plan = choose_mode(inv)
+    assert hunyuan_plan.shape.bus_id == "0000:29:00.0"
+
+
+
+
+def test_headless_gpu_prioritized_in_single_gpu_fallback():
+    display_card = gpu("0000:25:00.0", 11761, bandwidth=1.0, index=0, display_active=True)
+    headless_card = gpu("0000:29:00.0", 11500, bandwidth=15.76, index=1, display_active=False)
+    plan = choose_mode(inventory(display_card, headless_card), forced=ModeName.single_gpu_swap)
+    assert plan.shape.bus_id == "0000:29:00.0"
+

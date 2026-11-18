@@ -2,8 +2,8 @@ from model3d_engine.gpu.probe import arch_supported, merge_inventory, parse_free
 from model3d_engine.gpu.topology import parse_nvidia_smi
 
 LINKS = parse_nvidia_smi(
-    "00000000:25:00.0, NVIDIA GeForce RTX 5070, 2, 2, 12227\n"
-    "00000000:29:00.0, NVIDIA GeForce RTX 5070, 3, 16, 12227\n"
+    "00000000:25:00.0, NVIDIA GeForce RTX 5070, 2, 2, 12227, Enabled\n"
+    "00000000:29:00.0, NVIDIA GeForce RTX 5070, 3, 16, 12227, Disabled\n"
 )
 
 
@@ -26,6 +26,7 @@ def test_probe_merge_two_cards():
     shape, paint = inventory.gpus
     assert (shape.index, shape.bus_id, shape.bandwidth_gbps) == (0, "0000:25:00.0", 1.0)
     assert (paint.index, paint.bus_id, paint.bandwidth_gbps) == (1, "0000:29:00.0", 15.76)
+    assert (shape.display_active, paint.display_active) == (True, False)
     assert (paint.memory_total_mib, paint.memory_free_mib, paint.capability, paint.supported) == (12227, 10500, (12, 0), True)
 
 

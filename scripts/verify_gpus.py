@@ -33,13 +33,15 @@ GIB = 1024**3
 def plan_placement(links: list[GpuLink]) -> dict[str, GpuLink]:
     """Assign each pipeline stage to a GPU.
 
-    Paint needs about 21 GB of VRAM and must stream offloaded weights from RAM, so it
-    goes on the widest link. Shape fits in 12 GB and stays resident, so the narrow link
-    only costs time when its weights first load.
+    Prioritize the headless GPU with the highest PCIe bandwidth for model generation.
     """
     if len(links) != 2:
         raise ValueError(f"expected 2 GPUs, found {len(links)}")
-    paint, shape = sorted(links, key=lambda link: (-link.bandwidth_gbps, link.bus_id))
+    shape, paint = sorted(
+        links,
+        key=lambda link: (not link.display_active, link.bandwidth_gbps, link.memory_mib),
+        reverse=True,
+    )
     return {"shape": shape, "paint": paint}
 
 

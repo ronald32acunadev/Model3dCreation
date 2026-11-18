@@ -1,6 +1,6 @@
 # Prioritize Headless GPU for Model Generation and Processing
 
-Status: US-01..US-02 approved 2026-11-18, execution mode: all stories. Branch: `feature/prioritize-headless-gpu`.
+Status: US-01 and US-02 complete on branch `feature/prioritize-headless-gpu`. Verified with 434 passing engine tests and live GPU verification.
 
 ## Context
 
@@ -65,7 +65,7 @@ As a user, I want the engine to prioritize the headless GPU with higher PCIe ban
 
 | Story / criterion or change-related regression risk | Test file and test name, or reproducible manual procedure | Observed result and evidence |
 | --- | --- | --- |
-| `US-01 / AC-01..AC-04` | `engine/tests/test_topology.py`, `engine/tests/test_probe.py` | Pending approval |
-| `US-02 / AC-01..AC-04` | `engine/tests/test_modes.py`, `engine/tests/test_main.py` | Pending approval |
-| `US-02 / AC-05` | `uv run --project engine python scripts/verify_gpus.py` | Pending approval |
-| `US-02 / AC-06` | `uv run --project engine pytest engine/tests/` | Pending approval |
+| `US-01 / AC-01..AC-04` | `engine/tests/test_topology.py`, `engine/tests/test_probe.py` | Passed (11 passed: 6-field `display_active` parsed and propagated) |
+| `US-02 / AC-01..AC-04` | `engine/tests/test_modes.py`, `engine/tests/test_main.py` | Passed (47 passed: headless card prioritized for generation and single-gpu fallback) |
+| `US-02 / AC-05` | `uv run --project engine python scripts/verify_gpus.py` | Passed (`shape -> 0000:29:00.0 (PCIe gen3 x16, 15.8 GB/s)`, `paint -> 0000:25:00.0 (PCIe gen2 x2, 1.0 GB/s)`) |
+| `US-02 / AC-06` | `uv run --project engine pytest engine/tests/` | Passed (434 passed, 0 failures across the entire engine test suite) |

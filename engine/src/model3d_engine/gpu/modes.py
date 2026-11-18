@@ -55,18 +55,36 @@ class ModeUnavailable(Exception):
         self.message = message
 
 
+def _by_priority(gpus: list[GpuInfo]) -> list[GpuInfo]:
+    """Headless cards first, then more free VRAM, then higher bandwidth."""
+    return sorted(
+        gpus,
+        key=lambda gpu: (not gpu.display_active, gpu.memory_free_mib, gpu.bandwidth_gbps),
+        reverse=True,
+    )
+
+
+_by_free_memory = _by_priority
+
+
 def choose_generator_mode(inventory: Inventory) -> ModePlan:
     """TRELLIS.2 splits generation and decoding across two cards when both fit, else runs on one card."""
-    usable = sorted((gpu for gpu in inventory.gpus if gpu.supported), key=lambda gpu: gpu.memory_free_mib, reverse=True)
+    usable = _by_priority([gpu for gpu in inventory.gpus if gpu.supported])
     if not usable:
         return ModePlan(ModeName.unsupported, False, inventory.problem or "No supported NVIDIA GPU was found", None, None)
     post = next((gpu for gpu in usable if _fits(gpu, TRELLIS_POST_NEED_MIB)), None)
     if post is not None:
         gen = next((gpu for gpu in usable if gpu != post and _fits(gpu, TRELLIS_GEN_NEED_MIB)), None)
         if gen is not None:
-            reason = f"TRELLIS.2 generates on {gen.bus_id} and decodes on {post.bus_id}"
-            return ModePlan(ModeName.dual_gpu, True, reason, gen, post)
-    best = usable[0]
+            if gen.display_active and not post.display_active:
+                if _fits(gen, TRELLIS_POST_NEED_MIB):
+                    gen, post = post, gen
+                    reason = f"TRELLIS.2 generates on {gen.bus_id} and decodes on {post.bus_id}"
+                    return ModePlan(ModeName.dual_gpu, True, reason, gen, post)
+            else:
+                reason = f"TRELLIS.2 generates on {gen.bus_id} and decodes on {post.bus_id}"
+                return ModePlan(ModeName.dual_gpu, True, reason, gen, post)
+    best = next((gpu for gpu in usable if _fits(gpu, TRELLIS_NEED_MIB)), usable[0])
     if _fits(best, TRELLIS_NEED_MIB):
         reason = f"TRELLIS.2 generates shape and texture on {best.bus_id}"
         return ModePlan(ModeName.single_gpu_resident, True, reason, best, best)
@@ -113,21 +131,19 @@ def _single(name: ModeName, gpu: GpuInfo) -> ModePlan:
     return ModePlan(ModeName.shape_only, False, reason, gpu, None)
 
 
-def _by_free_memory(gpus: list[GpuInfo]) -> list[GpuInfo]:
-    """Most free VRAM first; the faster PCIe link breaks ties."""
-    return sorted(gpus, key=lambda gpu: (gpu.memory_free_mib, gpu.bandwidth_gbps), reverse=True)
-
-
 def _automatic(usable: list[GpuInfo], problem: str | None) -> ModePlan:
     if not usable:
         return ModePlan(ModeName.unsupported, False, problem or "No supported NVIDIA GPU was found", None, None)
-    # Paint, the larger stage, gets the card with the most free VRAM (the owner's rule: the
-    # most headroom against out-of-memory); shape gets the next one.
-    for paint in _by_free_memory([gpu for gpu in usable if _fits(gpu, PAINT_NEED_MIB)]):
-        shapes = _by_free_memory([gpu for gpu in usable if gpu != paint and _fits(gpu, SHAPE_NEED_MIB)])
-        if shapes:
-            return _dual(shapes[0], paint)
-    best = max(usable, key=lambda gpu: gpu.memory_free_mib)
+    prioritized = _by_priority(usable)
+    for paint in prioritized:
+        if _fits(paint, PAINT_NEED_MIB):
+            shapes = [gpu for gpu in prioritized if gpu != paint and _fits(gpu, SHAPE_NEED_MIB)]
+            if shapes:
+                shape = shapes[0]
+                if not paint.display_active and shape.display_active and _fits(shape, PAINT_NEED_MIB):
+                    shape, paint = paint, shape
+                return _dual(shape, paint)
+    best = next((gpu for gpu in prioritized if _fits(gpu, SHAPE_NEED_MIB)), prioritized[0])
     if _fits_both(best):
         return _single(ModeName.single_gpu_resident, best)
     if _fits(best, PAINT_NEED_MIB) and _fits(best, SHAPE_NEED_MIB):
@@ -174,9 +190,12 @@ def choose_mode(
         return _automatic(usable, inventory.problem)
     if not usable:
         raise ModeUnavailable(inventory.problem or "No supported NVIDIA GPU was found")
+    prioritized = _by_priority(usable)
     if forced == ModeName.dual_gpu:
         if len(usable) < 2:
             raise ModeUnavailable(f"MODEL3D_MODE=dual_gpu needs two GPUs; found {len(usable)}")
-        paint, shape = _by_free_memory(usable)[:2]
+        paint, shape = prioritized[:2]
+        if not paint.display_active and shape.display_active:
+            shape, paint = paint, shape
         return _forced(_dual(shape, paint))
-    return _forced(_single(forced, max(usable, key=lambda gpu: gpu.memory_free_mib)))
+    return _forced(_single(forced, next((gpu for gpu in prioritized if _fits(gpu, SHAPE_NEED_MIB)), prioritized[0])))
