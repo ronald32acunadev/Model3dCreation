@@ -1,6 +1,6 @@
 """Give a finished app job a sculpted head in one command (the head pass of the kit experiment).
 
-    python scripts/kit_assembly/run.py JOB [--extra-seeds 11] [--engine URL]
+    python scripts/kit_assembly/run.py JOB [--extra-seeds SEEDS] [--engine URL]
 
 JOB is a job id or a folder in data/jobs; a rigged job (`rig: true`) gets the full pass, any other
 ends with its own model and the reason. The run folder is data/kit_runs/<job_id>/. Steps whose
@@ -168,7 +168,7 @@ def stop_on_term(_signum, _frame) -> None:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("job", help="job id or folder in data/jobs, or 'latest' for the newest rigged job")
-    parser.add_argument("--extra-seeds", default="11", help="comma-separated seeds tried besides the job's (empty for none)")
+    parser.add_argument("--extra-seeds", default="", help="comma-separated seeds tried besides the job's (empty for none)")
     parser.add_argument("--engine", default="http://127.0.0.1:8765")
     parser.add_argument("--home", type=Path, default=ROOT / "data", help="data folder with jobs/ (MODEL3D_HOME)")
     args = parser.parse_args(argv)
