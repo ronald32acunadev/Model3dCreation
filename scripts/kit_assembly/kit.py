@@ -228,6 +228,39 @@ def quality_problem(head_fit: dict | None, info: dict, width: float) -> str | No
     return None
 
 
+def select_candidate(
+    candidates: list[tuple[str, object, float]],
+    align_data: dict | None = None,
+    part: str = "head",
+    min_ratio: float = MIN_VOLUME_RATIO,
+    max_ratio: float = 1.6,
+) -> tuple[str | None, object | None, float]:
+    """Select the best candidate part by alignment gap and volume ratio proximity to 1.0.
+
+    Candidates is a list of (name, candidate_field, ratio).
+    Returns (name, candidate_field, ratio) or (None, None, 0.0).
+    """
+    if not candidates:
+        return None, None, 0.0
+
+    def score(item: tuple[str, object, float]) -> tuple[bool, bool, float, float]:
+        name, _, ratio = item
+        stem = Path(name).stem
+        gap = None
+        if align_data and part == "head":
+            head_fit = align_data.get(stem, {}).get("head")
+            if head_fit and "mean_distance" in head_fit:
+                gap = head_fit["mean_distance"] + head_fit["reverse_mean_distance"]
+
+        exceeds_alignment = bool(gap is not None and gap > MAX_HEAD_GAP)
+        invalid_volume = not (min_ratio <= ratio <= max_ratio)
+        volume_dist = abs(ratio - 1.0) if not invalid_volume else (100.0 - ratio if ratio < min_ratio else ratio)
+        alignment_penalty = gap if gap is not None else 0.0
+        return (exceeds_alignment, invalid_volume, volume_dist, alignment_penalty)
+
+    return min(candidates, key=score)
+
+
 @dataclass
 class HeadCut:
     """Where the head swap cuts, and which faces it keeps and removes (face_cut)."""
@@ -409,6 +442,7 @@ def main(argv: list[str]) -> int:
     report: dict = {"h": h, "pieces": {}, "seams": {}, "cutters": {}, "volume_check": {}}
     sources: dict[str, BoxBounded] = {}
     every_cut = lambda p: np.min([cutters[q](p) for q in names], axis=0)
+    align = json.loads((run / "align.json").read_text()) if (run / "align.json").exists() else {}
     for part in (["head"] if args.head_swap and "head" in names else ["torso"] + names):
         paths = [p for pattern in (f"{part}.glb", f"{part}@*.glb", f"{part}_bust.glb", f"{part}_bust@*.glb")
                  for p in sorted((run / "aligned").glob(pattern))]
@@ -419,18 +453,18 @@ def main(argv: list[str]) -> int:
             box = cutter_box(cutters[part])
             within = lambda field, q=part: (lambda p: np.maximum(field(p), cutters[q](p)))
         molded = region_volume(within(mold), *box, VOLUME_STEP)
-        best = (None, mold, 0.0)
+        candidates = []
         ratios = {}
         for path in paths:
             part_mesh = load_mesh(path)
             candidate = mesh_field(np.asarray(part_mesh.vertices), np.asarray(part_mesh.faces), enclosure=ENCLOSURE)
             ratio = region_volume(within(candidate), *box, VOLUME_STEP) / molded if molded else 0.0
             ratios[path.name] = ratio
-            if ratio > best[2]:
-                best = (path.name, candidate, ratio)
-        keep = best[2] >= MIN_VOLUME_RATIO
-        sources[part] = best[1] if keep else mold
-        report["volume_check"][part] = {"used": "sculpted" if keep else "mold", "file": best[0] if keep else None,
+            candidates.append((path.name, candidate, ratio))
+        best_name, best_field, best_ratio = select_candidate(candidates, align_data=align, part=part)
+        keep = best_ratio >= MIN_VOLUME_RATIO
+        sources[part] = best_field if (keep and best_field is not None) else mold
+        report["volume_check"][part] = {"used": "sculpted" if keep else "mold", "file": best_name if keep else None,
                                         "ratios": ratios, "mold_volume": molded}
         print(json.dumps({part: report["volume_check"][part]}), flush=True)
 
