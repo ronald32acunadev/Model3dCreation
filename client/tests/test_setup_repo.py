@@ -39,8 +39,11 @@ def fake_probes(
     free: int = 500 * GB,
     hf_access: bool | Callable[[str], bool] = True,
     token_valid: Callable[[str], bool] = lambda token: False,
+    blender_version: str = "5.3.0",
 ):
     def run(argv: list[str]) -> str:
+        if argv and any("blender" in arg for arg in argv[:2]):
+            return f"Blender {blender_version}\n"
         if not gpu:
             raise subprocess.CalledProcessError(1, argv)
         return "NVIDIA GeForce RTX 5070\n"
@@ -141,7 +144,7 @@ def test_linux_steps_in_order(tmp_path: Path) -> None:
         "unirig-source", "unirig-env", "unirig-weights",
         "trellis-source", "trellis-env", "trellis-weights",
         "voice-source", "voice-env", "voice-weights",
-        "blender", "blender-addon",
+        "blender-addon",
     ]
 
 
@@ -150,7 +153,7 @@ def test_no_rig_and_no_trellis_drop_their_steps(tmp_path: Path) -> None:
     steps = setup_repo.build_steps(tmp_path, "linux", options, fake_probes())
     assert step_ids(steps) == [
         "cuda-toolkit", "hunyuan-source", "engine-env", "inpaint", "dev-tools", "weights",
-        "blender", "blender-addon",
+        "blender-addon",
     ]
 
 
@@ -160,6 +163,12 @@ def test_no_voice_drops_voice_steps(tmp_path: Path) -> None:
     assert "voice-source" not in step_ids(steps)
     assert "voice-env" not in step_ids(steps)
     assert "voice-weights" not in step_ids(steps)
+
+
+def test_no_blender_addon_drops_blender_addon_step(tmp_path: Path) -> None:
+    options = setup_repo.Options(blender_addon=False)
+    steps = setup_repo.build_steps(tmp_path, "linux", options, fake_probes())
+    assert "blender-addon" not in step_ids(steps)
 
 
 def test_finished_steps_report_done(tmp_path: Path) -> None:
@@ -440,51 +449,32 @@ def test_save_token_tightens_an_existing_file(tmp_path: Path) -> None:
     assert stat.S_IMODE(os.stat(token_path).st_mode) == 0o600
 
 
-def test_blender_done_needs_the_pinned_release(tmp_path: Path) -> None:
+def test_blender_addon_skips_when_no_system_blender(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     write_addon_manifest(tmp_path, "0.1.0")
-    blender = setup_repo.blender_steps(tmp_path, setup_repo.Options(blender_config=tmp_path / "cfg"))[0]
-    assert blender.id == "blender"
-    assert blender.done() is False
-    binary = tmp_path / "vendor/blender/blender"
-    binary.parent.mkdir(parents=True)
-    binary.write_text("", encoding="utf-8")
-    marker = tmp_path / "vendor/blender/.model3d-release"
-    marker.write_text("4.5.14", encoding="utf-8")
-    assert blender.done() is False
-    marker.write_text("4.5.15", encoding="utf-8")
-    assert blender.done() is True
-
-
-def test_blender_checksum_mismatch_deletes_only_the_archive(tmp_path: Path) -> None:
-    write_addon_manifest(tmp_path, "0.1.0")
-    downloads = tmp_path / "data/downloads"
-    downloads.mkdir(parents=True)
-    archive = downloads / "blender-4.5.15-linux-x64.tar.xz"
-    archive.write_bytes(b"not blender")
-    keep = downloads / "keep.txt"
-    keep.write_text("keep", encoding="utf-8")
-    blender = setup_repo.blender_steps(tmp_path, setup_repo.Options(blender_config=tmp_path / "cfg"))[0]
-    with pytest.raises(setup_repo.CommandFailed):
-        blender.run(setup_repo.Context(repo=tmp_path, log=lambda line: None, runner=lambda c, log: None))
-    assert not archive.exists()
-    assert keep.read_text(encoding="utf-8") == "keep"
-    assert not (tmp_path / "vendor").exists()
+    monkeypatch.setattr(setup_repo.shutil, "which", lambda cmd: None)
+    options = setup_repo.Options(blender_bin=None, blender_config=tmp_path / "cfg")
+    addon = setup_repo.blender_steps(tmp_path, options)[0]
+    with pytest.raises(setup_repo.Skipped):
+        addon.run(setup_repo.Context(repo=tmp_path, log=lambda line: None, runner=lambda c, log: None))
 
 
 def test_blender_addon_builds_then_installs(tmp_path: Path) -> None:
     write_addon_manifest(tmp_path, "0.1.0")
-    addon = setup_repo.blender_steps(tmp_path, setup_repo.Options(blender_config=tmp_path / "cfg"))[1]
+    fake_blender = tmp_path / "bin/blender"
+    fake_blender.parent.mkdir(parents=True)
+    fake_blender.write_text("", encoding="utf-8")
+    options = setup_repo.Options(blender_bin=fake_blender, blender_config=tmp_path / "cfg")
+    addon = setup_repo.blender_steps(tmp_path, options)[0]
     commands: list[Command] = []
     addon.run(setup_repo.Context(repo=tmp_path, log=lambda line: None, runner=lambda c, log: commands.append(c)))
-    blender = str(tmp_path / "vendor/blender/blender")
     assert [command.argv for command in commands] == [
         [
-            blender, "--command", "extension", "build",
+            str(fake_blender), "--command", "extension", "build",
             "--source-dir", str(tmp_path / "blender/model3d"),
             "--output-dir", str(tmp_path / "data/downloads"),
         ],
         [
-            blender, "--command", "extension", "install-file", "-r", "user_default",
+            str(fake_blender), "--command", "extension", "install-file", "-r", "user_default",
             "-e", str(tmp_path / "data/downloads" / "model3d-0.1.0.zip"),
         ],
     ]
@@ -492,8 +482,13 @@ def test_blender_addon_builds_then_installs(tmp_path: Path) -> None:
 
 def test_blender_addon_done_matches_the_source_version(tmp_path: Path) -> None:
     write_addon_manifest(tmp_path, "0.1.0")
-    addon = setup_repo.blender_steps(tmp_path, setup_repo.Options(blender_config=tmp_path / "cfg"))[1]
-    installed = tmp_path / "cfg/4.5/extensions/user_default/model3d/blender_manifest.toml"
+    fake_blender = tmp_path / "bin/blender"
+    fake_blender.parent.mkdir(parents=True)
+    fake_blender.write_text("", encoding="utf-8")
+    probes = fake_probes(blender_version="5.3.0")
+    options = setup_repo.Options(blender_bin=fake_blender, blender_config=tmp_path / "cfg")
+    addon = setup_repo.blender_steps(tmp_path, options, probes)[0]
+    installed = tmp_path / "cfg/5.3/extensions/user_default/model3d/blender_manifest.toml"
     installed.parent.mkdir(parents=True)
     installed.write_text('id = "model3d"\nversion = "0.0.9"\n', encoding="utf-8")
     assert addon.done() is False
