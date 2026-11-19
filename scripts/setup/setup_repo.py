@@ -81,12 +81,13 @@ TRELLIS_PACKAGES = (
     "safetensors", "huggingface_hub",
     "git+https://github.com/EasternJournalist/utils3d.git@9a4eb15e4021b67b12c460c7057d642626897ec8",
 )
+# shape_enc is needed by the sharper-texture pass (engine texturing_weights_reason).
 TRELLIS_WEIGHTS_SCRIPT = """\
 from huggingface_hub import snapshot_download as get
 get("microsoft/TRELLIS.2-4B", allow_patterns=[
     "*.json", "ckpts/ss_flow_img_dit_1_3B_64_bf16.*", "ckpts/slat_flow_img2shape_dit_1_3B_*",
     "ckpts/slat_flow_imgshape2tex_dit_1_3B_*", "ckpts/shape_dec_next_dc_f16c32_fp16.*",
-    "ckpts/tex_dec_next_dc_f16c32_fp16.*"])
+    "ckpts/shape_enc_next_dc_f16c32_fp16.*", "ckpts/tex_dec_next_dc_f16c32_fp16.*"])
 get("microsoft/TRELLIS-image-large", allow_patterns=["ckpts/ss_dec_conv3d_16l8_fp16.*", "pipeline.json"])
 """
 DINOV3_REPO = "facebook/dinov3-vitl16-pretrain-lvd1689m"
@@ -531,6 +532,7 @@ def trellis_weights_done(repo: Path) -> bool:
     return (
         _exists(hf, "models--microsoft--TRELLIS.2-4B/snapshots/*/ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors")
         and _exists(hf, "models--microsoft--TRELLIS.2-4B/snapshots/*/ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16.safetensors")
+        and _exists(hf, "models--microsoft--TRELLIS.2-4B/snapshots/*/ckpts/shape_enc_next_dc_f16c32_fp16.safetensors")
         and _exists(hf, "models--facebook--dinov3-vitl16-pretrain-lvd1689m/snapshots/*/model.safetensors")
     )
 

@@ -529,3 +529,23 @@ def test_blender_addon_done_matches_the_source_version(tmp_path: Path) -> None:
     assert addon.done() is False
     installed.write_text('id = "model3d"\nversion = "0.1.0"\n', encoding="utf-8")
     assert addon.done() is True
+
+
+def test_trellis_weights_script_downloads_the_shape_encoder() -> None:
+    # US-01 / AC-01
+    assert "ckpts/shape_enc_next_dc_f16c32_fp16.*" in setup_repo.TRELLIS_WEIGHTS_SCRIPT
+
+
+def test_trellis_weights_done_requires_the_shape_encoder(tmp_path: Path) -> None:
+    # US-01 / AC-02, AC-03
+    snapshot = tmp_path / "data/hf/hub/models--microsoft--TRELLIS.2-4B/snapshots/abc/ckpts"
+    snapshot.mkdir(parents=True)
+    dino = tmp_path / "data/hf/hub/models--facebook--dinov3-vitl16-pretrain-lvd1689m/snapshots/abc"
+    dino.mkdir(parents=True)
+    (snapshot / "slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors").touch()
+    (snapshot / "slat_flow_imgshape2tex_dit_1_3B_1024_bf16.safetensors").touch()
+    (dino / "model.safetensors").touch()
+    assert setup_repo.trellis_weights_done(tmp_path) is False
+
+    (snapshot / "shape_enc_next_dc_f16c32_fp16.safetensors").touch()
+    assert setup_repo.trellis_weights_done(tmp_path) is True
