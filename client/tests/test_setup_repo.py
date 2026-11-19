@@ -39,11 +39,8 @@ def fake_probes(
     free: int = 500 * GB,
     hf_access: bool | Callable[[str], bool] = True,
     token_valid: Callable[[str], bool] = lambda token: False,
-    blender_version: str = "5.3.0",
 ):
     def run(argv: list[str]) -> str:
-        if argv and any("blender" in arg for arg in argv[:2]):
-            return f"Blender {blender_version}\n"
         if not gpu:
             raise subprocess.CalledProcessError(1, argv)
         return "NVIDIA GeForce RTX 5070\n"
@@ -89,13 +86,6 @@ def fake_prompter(secrets: list[str], answers: list[str] | None = None, interact
         interactive=lambda: interactive, secret=secret, ask=ask, out=out_lines.append
     )
     return prompter, out_lines, asked
-
-
-def write_addon_manifest(repo: Path, version: str) -> None:
-    (repo / "blender/model3d").mkdir(parents=True, exist_ok=True)
-    (repo / "blender/model3d/blender_manifest.toml").write_text(
-        f'id = "model3d"\nversion = "{version}"\n', encoding="utf-8"
-    )
 
 
 def test_pins_come_from_the_recipe() -> None:
@@ -144,7 +134,6 @@ def test_linux_steps_in_order(tmp_path: Path) -> None:
         "unirig-source", "unirig-env", "unirig-weights",
         "trellis-source", "trellis-env", "trellis-weights",
         "voice-source", "voice-env", "voice-weights",
-        "blender-addon",
     ]
 
 
@@ -153,7 +142,6 @@ def test_no_rig_and_no_trellis_drop_their_steps(tmp_path: Path) -> None:
     steps = setup_repo.build_steps(tmp_path, "linux", options, fake_probes())
     assert step_ids(steps) == [
         "cuda-toolkit", "hunyuan-source", "engine-env", "inpaint", "dev-tools", "weights",
-        "blender-addon",
     ]
 
 
@@ -165,10 +153,25 @@ def test_no_voice_drops_voice_steps(tmp_path: Path) -> None:
     assert "voice-weights" not in step_ids(steps)
 
 
-def test_no_blender_addon_drops_blender_addon_step(tmp_path: Path) -> None:
-    options = setup_repo.Options(blender_addon=False)
-    steps = setup_repo.build_steps(tmp_path, "linux", options, fake_probes())
+# US-01 / AC-01
+def test_plan_has_no_blender_addon_step(tmp_path: Path) -> None:
+    steps = setup_repo.build_steps(tmp_path, "linux", setup_repo.Options(), fake_probes())
     assert "blender-addon" not in step_ids(steps)
+
+
+# US-01 / AC-03
+@pytest.mark.parametrize("flag", [["--no-blender-addon"], ["--blender-bin", "/usr/bin/blender"]])
+def test_blender_addon_options_are_gone(tmp_path: Path, flag: list[str]) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        setup_repo.main(
+            ["--dry-run", *flag],
+            repo=tmp_path,
+            platform="linux",
+            probes=fake_probes(),
+            runner=lambda command, log: None,
+            prompter=setup_repo.NO_PROMPT,
+        )
+    assert exit_info.value.code != 0
 
 
 def test_finished_steps_report_done(tmp_path: Path) -> None:
@@ -482,53 +485,6 @@ def test_save_token_tightens_an_existing_file(tmp_path: Path) -> None:
     setup_repo.save_token(token_path, "hf_new")
     assert token_path.read_text(encoding="utf-8") == "hf_new"
     assert stat.S_IMODE(os.stat(token_path).st_mode) == 0o600
-
-
-def test_blender_addon_skips_when_no_system_blender(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    write_addon_manifest(tmp_path, "0.1.0")
-    monkeypatch.setattr(setup_repo.shutil, "which", lambda cmd: None)
-    options = setup_repo.Options(blender_bin=None, blender_config=tmp_path / "cfg")
-    addon = setup_repo.blender_steps(tmp_path, options)[0]
-    with pytest.raises(setup_repo.Skipped):
-        addon.run(setup_repo.Context(repo=tmp_path, log=lambda line: None, runner=lambda c, log: None))
-
-
-def test_blender_addon_builds_then_installs(tmp_path: Path) -> None:
-    write_addon_manifest(tmp_path, "0.1.0")
-    fake_blender = tmp_path / "bin/blender"
-    fake_blender.parent.mkdir(parents=True)
-    fake_blender.write_text("", encoding="utf-8")
-    options = setup_repo.Options(blender_bin=fake_blender, blender_config=tmp_path / "cfg")
-    addon = setup_repo.blender_steps(tmp_path, options)[0]
-    commands: list[Command] = []
-    addon.run(setup_repo.Context(repo=tmp_path, log=lambda line: None, runner=lambda c, log: commands.append(c)))
-    assert [command.argv for command in commands] == [
-        [
-            str(fake_blender), "--command", "extension", "build",
-            "--source-dir", str(tmp_path / "blender/model3d"),
-            "--output-dir", str(tmp_path / "data/downloads"),
-        ],
-        [
-            str(fake_blender), "--command", "extension", "install-file", "-r", "user_default",
-            "-e", str(tmp_path / "data/downloads" / "model3d-0.1.0.zip"),
-        ],
-    ]
-
-
-def test_blender_addon_done_matches_the_source_version(tmp_path: Path) -> None:
-    write_addon_manifest(tmp_path, "0.1.0")
-    fake_blender = tmp_path / "bin/blender"
-    fake_blender.parent.mkdir(parents=True)
-    fake_blender.write_text("", encoding="utf-8")
-    probes = fake_probes(blender_version="5.3.0")
-    options = setup_repo.Options(blender_bin=fake_blender, blender_config=tmp_path / "cfg")
-    addon = setup_repo.blender_steps(tmp_path, options, probes)[0]
-    installed = tmp_path / "cfg/5.3/extensions/user_default/model3d/blender_manifest.toml"
-    installed.parent.mkdir(parents=True)
-    installed.write_text('id = "model3d"\nversion = "0.0.9"\n', encoding="utf-8")
-    assert addon.done() is False
-    installed.write_text('id = "model3d"\nversion = "0.1.0"\n', encoding="utf-8")
-    assert addon.done() is True
 
 
 def test_trellis_weights_script_downloads_the_shape_encoder() -> None:

@@ -10,4 +10,4 @@ Description: Turn an image into a textured, optionally rigged 3D model on your o
  Model3D generates GLB models locally with Hunyuan3D 2.1 and adds skeletons with UniRig.
  On first start its setup wizard checks the NVIDIA driver and CUDA toolkit 13, then
  installs the engine, its Python environment, and about 40 GB of models into a folder
- you choose. A Blender add-on is included in /opt/model3d/blender.
+ you choose.

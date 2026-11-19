@@ -8,14 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Model3D: a local, GPU-only pipeline that turns an image into a textured (optionally rigged) GLB with Hunyuan3D 2.1 and UniRig, plus two clients for it. Target hardware is two RTX 5070 (12 GB) cards on Linux x86_64. Feature backlogs and their results live in `docs/userstories/`.
 
-Five independent `uv` projects, each with its own `pyproject.toml`, lockfile and `.venv`:
+Four independent `uv` projects, each with its own `pyproject.toml`, lockfile and `.venv`:
 
 | Project | Role |
 |---|---|
 | `contracts/` | Pydantic models (`jobs`, `events`, `health`) shared by engine and desktop client. Editable path dependency of both. |
 | `engine/` | FastAPI server (`python -m model3d_engine`, default `127.0.0.1:8765`). Python 3.11 only, CUDA 13 torch, `bpy` wheel. |
 | `client/` | PySide6 desktop app (`python -m model3d_client`), including the first-run setup wizard. |
-| `blender/` | Blender add-on `blender/model3d/` (stdlib `urllib` only, no contracts dependency); the uv project only runs its tests outside Blender. |
 | `packaging/` | Builds the `.deb` (`packaging/deb/build.sh`); the uv project only runs its tests. |
 
 `vendor/Hunyuan3D-2.1`, `vendor/UniRig`, and the optional `vendor/TRELLIS.2` (each of the last two with its own `.venv`) are not tracked; the engine path-depends on `vendor/Hunyuan3D-2.1/hy3dpaint/custom_rasterizer`, so `uv sync` in `engine/` needs that clone and `nvcc` (`CUDA_HOME`). `engine/patches/hunyuan3d-paint-device.patch` must be applied to the Hunyuan clone (it removes hardcoded `cuda:0`).
@@ -26,11 +25,10 @@ Run each from its project directory (or use `uv run --project <dir>`):
 
 ```bash
 uv sync                                   # per project
-uv run pytest                             # default: GPU/Blender/WebEngine tests excluded via addopts
+uv run pytest                             # default: GPU/WebEngine tests excluded via addopts
 uv run pytest tests/test_scheduler.py::test_name   # single test
 uv run pytest -m gpu                      # engine/client: needs both GPUs + full engine env
 uv run pytest -m webengine                # client: needs a real display with GPU rendering
-uv run pytest -m blender                  # blender: needs `blender` on PATH
 uv run python -m model3d_engine           # start the engine (from engine/)
 uv run python -m model3d_client           # start the app (from client/); client/launch.sh does the same from anywhere
 client/scripts/update_translations.sh     # refresh model3d_es.ts and recompile the committed .qm
@@ -38,7 +36,7 @@ client/scripts/test_system_python.sh      # client tests on apt's PySide6/pydant
 packaging/deb/build.sh [--out DIR]        # dist/model3d_<version>_amd64.deb; version comes from client/pyproject.toml
 uv run --project engine python scripts/verify_gpus.py
 uv run --project engine python scripts/measure_stage_vram.py   # unload LM Studio/Ollama models first
-scripts/setup/setup-ubuntu.sh             # full in-repo install (.venvs, vendor/, data/, Blender); runs setup_repo.py with pins from the client's recipe
+scripts/setup/setup-ubuntu.sh             # full in-repo install (.venvs, vendor/, data/); runs setup_repo.py with pins from the client's recipe
 ```
 
 No linter or formatter is configured.
@@ -64,13 +62,9 @@ MVVM with Qt: `services/` (no widgets) → `viewmodels/` (state + signals) → `
 
 **Setup wizard** (`setup/`): `checks.py` probes driver, GPUs, VRAM, CUDA 13 `nvcc`, compilers and the target folder; `recipe.py` declares every install step as data (Python 3.11, engine, Hunyuan3D clone + patch + native builds, UniRig, HF weights, a final engine-mode check that fails when the GPUs are busy); `runner.py` executes them, recording each finished step with a fingerprint in the folder's `install.json` so it can cancel, resume, and repair. The app decides its first window (wizard vs. main) from that install state. Tests must not run real checks or installs.
 
-## Blender add-on
-
-`blender/model3d/` is an extension (`blender_manifest.toml`). `engine_client.py` talks to the same HTTP API with `urllib`, mapping errors to `EngineError` / `EngineUnreachable`; `jobs.py`/`tracker.py` poll jobs, `library.py` handles saved models (found through the desktop app's install pointer), `ui.py` holds panels and operators. Unit tests use `tests/fake_engine.py`; `test_blender_smoke.py` runs `blender -b --factory-startup --python tests/blender_smoke.py`.
-
 ## Packaging
 
-The `.deb` installs the client and contracts sources under `/opt/model3d/lib`, the engine/contracts sources and patches for the wizard to build from, a pinned `uv`, the Blender add-on, and a `/usr/bin/model3d` launcher. At runtime the client uses the system Python with apt's PySide6 and pydantic, which is why `test_system_python.sh` exists. Heavy pieces (engine venv, vendor clones, weights) are installed by the wizard, not the package.
+The `.deb` installs the client and contracts sources under `/opt/model3d/lib`, the engine/contracts sources and patches for the wizard to build from, a pinned `uv`, and a `/usr/bin/model3d` launcher. At runtime the client uses the system Python with apt's PySide6 and pydantic, which is why `test_system_python.sh` exists. Heavy pieces (engine venv, vendor clones, weights) are installed by the wizard, not the package.
 
 ## Code delegation in Claude Code
 

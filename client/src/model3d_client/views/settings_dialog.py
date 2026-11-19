@@ -28,7 +28,6 @@ from model3d_client.setup.state import load_state
 from model3d_client.viewmodels.main import MainViewModel
 
 LOG_LINES = 200
-ADDON_ZIP = Path("/opt/model3d/blender/model3d.zip")
 
 
 class SettingsDialog(QDialog):
@@ -69,12 +68,6 @@ class SettingsDialog(QDialog):
         self.skeletons_button.clicked.connect(self._add_skeletons)
         self.repair_button = QPushButton()
         self.repair_button.clicked.connect(self._repair)
-        self.addon_label = QLabel()
-        self.addon_label.setWordWrap(True)
-        self.addon_edit = QLineEdit(str(ADDON_ZIP))
-        self.addon_edit.setReadOnly(True)
-        self.copy_button = QPushButton()
-        self.copy_button.clicked.connect(self._copy_addon_path)
         install_layout = QVBoxLayout(self.install_group)
         install_layout.addWidget(self.install_label)
         actions_row = QHBoxLayout()
@@ -82,11 +75,6 @@ class SettingsDialog(QDialog):
         actions_row.addWidget(self.repair_button)
         actions_row.addStretch(1)
         install_layout.addLayout(actions_row)
-        install_layout.addWidget(self.addon_label)
-        addon_row = QHBoxLayout()
-        addon_row.addWidget(self.addon_edit, 1)
-        addon_row.addWidget(self.copy_button)
-        install_layout.addLayout(addon_row)
         self.install_group.setVisible(vm.install_dir is not None)  # installed from the .deb only
         if vm.install_dir is not None:
             state = load_state(vm.install_dir)
@@ -144,8 +132,6 @@ class SettingsDialog(QDialog):
             self.install_label.setText(self.tr("Installed in %1").replace("%1", str(self.vm.install_dir)))
         self.skeletons_button.setText(self.tr("Add skeletons"))
         self.repair_button.setText(self.tr("Repair installation"))
-        self.addon_label.setText(self.tr("Blender add-on (install it from Blender's Preferences, Add-ons, Install from Disk):"))
-        self.copy_button.setText(self.tr("Copy"))
         self.restart_button.setText(self.tr("Restart engine"))
         self._render_engine()
 
@@ -187,6 +173,3 @@ class SettingsDialog(QDialog):
 
     def _repair(self) -> None:
         self.vm.setup_requested.emit("repair")
-
-    def _copy_addon_path(self) -> None:
-        QApplication.clipboard().setText(self.addon_edit.text())

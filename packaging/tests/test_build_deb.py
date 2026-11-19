@@ -1,9 +1,8 @@
-"""Build the .deb once and inspect it with dpkg-deb; needs dpkg-deb and zip, no root, no network."""
+"""Build the .deb once and inspect it with dpkg-deb; needs dpkg-deb, no root, no network."""
 
 import os
 import shutil
 import subprocess
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -47,7 +46,7 @@ def test_control_fields_and_depends(deb):
         assert package in depends
 
 
-def test_contents_has_app_engine_uv_addon_and_launcher(deb):
+def test_contents_has_app_engine_uv_and_launcher(deb):
     paths = contents(deb)
     for path in ("/opt/model3d/lib/model3d_client/__main__.py",
                  "/opt/model3d/lib/model3d_client/viewer/vendor/three.module.js",
@@ -57,10 +56,12 @@ def test_contents_has_app_engine_uv_addon_and_launcher(deb):
                  "/opt/model3d/engine/patches/hunyuan3d-paint-device.patch",
                  "/opt/model3d/engine/src/model3d_engine/__main__.py",
                  "/opt/model3d/contracts/pyproject.toml", "/opt/model3d/scripts/verify_gpus.py",
-                 "/opt/model3d/bin/uv", "/opt/model3d/blender/model3d.zip", "/usr/bin/model3d",
+                 "/opt/model3d/bin/uv", "/usr/bin/model3d",
                  "/usr/share/applications/model3d.desktop",
                  "/usr/share/icons/hicolor/scalable/apps/model3d.svg"):
         assert path in paths, path
+    # US-02 / AC-01
+    assert not any(path.startswith("/opt/model3d/blender") for path in paths)
 
 
 def test_contents_has_no_tests_venv_or_pycache(deb):
@@ -76,14 +77,6 @@ def test_desktop_entry_execs_usr_bin_model3d(deb, tmp_path):
     launcher = tmp_path / "usr/bin/model3d"
     assert os.access(launcher, os.X_OK)
     assert "PYTHONPATH=/opt/model3d/lib" in launcher.read_text()
-
-
-def test_addon_zip_has_the_manifest_at_its_root(deb, tmp_path):
-    subprocess.run(["dpkg-deb", "--extract", str(deb), str(tmp_path)], check=True)
-    names = zipfile.ZipFile(tmp_path / "opt/model3d/blender/model3d.zip").namelist()
-    assert "blender_manifest.toml" in names
-    assert "__init__.py" in names
-    assert not any("__pycache__" in name for name in names)
 
 
 def test_postrm_names_the_kept_folder(deb, tmp_path):

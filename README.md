@@ -13,7 +13,7 @@
 
 **Model3D** is a local, GPU-accelerated pipeline that turns single 2D images into textured, rigged binary glTF 2.0 (`.glb`) 3D assets and pairs them with neural voice synthesis. Powered by **Hunyuan3D 2.1** and **TRELLIS.2** for geometry and PBR texturing, **UniRig** for skeletal rigging and skinning, and **Qwen3-TTS** and **Whisper** for voice design, voice cloning, and speech synthesis, Model3D operates entirely on your workstation without cloud dependencies or telemetry.
 
-The project ships as a modular ecosystem: a high-throughput FastAPI/WebSocket inference server with dynamic multi-GPU orchestration, a native PySide6 desktop client featuring a custom Material Dark interface with an embedded Three.js 3D viewer, an interactive first-run setup wizard, a Blender 4.2+ extension, and a Debian package builder.
+The project ships as a modular ecosystem: a high-throughput FastAPI/WebSocket inference server with dynamic multi-GPU orchestration, a native PySide6 desktop client featuring a custom Material Dark interface with an embedded Three.js 3D viewer, an interactive first-run setup wizard, and a Debian package builder.
 
 ---
 
@@ -26,7 +26,6 @@ The project ships as a modular ecosystem: a high-throughput FastAPI/WebSocket in
 - [Usage](#usage)
   - [Desktop Application](#desktop-application)
   - [Local Inference Engine](#local-inference-engine)
-  - [Blender Add-on](#blender-add-on)
   - [REST & WebSocket API Reference](#rest--websocket-api-reference)
   - [Environment Variables](#environment-variables)
   - [Diagnostic & Packaging Scripts](#diagnostic--packaging-scripts)
@@ -44,7 +43,6 @@ The project ships as a modular ecosystem: a high-throughput FastAPI/WebSocket in
 - **Standalone Skeletal Rigging & Walk Animations**: Rigs existing `.glb` models (up to 200 MB) with armatures and smoothed skinning weights using UniRig. Automatically detects morphology (biped or quadruped) and generates procedural looping walk animations.
 - **Dynamic Multi-GPU Orchestration**: Inspects NVIDIA GPUs and PCIe bandwidth at startup, placing stages across two cards or dynamically swapping stage workers on a single GPU with zero VRAM consumption when idle.
 - **First-Run Setup Wizard**: Automated machine auditor and installer supporting modular components (`base` for 3D generation, `skeletons` for UniRig, and `voice` for Qwen3-TTS & Whisper) with step fingerprinting and resumable downloads.
-- **Blender 4.2+ Extension**: Native zero-dependency add-on connecting Blender directly to the local engine and model library via Python's standard `urllib`.
 
 ---
 
@@ -67,14 +65,13 @@ flowchart LR
 
 ### Subprojects Layout
 
-The repository is organized into five independent [`uv`](https://docs.astral.sh/uv/) projects, each with its own `pyproject.toml` and test suite:
+The repository is organized into four independent [`uv`](https://docs.astral.sh/uv/) projects, each with its own `pyproject.toml` and test suite:
 
 | Subproject | Package Name & Version | Python Requirement | Role |
 | :--- | :--- | :--- | :--- |
 | [`contracts/`](./contracts) | `model3d-contracts@0.1.0` | `>=3.11` | Shared Pydantic v2 schemas (`jobs`, `events`, `characters`, `health`). Editable dependency of `engine` and `client`. |
 | [`engine/`](./engine) | `model3d-engine@0.1.0` | `==3.11.*` | FastAPI inference server (`python -m model3d_engine`), GPU probe, stage runners, job scheduler, and voice worker. |
 | [`client/`](./client) | `model3d-client@0.2.0` | `>=3.11` | PySide6 MVVM desktop application (`python -m model3d_client`), Material Dark theme, setup wizard, and 3D viewer. |
-| [`blender/`](./blender) | `model3d-blender@0.1.0` | `>=3.11` | Blender 4.2+ extension in [`blender/model3d/`](./blender/model3d) (`urllib` client, job tracker, and library browser). |
 | [`packaging/`](./packaging) | `model3d-packaging@0.1.0` | `>=3.11` | Debian package builder ([`packaging/deb/build.sh`](./packaging/deb/build.sh)) and package verification suite. |
 
 ```text
@@ -87,7 +84,6 @@ Model3dCreation/
 │   ├── launch.sh            # Universal shell launcher script
 │   ├── scripts/             # update_translations.sh, test_system_python.sh
 │   └── src/model3d_client/  # services/, setup/, viewmodels/, views/, viewer/, i18n/
-├── blender/                 # Blender 4.2+ extension (blender/model3d/) and tests
 ├── packaging/               # Debian package build pipeline (packaging/deb/build.sh)
 ├── scripts/                 # Setup scripts, GPU verification, and VRAM benchmarks
 └── docs/userstories/        # Feature backlogs, user stories, and QA traceability
@@ -101,7 +97,7 @@ Model3dCreation/
 | `<install_or_repo>/install.json` | Step fingerprint state recorded by the setup wizard for resume and repair. |
 | `$MODEL3D_HOME` (default `<install_or_repo>/data`) | Root data directory shared by the engine and desktop client. |
 | `$MODEL3D_HOME/jobs/` | Job records, submitted images, and generated `.glb` outputs. |
-| `$MODEL3D_HOME/library/` | Saved 3D models managed by the desktop client and accessed by Blender. |
+| `$MODEL3D_HOME/library/` | Saved 3D models managed by the desktop client. |
 | `$MODEL3D_HOME/voice_cache/` | Cached synthetic speech audio and voice samples. |
 | `$MODEL3D_HOME/hf/` | Local Hugging Face cache for 3D model checkpoints and voice weights. |
 | `$MODEL3D_HOME/logs/engine.log` | Engine runtime logs when supervised by the desktop client. |
@@ -162,7 +158,7 @@ Launch `model3d` from your application launcher or terminal. The first-run Setup
 Run the automated installer from the repository root:
 
 ```bash
-# Full installation on Ubuntu (system tools, CUDA 13.2, Python venvs, models, Blender)
+# Full installation on Ubuntu (system tools, CUDA 13.2, Python venvs, models)
 scripts/setup/setup-ubuntu.sh
 ```
 
@@ -234,13 +230,6 @@ Run the FastAPI engine standalone (binds to loopback `127.0.0.1:8765` by default
 ```bash
 uv run --project engine python -m model3d_engine
 ```
-
-### Blender Add-on
-
-The Blender extension is located in [`blender/model3d/`](./blender/model3d) (or `/opt/model3d/blender/model3d.zip` when installed from `.deb`).
-- Compatible with **Blender 4.2.0 or newer**.
-- Install via **Edit → Preferences → Add-ons → Install from Disk** (`model3d.zip`).
-- Access the **Model3D** sidebar to generate models, rig existing meshes, and import assets directly from the local library.
 
 ### REST & WebSocket API Reference
 
@@ -321,7 +310,6 @@ Subprojects isolate unit and integration tests so the full test suite runs deter
 uv run --project contracts pytest
 uv run --project engine pytest
 uv run --project client pytest
-uv run --project blender pytest
 uv run --project packaging pytest
 ```
 
@@ -334,10 +322,6 @@ uv run --project client pytest -m gpu
 
 # Client QtWebEngine viewer tests (requires an active display with GPU rendering)
 uv run --project client pytest -m webengine
-
-# Blender smoke tests (requires system blender or in-repo vendor/blender)
-uv run --project blender pytest -m blender
-cd blender && PATH="$PWD/../vendor/blender:$PATH" uv run pytest -m blender
 ```
 
 ---
@@ -352,4 +336,4 @@ cd blender && PATH="$PWD/../vendor/blender:$PATH" uv run pytest -m blender
 
 ## License
 
-The Blender add-on ([`blender/model3d/blender_manifest.toml`](./blender/model3d/blender_manifest.toml)) is licensed under `SPDX:GPL-3.0-or-later`.
+No license file is included in this repository yet.

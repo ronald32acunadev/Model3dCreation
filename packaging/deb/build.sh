@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build dist/model3d_<version>_amd64.deb from this repository: the desktop app, the engine sources, uv, and the Blender add-on.
+# Build dist/model3d_<version>_amd64.deb from this repository: the desktop app, the engine sources, and uv.
 # Usage: packaging/deb/build.sh [--out DIR]. UV_BINARY=/path/to/uv skips downloading uv.
 
 set -euo pipefail
@@ -72,9 +72,6 @@ else
     install -D -m 755 "$STAGE/uv-x86_64-unknown-linux-gnu/uv" "$APP/bin/uv"
     rm -rf "$STAGE/uv-x86_64-unknown-linux-gnu"
 fi
-
-mkdir -p "$APP/blender"
-(cd "$REPO/blender/model3d" && zip -q -r -X "$APP/blender/model3d.zip" . -x '__pycache__/*' '*/__pycache__/*' '*.pyc')
 
 install -D -m 755 "$HERE/model3d" "$STAGE/usr/bin/model3d"
 install -D -m 644 "$HERE/model3d.desktop" "$STAGE/usr/share/applications/model3d.desktop"

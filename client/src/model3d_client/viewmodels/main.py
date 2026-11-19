@@ -132,7 +132,7 @@ class MainViewModel(QObject):
         self.character_imported.emit(result)
 
     def refresh_entries(self) -> None:
-        """Read the library again: another program (the Blender add-on) may have added entries."""
+        """Read the library again: another program may have added entries."""
         self.entries_changed.emit()
 
     def select(self, entry_id: str | None) -> None:

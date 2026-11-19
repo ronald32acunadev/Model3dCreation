@@ -1,4 +1,4 @@
-"""Installs what Model3D needs inside this repository: the engine, its models, UniRig, TRELLIS.2, Blender, and the test tools.
+"""Installs what Model3D needs inside this repository: the engine, its models, UniRig, TRELLIS.2, the voice stage, and the test tools.
 
 The wrapper scripts in this folder prepare uv and client/.venv, then run this file with the
 client's Python. The pins come from the client's install recipe, so this script and the
@@ -62,7 +62,7 @@ MIN_FREE_BYTES = 100 * 10**9
 RETRY_ATTEMPTS = 5
 RETRY_PAUSE_S = 20.0
 ENGINE_VENV = Path("engine/.venv")
-DEV_PROJECTS = ("contracts", "engine", "client", "blender", "packaging")
+DEV_PROJECTS = ("contracts", "engine", "client", "packaging")
 TRELLIS_DIR = Path("vendor/TRELLIS.2")
 TRELLIS_COMMIT = "75fbf0183001ed9876c8dbb35de6b68552ee08bd"
 TRELLIS_URL = "https://github.com/microsoft/TRELLIS.2.git"
@@ -99,7 +99,6 @@ DINOV3_SKIPPED = (
     "DINOv3 needs Hugging Face access: request it at https://huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m, "
     "then run this script again in a terminal to paste your token (or run `engine/.venv/bin/huggingface-cli login`)."
 )
-ADDON_DIR = Path("blender/model3d")
 NO_DRIVER = (
     "NVIDIA driver not found: install the driver from https://www.nvidia.com/drivers and reboot, "
     "then run this script again"
@@ -143,20 +142,13 @@ class Probes:
     token_valid: Callable[[str], bool] = _never_valid
 
 
-def _default_blender_config() -> Path:
-    return Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "blender"
-
-
 @dataclass(frozen=True)
 class Options:
     rig: bool = True
     trellis: bool = True
     voice: bool = True
-    blender_addon: bool = True
-    blender_bin: Path | None = None
     home: Path = field(default_factory=Path.home)
     cpu_count: int = field(default_factory=lambda: os.cpu_count() or 1)
-    blender_config: Path = field(default_factory=_default_blender_config)
 
 
 @dataclass(frozen=True)
@@ -571,66 +563,6 @@ def dev_tools_step(repo: Path, env: dict[str, str]) -> Step:
     return Step("dev-tools", "Test tools", done, run)
 
 
-def system_blender(options: Options) -> str | None:
-    if options.blender_bin is not None:
-        return str(options.blender_bin) if options.blender_bin.is_file() else None
-    return shutil.which("blender")
-
-
-def blender_series(blender_binary: str, probes: Probes | None = None) -> str:
-    try:
-        output = probes.run([blender_binary, "--version"]) if probes else subprocess.run(
-            [blender_binary, "--version"], capture_output=True, text=True, check=True
-        ).stdout
-        match = re.search(r"Blender\s+(\d+\.\d+)", output)
-        if match:
-            return match.group(1)
-    except Exception:
-        pass
-    return "5.3"
-
-
-def blender_steps(repo: Path, options: Options, probes: Probes | None = None) -> list[Step]:
-    if not options.blender_addon:
-        return []
-    manifest = repo / ADDON_DIR / "blender_manifest.toml"
-
-    def addon_identity() -> tuple[str, str]:
-        data = tomllib.loads(manifest.read_bytes().decode("utf-8"))
-        return data["id"], data["version"]
-
-    def addon_done() -> bool:
-        blender = system_blender(options)
-        if not manifest.is_file() or blender is None:
-            return False
-        addon_id, version = addon_identity()
-        series = blender_series(blender, probes)
-        installed = options.blender_config / series / "extensions/user_default" / addon_id / "blender_manifest.toml"
-        return installed.is_file() and tomllib.loads(installed.read_bytes().decode("utf-8")).get("version") == version
-
-    def addon_install(ctx: Context) -> None:
-        blender = system_blender(options)
-        if blender is None:
-            raise Skipped("Blender is not installed on PATH; install Blender on your PC or use --no-blender-addon")
-        addon_id, version = addon_identity()
-        out_dir = repo / "data/downloads"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        ctx.run(Command(
-            [blender, "--command", "extension", "build", "--source-dir", str(repo / ADDON_DIR),
-             "--output-dir", str(out_dir)],
-            cwd=repo,
-        ))
-        ctx.run(Command(
-            [blender, "--command", "extension", "install-file", "-r", "user_default", "-e",
-             str(out_dir / f"{addon_id}-{version}.zip")],
-            cwd=repo,
-        ))
-
-    return [
-        Step("blender-addon", "Blender add-on", addon_done, addon_install),
-    ]
-
-
 def save_token(path: Path, token: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -729,8 +661,6 @@ def build_steps(repo: Path, platform: str, options: Options, probes: Probes) -> 
             steps += trellis_steps(repo, env, probes)
         if options.voice:
             steps += voice_steps(repo, platform, env)
-        if options.blender_addon:
-            steps += blender_steps(repo, options, probes)
         return steps
     steps = [hunyuan_step(repo), weights_only_step(repo, env)]
     if not engine_allowed(repo, platform):
@@ -850,8 +780,6 @@ def main(argv: list[str] | None = None, *, repo: Path | None = None, platform: s
     parser.add_argument("--no-rig", action="store_true", help="skip UniRig")
     parser.add_argument("--no-trellis", action="store_true", help="skip TRELLIS.2")
     parser.add_argument("--no-voice", action="store_true", help="skip Qwen3-TTS and Whisper voice stage")
-    parser.add_argument("--no-blender-addon", action="store_true", help="skip Blender add-on installation")
-    parser.add_argument("--blender-bin", type=Path, default=None, help="path to system blender binary")
     args = parser.parse_args(argv)
     repo = repo or Path(__file__).resolve().parents[2]
     system = platform or PLATFORMS.get(sys.platform)
@@ -862,8 +790,6 @@ def main(argv: list[str] | None = None, *, repo: Path | None = None, platform: s
         rig=not args.no_rig,
         trellis=not args.no_trellis,
         voice=not args.no_voice,
-        blender_addon=not args.no_blender_addon,
-        blender_bin=args.blender_bin,
     )
     probes = probes or real_probes(options.home / TOKEN_RELATIVE)
     problems = preflight(repo, system, probes)
@@ -898,8 +824,6 @@ def main(argv: list[str] | None = None, *, repo: Path | None = None, platform: s
             (repo / "data/repo-xdg-config").mkdir(parents=True, exist_ok=True)
         print("Start the app from the repository root with:")
         print(start_command(repo, os.environ, system, options, trellis_ready))
-        print("Run the Blender tests with:")
-        print("cd blender && uv run pytest -m blender")
     return 0
 
 

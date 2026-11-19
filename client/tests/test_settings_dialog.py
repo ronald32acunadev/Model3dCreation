@@ -70,7 +70,8 @@ def test_settings_shows_skeleton_and_repair_actions_when_installed(window, tmp_p
     dialog = SettingsDialog(window.vm)
     assert not dialog.install_group.isHidden()
     assert str(folder) in dialog.install_label.text()
-    assert dialog.addon_edit.text().endswith("blender/model3d.zip")
+    assert not hasattr(dialog, "addon_edit")  # US-03 / AC-01
+    assert not hasattr(dialog, "copy_button")  # US-03 / AC-01
     assert dialog.skeletons_button.isEnabled()
     dialog.skeletons_button.click()
     dialog.repair_button.click()
