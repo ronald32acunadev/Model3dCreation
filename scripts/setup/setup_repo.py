@@ -546,8 +546,12 @@ def dev_requirements(repo: Path, project: str) -> list[str]:
 
 
 def dev_tools_step(repo: Path, env: dict[str, str]) -> Step:
+    def present_projects() -> list[str]:
+        # A project folder counts as present only when it has a pyproject.toml file.
+        return [project for project in DEV_PROJECTS if (repo / project / "pyproject.toml").is_file()]
+
     def done() -> bool:
-        for project in DEV_PROJECTS:
+        for project in present_projects():
             folders = list((repo / project / ".venv").glob("lib/python3*/site-packages"))
             if not folders:
                 return False
@@ -559,7 +563,7 @@ def dev_tools_step(repo: Path, env: dict[str, str]) -> Step:
         return True
 
     def run(ctx: Context) -> None:
-        for project in DEV_PROJECTS:
+        for project in present_projects():
             ctx.run(Command(["uv", "sync", "--frozen", "--inexact"], cwd=repo / project, env=env))
 
     return Step("dev-tools", "Test tools", done, run)

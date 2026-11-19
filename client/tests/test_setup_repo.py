@@ -316,6 +316,11 @@ def test_scripts_have_the_right_line_endings() -> None:
 
 
 def test_dev_tools_syncs_every_project_keeping_packages(tmp_path: Path) -> None:
+    for project in ("contracts", "engine", "client", "packaging"):
+        (tmp_path / project).mkdir(parents=True)
+        (tmp_path / project / "pyproject.toml").write_text(
+            f'[project]\nname = "{project}"\n\n[dependency-groups]\ndev = ["pytest"]\n', encoding="utf-8"
+        )
     env = {"UV_PYTHON": "3.11", "PATH": "/usr/bin"}
     step = setup_repo.dev_tools_step(tmp_path, env)
     commands: list[Command] = []
@@ -323,12 +328,42 @@ def test_dev_tools_syncs_every_project_keeping_packages(tmp_path: Path) -> None:
     assert step.id == "dev-tools"
     assert [(command.argv, command.cwd, command.env) for command in commands] == [
         (["uv", "sync", "--frozen", "--inexact"], tmp_path / project, env)
-        for project in ("contracts", "engine", "client", "blender", "packaging")
+        for project in ("contracts", "engine", "client", "packaging")
     ]
 
 
+# US-01 / AC-01
+def test_dev_tools_skips_absent_projects(tmp_path: Path) -> None:
+    for project in ("contracts", "engine", "client", "packaging"):
+        (tmp_path / project).mkdir(parents=True)
+        (tmp_path / project / "pyproject.toml").write_text(
+            f'[project]\nname = "{project}"\n\n[dependency-groups]\ndev = ["pytest"]\n', encoding="utf-8"
+        )
+    env = {"UV_PYTHON": "3.11", "PATH": "/usr/bin"}
+    step = setup_repo.dev_tools_step(tmp_path, env)
+    commands: list[Command] = []
+    step.run(setup_repo.Context(repo=tmp_path, log=lambda line: None, runner=lambda c, log: commands.append(c)))
+    assert [(command.argv, command.cwd, command.env) for command in commands] == [
+        (["uv", "sync", "--frozen", "--inexact"], tmp_path / project, env)
+        for project in ("contracts", "engine", "client", "packaging")
+    ]
+
+
+# US-01 / AC-02
+def test_dev_tools_done_ignores_absent_projects(tmp_path: Path) -> None:
+    for project in ("contracts", "engine", "client", "packaging"):
+        (tmp_path / project).mkdir(parents=True)
+        (tmp_path / project / "pyproject.toml").write_text(
+            f'[project]\nname = "{project}"\n\n[dependency-groups]\ndev = ["pytest"]\n', encoding="utf-8"
+        )
+        site = tmp_path / project / ".venv/lib/python3.11/site-packages"
+        site.mkdir(parents=True)
+        (site / "pytest-8.3.0.dist-info").mkdir()
+    assert setup_repo.dev_tools_step(tmp_path, {}).done() is True
+
+
 def test_dev_tools_done_only_when_every_dev_package_is_present(tmp_path: Path) -> None:
-    for project in ("contracts", "engine", "client", "blender", "packaging"):
+    for project in ("contracts", "engine", "client", "packaging"):
         names = ['"pytest"', '"pytest-qt>=4.4"'] if project == "client" else ['"pytest"']
         deps = ", ".join(names)
         (tmp_path / project).mkdir(parents=True)
@@ -345,7 +380,7 @@ def test_dev_tools_done_only_when_every_dev_package_is_present(tmp_path: Path) -
 
 
 def test_dev_tools_done_finds_packages_for_any_python(tmp_path: Path) -> None:
-    for project in ("contracts", "engine", "client", "blender", "packaging"):
+    for project in ("contracts", "engine", "client", "packaging"):
         deps = '"pytest", "pytest-qt"' if project == "client" else '"pytest"'
         (tmp_path / project).mkdir(parents=True)
         (tmp_path / project / "pyproject.toml").write_text(
