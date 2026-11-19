@@ -300,3 +300,37 @@ def test_verify_passes_when_a_mode_fits(sources, tmp_path):
     ctx = StepContext(install_dir=tmp_path, log=lambda line: None, cancelled=lambda: False, run=lambda command: None)
     verify(ctx)
     assert (tmp_path / "data/logs/verify.ok").is_file()
+
+
+def write_app_sources(root: Path) -> None:
+    (root / "engine").mkdir(parents=True, exist_ok=True)
+    (root / "contracts").mkdir(parents=True, exist_ok=True)
+    (root / "scripts").mkdir(parents=True, exist_ok=True)
+    (root / "engine/__init__.py").write_text("engine v1")
+    (root / "contracts/x.py").write_text("contracts v1")
+    (root / "scripts/verify_gpus.py").write_text("verify v1")
+
+
+def source_step_context(folder: Path, logs: list[str]) -> StepContext:
+    return StepContext(install_dir=folder, log=logs.append, cancelled=lambda: False, run=lambda command: None)
+
+
+def test_source_step_skips_copy_when_installing_into_the_app_root(sources):
+    write_app_sources(sources.app_root)
+    logs: list[str] = []
+    action = by_id(build_recipe(sources, sources.app_root, TOOLCHAIN, ["base"]))["source"].actions[0]
+    action(source_step_context(sources.app_root, logs))
+    assert (sources.app_root / "engine/__init__.py").read_text() == "engine v1"
+    assert (sources.app_root / "contracts/x.py").read_text() == "contracts v1"
+    assert (sources.app_root / "scripts/verify_gpus.py").read_text() == "verify v1"
+    assert "Sources are already in the install folder" in logs
+
+
+def test_source_step_copies_sources_into_another_folder(sources, tmp_path):
+    write_app_sources(sources.app_root)
+    folder = tmp_path / "install"
+    action = by_id(build_recipe(sources, folder, TOOLCHAIN, ["base"]))["source"].actions[0]
+    action(source_step_context(folder, []))
+    assert (folder / "engine/__init__.py").read_text() == "engine v1"
+    assert (folder / "contracts/x.py").read_text() == "contracts v1"
+    assert (folder / "scripts/verify_gpus.py").read_text() == "verify v1"

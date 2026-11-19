@@ -100,6 +100,9 @@ def build_recipe(sources: Sources, install_dir: Path, toolchain: Toolchain, comp
     uv_build_env = {**uv_env, **build_env}
 
     def copy_sources(ctx: StepContext) -> None:
+        if sources.app_root.resolve() == f.resolve():
+            ctx.log("Sources are already in the install folder")
+            return
         copy_tree(sources.app_root / "engine", engine, ctx)
         copy_tree(sources.app_root / "contracts", contracts, ctx)
         (f / "scripts").mkdir(parents=True, exist_ok=True)
