@@ -221,7 +221,7 @@ def build_recipe(sources: Sources, install_dir: Path, toolchain: Toolchain, comp
             Step("voice-env", "Voice environment", "voice", 0,
                  _fingerprint("voice-env", QWEN_COMMIT, toolchain.arch_list),
                  [Command([uv, "venv", "--python", "3.11", ".venv"], cwd=qwen, env=uv_build_env),
-                  Command([uv, "pip", "install", "--python", ".venv", "torch==2.9.1", "torchvision==0.24.1",
+                  Command([uv, "pip", "install", "--python", ".venv", "torch==2.9.1", "torchvision==0.24.1", "torchaudio==2.9.1",
                            "--index-url", PYTORCH_INDEX], cwd=qwen, env=uv_build_env),
                   Command([uv, "pip", "install", "--python", ".venv", "qwen-tts", "soundfile", "librosa",
                            "transformers", "huggingface_hub"], cwd=qwen, env=uv_build_env)],

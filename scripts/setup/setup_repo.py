@@ -28,11 +28,14 @@ from model3d_client.setup.recipe import (
     PATCH,
     PYG_WHEELS,
     PYTORCH_INDEX,
+    QWEN_COMMIT,
+    QWEN_TARBALL,
     REALESRGAN_URL,
     UNIRIG_CHECKPOINTS,
     UNIRIG_COMMIT,
     UNIRIG_TARBALL,
     UNIRIG_WEIGHTS_SCRIPT,
+    VOICE_WEIGHTS_SCRIPT,
     WEIGHTS_SCRIPT,
 )
 from model3d_client.setup.runner import Command, StepContext
@@ -153,6 +156,7 @@ def _default_blender_config() -> Path:
 class Options:
     rig: bool = True
     trellis: bool = True
+    voice: bool = True
     home: Path = field(default_factory=Path.home)
     cpu_count: int = field(default_factory=lambda: os.cpu_count() or 1)
     blender_config: Path = field(default_factory=_default_blender_config)
@@ -666,6 +670,45 @@ def request_hf_access(repo_id: str, probes: Probes, prompter: Prompter, token_pa
     return True
 
 
+def voice_steps(repo: Path, platform: str, env: dict[str, str]) -> list[Step]:
+    qwen = repo / "vendor/Qwen3-TTS"
+    venv = qwen / ".venv"
+    python = venv_python(venv, platform)
+    archive = repo / "data/downloads" / f"qwen3-tts-{QWEN_COMMIT}.tar.gz"
+
+    def pip(*args: str) -> Command:
+        return Command(["uv", "pip", "install", "--python", ".venv", *args], cwd=qwen, env=env)
+
+    def fetch(ctx: Context) -> None:
+        step = ctx.step_context()
+        download(QWEN_TARBALL, archive, step)
+        extract_tarball(archive, qwen, step)
+
+    def install_env(ctx: Context) -> None:
+        if not python.exists():
+            ctx.run(Command(["uv", "venv", "--python", "3.11", ".venv"], cwd=qwen, env=env))
+        ctx.run(pip("torch==2.9.1", "torchvision==0.24.1", "torchaudio==2.9.1", "--index-url", PYTORCH_INDEX))
+        ctx.run(pip("qwen-tts", "soundfile", "librosa", "transformers", "huggingface_hub"))
+
+    def fetch_weights(ctx: Context) -> None:
+        run_retried(ctx, Command([str(python), "-c", VOICE_WEIGHTS_SCRIPT], cwd=repo, env=env))
+
+    def weights_done() -> bool:
+        hf = repo / "data/hf"
+        return (
+            _exists(hf, "hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-VoiceDesign/snapshots/*")
+            and _exists(hf, "hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-Base/snapshots/*")
+            and _exists(hf, "hub/models--openai--whisper-large-v3-turbo/snapshots/*")
+        )
+
+    return [
+        Step("voice-source", "Qwen3-TTS source", lambda: (qwen / "README.md").is_file() or (qwen / "setup.py").is_file(), fetch),
+        Step("voice-env", "Voice environment",
+             lambda: python.is_file() and _exists(site_packages(venv, platform), "qwen_tts*"), install_env),
+        Step("voice-weights", "Voice weights", weights_done, fetch_weights),
+    ]
+
+
 def build_steps(repo: Path, platform: str, options: Options, probes: Probes) -> list[Step]:
     if platform == "macos":
         return []
@@ -686,6 +729,8 @@ def build_steps(repo: Path, platform: str, options: Options, probes: Probes) -> 
             steps += rig_steps(repo, platform, env)
         if options.trellis:
             steps += trellis_steps(repo, env, probes)
+        if options.voice:
+            steps += voice_steps(repo, platform, env)
         steps += blender_steps(repo, options)
         return steps
     steps = [hunyuan_step(repo), weights_only_step(repo, env)]
@@ -805,13 +850,14 @@ def main(argv: list[str] | None = None, *, repo: Path | None = None, platform: s
     parser.add_argument("--dry-run", action="store_true", help="print the plan and change nothing")
     parser.add_argument("--no-rig", action="store_true", help="skip UniRig")
     parser.add_argument("--no-trellis", action="store_true", help="skip TRELLIS.2")
+    parser.add_argument("--no-voice", action="store_true", help="skip Qwen3-TTS and Whisper voice stage")
     args = parser.parse_args(argv)
     repo = repo or Path(__file__).resolve().parents[2]
     system = platform or PLATFORMS.get(sys.platform)
     if system is None:
         print(f"Unsupported system: {sys.platform}", file=sys.stderr)
         return 2
-    options = Options(rig=not args.no_rig, trellis=not args.no_trellis)
+    options = Options(rig=not args.no_rig, trellis=not args.no_trellis, voice=not args.no_voice)
     probes = probes or real_probes(options.home / TOKEN_RELATIVE)
     problems = preflight(repo, system, probes)
     if problems:

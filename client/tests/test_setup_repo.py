@@ -98,6 +98,7 @@ def write_addon_manifest(repo: Path, version: str) -> None:
 def test_pins_come_from_the_recipe() -> None:
     assert setup_repo.UNIRIG_COMMIT == recipe.UNIRIG_COMMIT
     assert setup_repo.HUNYUAN_COMMIT == recipe.HUNYUAN_COMMIT
+    assert setup_repo.QWEN_COMMIT == recipe.QWEN_COMMIT
 
 
 def test_no_driver_stops_before_anything(tmp_path: Path) -> None:
@@ -139,17 +140,26 @@ def test_linux_steps_in_order(tmp_path: Path) -> None:
         "cuda-toolkit", "hunyuan-source", "engine-env", "inpaint", "dev-tools", "weights",
         "unirig-source", "unirig-env", "unirig-weights",
         "trellis-source", "trellis-env", "trellis-weights",
+        "voice-source", "voice-env", "voice-weights",
         "blender", "blender-addon",
     ]
 
 
 def test_no_rig_and_no_trellis_drop_their_steps(tmp_path: Path) -> None:
-    options = setup_repo.Options(rig=False, trellis=False)
+    options = setup_repo.Options(rig=False, trellis=False, voice=False)
     steps = setup_repo.build_steps(tmp_path, "linux", options, fake_probes())
     assert step_ids(steps) == [
         "cuda-toolkit", "hunyuan-source", "engine-env", "inpaint", "dev-tools", "weights",
         "blender", "blender-addon",
     ]
+
+
+def test_no_voice_drops_voice_steps(tmp_path: Path) -> None:
+    options = setup_repo.Options(voice=False)
+    steps = setup_repo.build_steps(tmp_path, "linux", options, fake_probes())
+    assert "voice-source" not in step_ids(steps)
+    assert "voice-env" not in step_ids(steps)
+    assert "voice-weights" not in step_ids(steps)
 
 
 def test_finished_steps_report_done(tmp_path: Path) -> None:
