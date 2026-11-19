@@ -47,12 +47,17 @@ def default_sources() -> Sources:
 
 
 def startup_mode(env: Mapping[str, str], repo: Path) -> StartupMode:
-    """Which window the app opens with: setup, the main window, or the wizard to resume, update, or find the install."""
+    """Which window the app opens with: setup, the main window, or the wizard to resume, update, or find the install.
+
+    A pointer that names the repository checkout itself opens development mode, not the wizard.
+    """
     folder = read_pointer(env)
     if folder is None:
         return "development" if (repo / "engine/pyproject.toml").is_file() else "setup"
     if not folder.is_dir():
         return "missing_folder"
+    if (repo / "engine/pyproject.toml").is_file() and folder.resolve() == repo.resolve():
+        return "development"
     state = load_state(folder)
     if state is None:
         return "resume"

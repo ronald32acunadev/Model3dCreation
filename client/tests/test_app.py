@@ -87,6 +87,28 @@ def test_startup_mode_main_when_installed_and_current(installed):
     assert startup_mode(env, REPO_ROOT) == "main"
 
 
+def test_startup_mode_development_when_pointer_names_the_checkout(tmp_path):
+    # US-01 / AC-01
+    repo = tmp_path / "repo"
+    (repo / "engine").mkdir(parents=True)
+    (repo / "engine/pyproject.toml").write_text("x")
+    env = {"XDG_CONFIG_HOME": str(tmp_path / "config")}
+    write_pointer(env, repo)
+    assert startup_mode(env, repo) == "development"
+
+
+def test_startup_mode_development_when_pointer_is_a_symlink_to_the_checkout(tmp_path):
+    # US-01 / AC-02
+    repo = tmp_path / "repo"
+    (repo / "engine").mkdir(parents=True)
+    (repo / "engine/pyproject.toml").write_text("x")
+    link = tmp_path / "link"
+    link.symlink_to(repo)
+    env = {"XDG_CONFIG_HOME": str(tmp_path / "config")}
+    write_pointer(env, link)
+    assert startup_mode(env, repo) == "development"
+
+
 def test_version_matches_the_project():
     pyproject = (REPO_ROOT / "client/pyproject.toml").read_text()
     assert f'version = "{model3d_client.__version__}"' in pyproject
